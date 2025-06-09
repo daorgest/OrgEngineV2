@@ -65,7 +65,7 @@ cmake-*
 
 
 !Assets/Models/
-/libs/3rdParty/conf
+/3rdParty/conf
 
 # For FMOD
 !**/lib/x64/

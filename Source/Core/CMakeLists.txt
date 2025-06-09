@@ -6,9 +6,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_definitions(ORGAPI_DLL_EXPORT)
 endif()
 
-
 add_library(Core ${CORE_LIB_TYPE}
         PrimTypes.h
+        Logger.h
         Platform/PlatformWindows.cpp
         Platform/Platform.h
         Renderer/RenderInterface.h
@@ -19,7 +19,7 @@ target_include_directories(Core PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/Platform
         ${CMAKE_CURRENT_SOURCE_DIR}/Renderer
 )
-
+target_link_libraries(Core PRIVATE fmt::fmt)
 
 target_compile_definitions(Core PRIVATE
         $<$<CONFIG:Debug>:ORGAPI_DLL_EXPORT>

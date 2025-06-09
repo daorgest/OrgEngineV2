@@ -12,19 +12,25 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/App)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/App)
 
 # Add only the Core subdirectory
+add_subdirectory(3rdParty/fmt)
 add_subdirectory(Source/Core)
 
 # Define the main executable target
 add_executable(OrgEngineV2 Source/main.cpp)
 
 # Link the Core library
-target_link_libraries(OrgEngineV2 PRIVATE Core)
+target_link_libraries(OrgEngineV2 PRIVATE Core fmt::fmt)
 
 # Set output folder for the executable
 set_target_properties(OrgEngineV2 PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
 )
-set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /MAP:OrgEngineV2.map")
+
+if (MSVC)
+    set(MAP_FILE "${CMAKE_BINARY_DIR}/App/OrgEngineV2.map")
+    target_link_options(OrgEngineV2 PRIVATE "/MAP:${MAP_FILE}" /MAPINFO:EXPORTS)
+endif()
+
 
 # Include directories so headers are found cleanly
 target_include_directories(OrgEngineV2 PRIVATE

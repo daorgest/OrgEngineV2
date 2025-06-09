@@ -2,8 +2,8 @@
 // Created by Orgest on 6/8/2025.
 //
 #define WIN32_LEAN_AND_MEAN
-#include <format>
 #include <Windows.h>
+#include <fmt/core.h>
 
 #include "Platform.h"
 
@@ -36,10 +36,9 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
 	QueryPerformanceFrequency(&perfFrequency);
 	window->perfCountFrequency = perfFrequency.QuadPart;
 
-	// Title!
-	const std::string title = std::format("{} - {} - {} - {}", ENGINE_NAME, ENGINE_BUILD, window->platformName, ENGINE_VERSION);
+	// Title (will be changed in the future)!
+	const std::string title = fmt::format("{} - {} - {} - {}", ENGINE_NAME, ENGINE_BUILD, window->platformName, ENGINE_VERSION);
 	std::wstring widePlatformName = ConvertToWideString(title);
-
 
 	// Init window class!
 	WNDCLASSEX wc = {
@@ -216,16 +215,14 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 // Utility Functions
 std::wstring Platform::ConvertToWideString(const std::string_view& str)
 {
-	std::wstring wideStr;
-	wideStr.resize(MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), nullptr, 0));
+	std::wstring wideStr(MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), nullptr, 0), 0);
 	MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), wideStr.data(), static_cast<int>(wideStr.size()));
 	return wideStr;
 }
 
 std::string Platform::ConvertToString(const std::wstring_view& wstr)
 {
-	std::string multiByteStr;
-	multiByteStr.resize(WideCharToMultiByte(CP_UTF8, 0, wstr.data(), static_cast<int>(wstr.size()), nullptr, 0, nullptr, FALSE));
+	std::string multiByteStr(WideCharToMultiByte(CP_UTF8, 0, wstr.data(), static_cast<int>(wstr.size()), nullptr, 0, nullptr, FALSE), 0);
 	WideCharToMultiByte(CP_UTF8, 0, wstr.data(), static_cast<int>(wstr.size()), multiByteStr.data(), static_cast<int>(multiByteStr.size()), nullptr, FALSE);
 	return multiByteStr;
 }
