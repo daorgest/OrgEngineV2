@@ -1,3 +1,16 @@
 [submodule "3rdParty/fmt"]
 	path = 3rdParty/fmt
 	url = https://github.com/fmtlib/fmt.git
+[submodule "3rdParty/volk"]
+	path = 3rdParty/volk
+	url = https://github.com/zeux/volk.git
+[submodule "3rdParty/vma"]
+	path = 3rdParty/vma
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "3rdParty/imgui"]
+    branch = docking
+	path = 3rdParty/imgui
+	url = https://github.com/ocornut/imgui
+[submodule "3rdParty/tracy"]
+	path = 3rdParty/tracy
+	url = https://github.com/wolfpld/tracy

@@ -1,5 +1,11 @@
 #pragma once
-
+#if defined(ORGAPI_DLL_EXPORT)
+#  define ORGAPI __declspec(dllexport)
+#elif defined(ORGAPI_DLL_IMPORT)
+#  define ORGAPI __declspec(dllimport)
+#else
+#  define ORGAPI
+#endif
 
 #include <cstdint>
 
@@ -23,10 +29,12 @@ using uChar = unsigned char;
 
 constexpr u32 INVALID_ID = 0xFFFFFFFF;
 
-// Math constants
-#define M_PI 3.14159265358979323846
+// Size Constants
+constexpr u64 Kilobyte = 1024;
+constexpr u64 Megabyte = 1024 * Kilobyte;
+constexpr u64 Gigabyte = 1024 * Megabyte;
 
-// Size conversions
-#define BYTES_TO_KB(b) ((float)(b) / 1024.0f)
-#define BYTES_TO_MB(b) ((float)(b) / (1024.0f * 1024.0f))
-#define BYTES_TO_GB(b) ((float)(b) / (1024.0f * 1024.0f * 1024.0f))
+// Size Conversions
+constexpr float BytesToKB(u64 bytes) { return (float)bytes / (float)Kilobyte; }
+constexpr float BytesToMB(u64 bytes) { return (float)bytes / (float)Megabyte; }
+constexpr float BytesToGB(u64 bytes) { return (float)bytes / (float)Gigabyte; }

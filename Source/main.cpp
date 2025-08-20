@@ -1,15 +1,10 @@
 #pragma once
-#include "Platform.h"
-
+#include "Application.h"
 int main()
 {
-	Platform::WindowContext wc;
-	Platform::Init(&wc);
-	Platform::ShowWindow(wc);
-
-	bool running = true;
-	while (running)
-	{
-		running = Platform::ProcessMessages();
-	}
+	Application app;
+	if (!app.Init()) return -1;
+	app.Run();
+	app.Cleanup();
+	return 0;
 }

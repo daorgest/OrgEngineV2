@@ -2,15 +2,9 @@
 // Created by Orgest on 6/8/2025.
 //
 #pragma once
-#if defined(ORGAPI_DLL_EXPORT)
-#  define ORGAPI __declspec(dllexport)
-#elif defined(ORGAPI_DLL_IMPORT)
-#  define ORGAPI __declspec(dllimport)
-#else
-#  define ORGAPI
-#endif
 #include <string>
-#include "PrimTypes.h"
+
+#include "Vec3.h"
 
 constexpr auto ENGINE_NAME = "OrgEngine";
 constexpr auto ENGINE_VERSION = "0.1";
@@ -105,11 +99,13 @@ namespace Platform
 	ORGAPI void Init(WindowContext* window, i32 width = 0, i32 height = 0, DisplayMode mode = DisplayMode::Windowed);
 	ORGAPI void InitKeyMappings();
 	ORGAPI std::string GetCPUName();
+	ORGAPI bool GetWindowSize(const WindowHandle& handle, u32& width, u32& height);
 	ORGAPI void SetDisplayMode(WindowContext& window, DisplayMode mode);
 	ORGAPI void UpdateScreenDimensions(WindowContext& window);
 	ORGAPI std::wstring ConvertToWideString(const std::string_view& str);
 	ORGAPI std::string ConvertToString(const std::wstring_view& wstr);
 	ORGAPI void* Allocate(size_t size);
+	ORGAPI void* AllocateFromArena(void* arena, std::size_t size);
 	ORGAPI void Free(void* ptr);
 	ORGAPI WindowHandle GetNativeWindowHandle(const WindowContext& window);
 	ORGAPI void StartFrame(WindowContext& window);
@@ -117,13 +113,13 @@ namespace Platform
 	ORGAPI bool ProcessMessages(WindowContext* window = nullptr);
 	ORGAPI bool ShowMessageBox(std::string_view message, std::string_view title = "Message", MessageBoxType type = MessageBoxType::Info);
 
+	// Gamepad
+	ORGAPI void UpdateGamepads();
 	//some utils that might work lmao
 	ORGAPI bool IsMusicPlayerPlaying();
 	ORGAPI BatteryState GetBatteryState();
 	ORGAPI void CenterMouse(const WindowContext* window);
 	ORGAPI bool SetMouseVisibility(bool show);
-
-	ORGAPI f64 GetPerformaceFrequency();
 };
 
 

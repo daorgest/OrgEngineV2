@@ -4,15 +4,35 @@
 
 #pragma once
 
-namespace Render
+namespace Renderer
 {
-	struct RenderInterface final
+	struct GPUInterface
 	{
-		~RenderInterface() = default;
+		~GPUInterface() = default;
 	};
 
-	struct RenderDevice final
+	struct GPUDevice
 	{
-		 ~RenderDevice() = default;
+		~GPUDevice() = default;
+	};
+
+	struct GPUShaderManager
+	{
+		~GPUShaderManager() = default;
+	};
+
+	struct GPUShader
+	{
+		~GPUShader() = default;
+	};
+
+	struct GPUTexture
+	{
+		~GPUTexture() = default;
+	};
+
+	struct GPUSampler
+	{
+		~GPUSampler() = default;
 	};
 }
