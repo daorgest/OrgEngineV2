@@ -14,3 +14,6 @@
 [submodule "3rdParty/tracy"]
 	path = 3rdParty/tracy
 	url = https://github.com/wolfpld/tracy
+[submodule "3rdparty/meshoptimizer"]
+	path = 3rdparty/meshoptimizer
+	url = https://github.com/zeux/meshoptimizer.git
