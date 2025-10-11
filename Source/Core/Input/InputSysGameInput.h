@@ -1,0 +1,16 @@
+//
+// Created by Orgest on 10/1/2025.
+//
+
+#ifndef ORGENGINEV2_INPUTSYSGAMEINPUT_H
+#define ORGENGINEV2_INPUTSYSGAMEINPUT_H
+
+
+
+class InputSysGameInput {
+
+};
+
+
+
+#endif //ORGENGINEV2_INPUTSYSGAMEINPUT_H

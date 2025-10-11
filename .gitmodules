@@ -17,3 +17,12 @@
 [submodule "3rdparty/meshoptimizer"]
 	path = 3rdparty/meshoptimizer
 	url = https://github.com/zeux/meshoptimizer.git
+[submodule "3rdparty/fastgltf"]
+	path = 3rdparty/fastgltf
+	url = https://github.com/spnda/fastgltf.git
+[submodule "3rdParty/glm"]
+	path = 3rdParty/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "3rdParty/gameinput"]
+	path = 3rdParty/gameinput
+	url = https://github.com/microsoftconnect/GameInput
