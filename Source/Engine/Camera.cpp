@@ -4,6 +4,8 @@
 
 #include "Camera.h"
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include "MathFuncs.h"
 
 void Camera::Update(f32 deltaTime)
@@ -18,24 +20,24 @@ void Camera::UpdateDirectionVectors()
 	const f32 yawRad   = Radians(yaw);
 	const f32 pitchRad = Radians(pitch);
 
-	forward = Vec3{
-		std::cos(pitchRad) * std::sin(yawRad), // X
-		std::sin(pitchRad),                    // Y
-		std::cos(pitchRad) * std::cos(yawRad)  // Z
-	}.Normalized();
+	forward = glm::normalize(glm::vec3(
+		std::cos(pitchRad) * std::sin(yawRad), // +X = turn right
+		std::sin(pitchRad),                    // +Y = look up
+		std::cos(pitchRad) * std::cos(yawRad)  // +Z = look forward
+	));
 
-	right = forward.Cross(Vec3{0, 1, 0}).Normalized();
-	up    = right.Cross(forward).Normalized();
+	right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+	up    = glm::normalize(glm::cross(right, forward));
 }
 
-Mat4x4 Camera::GetViewMatrix() const
+glm::mat4 Camera::GetViewMatrix() const
 {
-	return Mat4x4::LookAt(position, position + forward, up);
+	return glm::lookAt(position, position + forward, up);
 }
 
-Mat4x4 Camera::GetProjectionMatrix(f32 aspectRatio) const
+glm::mat4 Camera::GetProjectionMatrix(f32 aspectRatio) const
 {
-	Mat4x4 proj = Mat4x4::Perspective(Radians(fov), aspectRatio, nearPlane, farPlane);
-	proj.m[5] *= -1.0f; // Y-flip for Vulkan
+	glm::mat4 proj = glm::perspective(Radians(fov), aspectRatio, nearPlane, farPlane);
+	proj[1][1] *= -1.0f; // Y-flip for Vulkan
 	return proj;
 }

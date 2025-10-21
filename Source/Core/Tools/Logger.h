@@ -62,12 +62,21 @@ namespace Log
 		std::fprintf(output, "%s%s\n", header, message.c_str());
 
 		// Append to log file
-		FILE* file = std::fopen("engine_log.txt", "a");
+		FILE* file = nullptr;
+#if defined(_MSC_VER)
+		if (fopen_s(&file, "engine_log.txt", "a") == 0 && file)
+		{
+			std::fprintf(file, "%s%s\n", header, message.c_str());
+			std::fclose(file);
+		}
+#else
+		file = std::fopen("engine_log.txt", "a");
 		if (file)
 		{
 			std::fprintf(file, "%s%s\n", header, message.c_str());
 			std::fclose(file);
 		}
+#endif
 
 #ifdef NDEBUG
 		if (type == LogType::Error)
@@ -80,5 +89,21 @@ namespace Log
 
 
 // Usage: LOG(Info, "Window size: {} x {}", width, height);
-#define LOG(TYPE, FORMAT, ...) \
-Log::Write(LogType::TYPE, FORMAT, ##__VA_ARGS__)
+#ifdef NDEBUG
+    #define LOG(TYPE, FORMAT, ...) \
+        Log::Write(LogType::TYPE, FORMAT, ##__VA_ARGS__)
+#else
+    #define LOG(TYPE, FORMAT, ...) \
+        do { \
+            if constexpr (LogType::TYPE == LogType::Error || LogType::TYPE == LogType::Warning) \
+                Log::Write(LogType::TYPE, FORMAT, ##__VA_ARGS__); \
+        } while(0)
+#endif
+
+
+#define RETURN_LOG(TYPE, FORMAT, ...)                          \
+    do {                                                       \
+        LOG(TYPE, FORMAT, ##__VA_ARGS__);                      \
+        return std::unexpected<std::string>(                   \
+            fmt::format(FORMAT, ##__VA_ARGS__));               \
+    } while (0)

@@ -4,15 +4,12 @@
 
 #pragma once
 #include <volk.h>
+#include <tracy/TracyVulkan.hpp>
 
 #include "RendererTypes.h"
-#include "Vector.h"
 #include "VulkanDescriptors.h"
 #include "VulkanQueryPool.h"
-#include "tracy/TracyVulkan.hpp"
-
-static constexpr u32 MAX_FRAME_OVERLAP = 2;
-
+#include "Tools/Vector.h"
 namespace Renderer
 {
 	struct VulkanSwapchain;
@@ -53,9 +50,9 @@ namespace Renderer
 	struct VulkanRenderer
 	{
 		Vector<VulkanFrameData> frames;
-		Vector<VkSemaphore> presentWaitSemaphores;
+		Vector<VkSemaphore> presentSemaphores; // One per swapchain image (indexed by imageIndex)
 		u32 frameNumber = 0;
-		u32 framesActive = 2; // double buffer by default
+		u32 framesActive = MAX_FRAME_OVERLAP;
 
 		VulkanDevice* device = nullptr;
 		VulkanSwapchain* swapchain = nullptr;
@@ -65,12 +62,10 @@ namespace Renderer
 		void Destroy();
 		[[nodiscard]] bool ResizeIfNeeded() const;
 		FrameContext BeginFrame();
+		void EndFrame(const FrameContext& frame);
 		static void SetViewportAndScissor(VkCommandBuffer cmd, const Extent2D& extent);
 
 		VulkanFrameData& GetCurrentFrame() { return frames[frameNumber % framesActive]; }
-
-		// Transitions
-		void EndFrame(const FrameContext& frame);
 	};
 
 }

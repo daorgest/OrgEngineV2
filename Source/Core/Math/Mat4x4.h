@@ -11,24 +11,20 @@ struct Mat4x4
 		float m4[4][4];
 	};
 
-	Mat4x4()
-	{
-		for (float& i : m)
-			i = 0.0f;
-	}
+	Mat4x4() = default;
+	Mat4x4() { Identity(); }
 
 	Mat4x4(float scalar)
 	{
-		for (float& i : m) i = 0.0f;
 		m[0] = m[5] = m[10] = m[15] = scalar;
 	}
 
-	float* ptr() { return m; }
-	const float* ptr() const { return m; }
+	[[nodiscard]] float* ptr() { return m; }
+	[[nodiscard]] const float* ptr() const { return m; }
 
 	Mat4x4 operator*(const Mat4x4& rhs) const
 	{
-		Mat4x4 result{};
+		Mat4x4 result;
 		for (u32 col = 0; col < 4; col++)
 		{
 			for (u32 row = 0; row < 4; row++)
@@ -108,5 +104,20 @@ struct Mat4x4
 		result.m[13] = t.y;
 		result.m[14] = t.z;
 		return result;
+	}
+
+	static Mat4x4 Scale(const Vec3& s)
+	{
+		Mat4x4 result = Identity();
+		result.m[0]  = s.x;
+		result.m[5]  = s.y;
+		result.m[10] = s.z;
+		return result;
+	}
+
+	// Helper
+	static Mat4x4 Scale(float uniform)
+	{
+		return Scale({uniform, uniform, uniform});
 	}
 };

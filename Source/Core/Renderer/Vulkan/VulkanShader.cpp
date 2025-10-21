@@ -7,9 +7,9 @@
 #include <span>
 #include <volk.h>
 
-#include "Logger.h"
-#include "Vector.h"
 #include "VulkanInit.h"
+#include "Tools/Logger.h"
+#include "Tools/Vector.h"
 
 using namespace Renderer;
 
@@ -24,8 +24,22 @@ Vector<u32> VulkanShader::ReadShaderFile(const char* filePath)
 
 	// Seek to end to get file size
 	std::fseek(file, 0, SEEK_END);
-	const long fileSize = std::ftell(file);
-	std::rewind(file);
+
+	i32 fileSize = std::ftell(file);
+	if (fileSize < 0)
+	{
+		LOG(Error, "Failed to get file size: {}", filePath);
+		std::fclose(file);
+		return {};
+	}
+
+	// Seek back to beginning instead of rewind()
+	if (std::fseek(file, 0, SEEK_SET) != 0)
+	{
+		LOG(Error, "Failed to rewind file: {}", filePath);
+		std::fclose(file);
+		return {};
+	}
 
 	if (fileSize <= 0)
 	{
@@ -42,7 +56,7 @@ Vector<u32> VulkanShader::ReadShaderFile(const char* filePath)
 	}
 
 	Vector<u32> buffer(fileSize / sizeof(u32));
-	size_t readSize = std::fread(buffer.data(), sizeof(u32), buffer.size(), file);
+	const size_t readSize = std::fread(buffer.data(), sizeof(u32), buffer.size(), file);
 	std::fclose(file);
 
 	if (readSize != buffer.size())
@@ -54,7 +68,7 @@ Vector<u32> VulkanShader::ReadShaderFile(const char* filePath)
 	return buffer;
 }
 
-VulkanShader::VulkanShader(VulkanDevice* device, std::span<const u32> code, ShaderFormat format)
+VulkanShader::VulkanShader(VulkanDevice* device, std::span<const u32> code, const ShaderFormat format)
 {
 	this->device = device;
 	this->format = format;

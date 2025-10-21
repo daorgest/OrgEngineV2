@@ -3,11 +3,11 @@
 //
 
 #pragma once
-#include <slang.h>
 #include <slang-com-ptr.h>
+#include <slang.h>
+#include <string>
 
-#include "OrgString.h"
-#include "Vector.h"
+#include "Tools/Vector.h"
 
 struct ShaderCompiler
 {
@@ -20,7 +20,7 @@ private:
 	Slang::ComPtr<slang::IGlobalSession> globalSession;
 	Vector<slang::TargetDesc> targets;
 	Vector<slang::CompilerOptionEntry> compilerOptions;
-	Vector<OrgString> searchPaths;
+	Vector<std::string> searchPaths;
 	Slang::ComPtr<slang::ISession> session;
 	Slang::ComPtr<slang::IModule> module;
 	Slang::ComPtr<slang::IComponentType> componentType;

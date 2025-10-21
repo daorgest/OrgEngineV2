@@ -9,12 +9,12 @@
 #include <windows.h>
 #include <vulkan/vulkan_win32.h>
 
-#include "Logger.h"
 #include "Platform.h"
 #include "VulkanCheck.h"
 #include "VulkanConvert.h"
 #include "VulkanInit.h"
 #include "VulkanTexture.h"
+#include "Tools/Logger.h"
 #include "tracy/Tracy.hpp"
 
 using namespace Renderer;
@@ -28,7 +28,7 @@ bool VulkanSwapchain::Init(VulkanDevice* device, WindowHandle handle)
 	LOG(Info, "Initializing Vulkan swapchain...");
 
 #ifdef _WIN32
-	VkWin32SurfaceCreateInfoKHR surfaceCreateInfo{
+	VkWin32SurfaceCreateInfoKHR surfaceCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
 		.hinstance = GetModuleHandle(nullptr),
 		.hwnd = static_cast<HWND>(handle)
@@ -59,40 +59,6 @@ bool VulkanSwapchain::Init(VulkanDevice* device, WindowHandle handle)
 	vkGetPhysicalDeviceSurfaceFormatsKHR(device->physicalDevice, surface, &formatCount, formats.data());
 	LOG(Debug, "Found {} surface formats.", formatCount);
 
-
-	// // Special case: driver says "choose anything"
-	// if (formatCount == 1 && formats[0].format == VK_FORMAT_UNDEFINED)
-	// {
-	// 	surfaceFormat = {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
-	// }
-	// else
-	// {
-	// 	// Prefer BGRA8_sRGB, then RGBA8_sRGB
-	// 	surfaceFormat = formats[0]; // default
-	// 	for (const auto& f : formats)
-	// 	{
-	// 		if (f.format == VK_FORMAT_B8G8R8A8_SRGB &&
-	// 			f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-	// 		{
-	// 			surfaceFormat = f;
-	// 			break;
-	// 		}
-	// 	}
-	// 	if (surfaceFormat.format != VK_FORMAT_B8G8R8A8_SRGB)
-	// 	{
-	// 		for (const auto& f : formats)
-	// 		{
-	// 			if (f.format == VK_FORMAT_R8G8B8A8_SRGB &&
-	// 				f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-	// 			{
-	// 				surfaceFormat = f;
-	// 				break;
-	// 			}
-	// 		}
-	// 	}
-	// }
-
-
 	// Query supported present modes
 	u32 presentModeCount = 0;
 	vkGetPhysicalDeviceSurfacePresentModesKHR(device->physicalDevice, surface, &presentModeCount, nullptr);
@@ -119,8 +85,6 @@ bool VulkanSwapchain::Init(VulkanDevice* device, WindowHandle handle)
 		.preTransform     = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
 		.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
 		.presentMode      = selectedPresentMode,
-		.clipped          = VK_TRUE,
-		.oldSwapchain     = VK_NULL_HANDLE
 	};
 
 	VK_CHECK(vkCreateSwapchainKHR(device->device, &createInfo, nullptr, &swapchain));
@@ -144,12 +108,12 @@ void VulkanSwapchain::CreateImages()
 
 	for (u32 i = 0; i < imageCount; ++i)
 	{
-		images[i] = VulkanImage(device, vkImages[i]);
-		images[i].textureInfo.dimension = TextureDimension::TEXTURE_2D;
+		images[i] = {device, vkImages[i]};
+		images[i].textureInfo.dimension = TextureDimension::Texture2D;
 		images[i].textureInfo.extent.width = width;
 		images[i].textureInfo.extent.height = height;
 		images[i].textureInfo.mipLevels = 1;
-		images[i].textureInfo.usage = ImageUsage::COLOR_ATTACHMENT;
+		images[i].textureInfo.usage = ImageUsage::ColorAttachment;
 		images[i].FillSubresoruceInfo();
 		images[i].CreateImageView(surfaceFormat.format);
 	}
@@ -224,9 +188,7 @@ bool VulkanSwapchain::Recreate()
 
 	CreateImages();
 	CreateDepthImage();
-
-	LOG(Info, "Swapchain recreated with present mode {} and format {}", (int)selectedPresentMode, (int)surfaceFormat.format);
-
+	needsRecreation = false;
 	return true;
 }
 
@@ -283,8 +245,8 @@ void VulkanSwapchain::CreateDepthImage()
 		.extent = { width, height, 1 },
 		.mipLevels = 1,
 		.format = TextureFormat::D32_SFLOAT,
-		.dimension = TextureDimension::TEXTURE_2D,
-		.usage = ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::SAMPLED
+		.dimension = TextureDimension::Texture2D,
+		.usage = ImageUsage::DepthStencil | ImageUsage::Sampled
 	};
 
 	depthImage.Init(device, depthInfo);

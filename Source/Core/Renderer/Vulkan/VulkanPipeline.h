@@ -6,7 +6,10 @@
 #include <span>
 #include <volk.h>
 
-#include "Vector.h"
+#include "RendererTypes.h"
+#include "RenderInterface.h"
+#include "VulkanInit.h"
+#include "Tools/Vector.h"
 
 namespace Renderer
 {
@@ -39,6 +42,8 @@ namespace Renderer
 		PipelineConfig config;
 	};
 
+
+	struct VulkanPipeline;
 	class VulkanPipelineBuilder
 	{
 	public:
@@ -46,7 +51,7 @@ namespace Renderer
 
 		VulkanPipelineBuilder();
 
-		VkPipeline			   BuildPipeline(VkDevice device);
+		VulkanPipeline BuildPipeline(VulkanDevice* device);
 		VulkanPipelineBuilder& SetFragVerShaders(VkShaderModule vertexShader, VkShaderModule fragmentShader);
 		VulkanPipelineBuilder& SetComputeShader(VkShaderModule computeShader);
 		VulkanPipelineBuilder& SetInputTopology(VkPrimitiveTopology topology);
@@ -65,6 +70,31 @@ namespace Renderer
 		VulkanPipelineBuilder& EnableDepthTest(bool depthWriteEnable, VkCompareOp op);
 		VulkanPipelineBuilder& EnableBlendingAdditive();
 		VulkanPipelineBuilder& EnableBlendingAlphaBlend();
-		VulkanPipelineBuilder& Layout(VkPipelineLayout& layout);
+		VulkanPipelineBuilder& Layout(const VkPipelineLayout& layout);
+
 	};
+
+	struct PipelineLayoutDesc
+	{
+		std::span<const VkDescriptorSetLayout> setLayouts;
+		std::span<const VkPushConstantRange>   pushRanges;
+	};
+
+	struct VulkanPipeline
+	{
+		VkPipeline vk = VK_NULL_HANDLE;
+		VkPipelineLayout vkLayout = VK_NULL_HANDLE;
+		const VulkanDevice* device = nullptr;
+
+		VulkanPipeline() = default;
+		explicit VulkanPipeline(VulkanDevice* device) : device(device) {};
+
+		operator VkPipeline() const noexcept { return vk; }
+
+		~VulkanPipeline() { Destroy();}
+
+		void Destroy() const;
+		[[nodiscard]] Result<bool> Create(const VulkanDevice * device, const PipelineLayoutDesc & layoutDesc, const VulkanPipelineBuilder & builder);
+	};
+
 };

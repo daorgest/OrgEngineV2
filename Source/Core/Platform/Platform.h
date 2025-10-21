@@ -2,21 +2,6 @@
 // Created by Orgest on 6/8/2025.
 //
 #pragma once
-#include <string>
-
-#include "Vec3.h"
-
-constexpr auto ENGINE_NAME = "OrgEngine";
-constexpr auto ENGINE_VERSION = "0.1";
-
-constexpr f64 MAX_FRAMERATE = 1.0 / 20001;
-
-constexpr auto ENGINE_BUILD_DATE = __DATE__;
-#if defined(_DEBUG)
-constexpr auto ENGINE_BUILD = "Debug";
-#elif defined(NDEBUG)
-constexpr auto ENGINE_BUILD = "Release";
-#endif
 
 namespace Platform
 {
@@ -38,19 +23,27 @@ namespace Platform
 		u8 padding : 2;
 	};
 
+	struct OSVersion
+	{
+		u32 Major;
+		u32 Minor;
+		u32 Build;
+	};
+
 	using WindowHandle = void*;
 	struct WindowContext
 	{
 		const char* platformName = nullptr;
 		WindowHandle handle = nullptr; // Can be HWND or SDL_Window who knows
+		OSVersion version = {};
 
 		// Timing and perf counters
+		u32 frameCount = 0;
 		i64 perfCountFrequency = 0;
 		f64 deltaTime = 0.0;
 		f64 lastFrameTime = 0.0;
 		f64 elapsedTime = 0.0;
 		f64 accumulatedTime = 0.0;
-		u32 frameCount = 0;
 
 		// FPS and frametime
 		f32 fps = 0;
@@ -95,9 +88,10 @@ namespace Platform
 		u8 HasBattery : 1 = 0;
 	};
 
-
+	ORGAPI void IsMinPlatformRequirement();
 	ORGAPI void Init(WindowContext* window, i32 width = 0, i32 height = 0, DisplayMode mode = DisplayMode::Windowed);
 	ORGAPI void InitKeyMappings();
+	ORGAPI void InitRawInput();
 	ORGAPI std::string GetCPUName();
 	ORGAPI bool GetWindowSize(const WindowHandle& handle, u32& width, u32& height);
 	ORGAPI void SetDisplayMode(WindowContext& window, DisplayMode mode);
@@ -115,10 +109,12 @@ namespace Platform
 
 	// Gamepad
 	ORGAPI void UpdateGamepads();
-	//some utils that might work lmao
+	// Some utils that might work lmao
 	ORGAPI bool IsMusicPlayerPlaying();
 	ORGAPI BatteryState GetBatteryState();
 	ORGAPI void CenterMouse(const WindowContext* window);
+	ORGAPI void HideCursor(bool show);
+	ORGAPI void LockCursor(WindowContext& wc, bool enable);
 	ORGAPI bool SetMouseVisibility(bool show);
 };
 

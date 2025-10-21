@@ -6,6 +6,7 @@
 
 void Input::ProcessEventButton(ButtonState& state, const bool isPressed)
 {
+	state.seenThisFrame = true;
 	if (isPressed)
 	{
 		if (!state.held)
@@ -22,13 +23,14 @@ void Input::ProcessEventButton(ButtonState& state, const bool isPressed)
 	}
 }
 
-// Clear per-frame states: pressed/released
+// Resetting
 void Input::EndFrameInputUpdate()
 {
 	for (auto& key : input.keyboard)
 	{
 		key.pressed = false;
 		key.released = false;
+		key.seenThisFrame = false;
 	}
 
 	for (auto& btn : input.mouseButtons)
@@ -43,9 +45,6 @@ void Input::EndFrameInputUpdate()
 		btn.released = false;
 	}
 
-	input.xrel = 0.0f;
-	input.yrel = 0.0f;
-	input.scrollDelta = 0;
 }
 
 // Reset all input state (used when focus is lost)

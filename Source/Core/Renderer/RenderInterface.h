@@ -34,5 +34,11 @@ namespace Renderer
 	struct GPUSampler
 	{
 		~GPUSampler() = default;
+		GPUSampler() = default;
+	};
+
+	struct GPUModel
+	{
+		~GPUModel() = default;
 	};
 }

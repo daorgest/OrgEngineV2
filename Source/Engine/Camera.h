@@ -4,20 +4,21 @@
 
 #ifndef CAMERA_H
 #define CAMERA_H
-#include "Mat4x4.h"
+#include <glm/glm.hpp>
 
+enum class CameraMode { FreeFly, FPS };
 
 struct Camera
 {
-	Vec3 velocity = {0.0f, 0.0f, 0.0f};
-	Vec3 position = {0.0f, 0.0f, 0.0f};
+	glm::vec3 velocity = {0.0f, 0.0f, 0.0f};
+	glm::vec3 position = {0.0f, 0.0f, 0.0f};
 
-	Vec3 forward = {0.0f, 0.0f, 1.0f};
-	Vec3 up      = {0.0f, 1.0f, 0.0f};
-	Vec3 right   = {1.0f, 0.0f, 0.0f};
+	glm::vec3 forward = {0.0f, 0.0f, 1.0f};
+	glm::vec3 up      = {0.0f, 1.0f, 0.0f};
+	glm::vec3 right   = {1.0f, 0.0f, 0.0f};
 
-	Mat4x4 view       = {1.0f};
-	Mat4x4 projection = {1.0f};
+	glm::mat4 view       = {1.0f};
+	glm::mat4 projection = {1.0f};
 
 	f32 yaw = 0.0f;
 	f32 pitch = 0.0f;
@@ -28,8 +29,8 @@ struct Camera
 
 	void Update(f32 deltaTime);
 	void UpdateDirectionVectors();
-	[[nodiscard]] Mat4x4 GetViewMatrix() const;
-	[[nodiscard]] Mat4x4 GetProjectionMatrix(f32 aspectRatio) const;
+	[[nodiscard]] glm::mat4 GetViewMatrix() const;
+	[[nodiscard]] glm::mat4 GetProjectionMatrix(f32 aspectRatio) const;
 };
 
 

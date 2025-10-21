@@ -2,17 +2,15 @@
 // Created by Orgest on 6/8/2025.
 //
 #define WIN32_LEAN_AND_MEAN
-// #undef _WIN32_WINNT
-// #define _WIN32_WINNT 0x0A00
-
 
 #include <Windows.h>
-
 // Xbox stuff
 #include <algorithm>
 #include <xinput.h>
 
 #include "Input/InputSys.h"
+#include "Input/InputSysGameInput.h"
+// on runtime load dll
 static HMODULE xinputLib = nullptr;
 static DWORD (WINAPI* XInputGetStateFn)(DWORD, XINPUT_STATE*) = nullptr;
 static DWORD (WINAPI* XInputSetStateFn)(DWORD, XINPUT_VIBRATION*) = nullptr;
@@ -25,8 +23,8 @@ constexpr u16 MAX_VIBRATION = UINT16_MAX;
 	#include <imgui_impl_win32.h>
 #endif
 
-#include "Arena.h"
 #include "Platform.h"
+#include "../Tools/Arena.h"
 #include "tracy/Tracy.hpp"
 
 // Ensure we extract signed coordinate data (multi-monitor support) (Dont want to import the whole of <windowsx.h>)
@@ -38,6 +36,7 @@ extern "C" {
 	__declspec(dllexport) DWORD NvOptimusEnablement = 1;
 	__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 	__declspec(dllexport) void NoHotPatch() {} // Disable Nahimic code injection.
+	LONG __stdcall RtlGetVersion(PRTL_OSVERSIONINFOW lpVersionInformation);
 }
 
 // Forward Declare up here for init
@@ -171,6 +170,7 @@ Keyboard::Key MapKeys(WPARAM wParam, LPARAM lParam)
 		case VK_UP:     return Keyboard::Key::Up;
 		case VK_DOWN:   return Keyboard::Key::Down;
 
+
 		case VK_SHIFT:
 			return (scancode == 0x36) ? Keyboard::Key::Shift : Keyboard::Key::Shift;
 		case VK_CONTROL:
@@ -223,8 +223,6 @@ Keyboard::Key MapKeys(WPARAM wParam, LPARAM lParam)
 
 	return Keyboard::Key::Unknown;
 }
-
-
 void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mode)
 {
 	ZoneScopedN("Init Win32 Platform");
@@ -239,12 +237,24 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
 	width == 0 ? window->windowWidth = window->monitorWidth : window->windowWidth = width;
 	height == 0 ? window->windowHeight = window->monitorHeight : window->windowHeight = height;
 
+	// Check for min Windows version Win 10 22H2
+
+
+	// if (IsWindowsVersionOrGreater(10, 0, 22621))
+	// {
+	// 	ShowMessageBox("Windows 10 22H2 is the min spec", "Error", MessageBoxType::Error);
+	// }
+
 	// Init timer frequency
 	LARGE_INTEGER perfFrequency;
 	QueryPerformanceFrequency(&perfFrequency);
 	window->perfCountFrequency = perfFrequency.QuadPart;
 
+	// Store OS version
+	// InitOSVersion(window);
+
 	// Title (will be changed in the future)!
+	using namespace fmt::literals;
 	const std::string title = fmt::format("{} - {} - {} - {} - {} - {}", ENGINE_NAME, ENGINE_BUILD, window->platformName,
 	                                      ENGINE_VERSION, __DATE__, ENGINE_COMMIT_HASH);
 	std::wstring widePlatformName = ConvertToWideString(title);
@@ -313,6 +323,10 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
 
 	// Xinput!!
 	LoadXInput();
+
+	// GameInput!!
+	gameInput.Init();
+
 }
 
 bool Platform::GetWindowSize(const WindowHandle& handle, u32& width, u32& height)
@@ -432,16 +446,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_XBUTTONDOWN:
 	case WM_XBUTTONDBLCLK:
 		{
-			i32 button = 0;
-			if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) button = 0;
-			if (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONDBLCLK) button = 1;
-			if (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONDBLCLK) button = 2;
-			if (msg == WM_XBUTTONDOWN || msg == WM_XBUTTONDBLCLK) button = (GET_XBUTTON_WPARAM(wParam) == XBUTTON1)
-				                                                               ? Mouse::Button::Button4
-				                                                               : Mouse::Button::Button5;
-
-			if (button >= 0 && button < Mouse::Button::ButtonCount)
-				Input::ProcessEventButton(input.mouseButtons[button], true);
+			// i32 button = 0;
+			// if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) button = 0;
+			// if (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONDBLCLK) button = 1;
+			// if (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONDBLCLK) button = 2;
+			// if (msg == WM_XBUTTONDOWN || msg == WM_XBUTTONDBLCLK) button = (GET_XBUTTON_WPARAM(wParam) == XBUTTON1)
+			// 	                                                               ? Mouse::Button::Button4
+			// 	                                                               : Mouse::Button::Button5;
+			//
+			// if (button >= 0 && button < Mouse::Button::ButtonCount)
+			// 	Input::ProcessEventButton(input.mouseButtons[button], true);
 			return 0;
 		}
 	case WM_LBUTTONUP:
@@ -449,37 +463,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_MBUTTONUP:
 	case WM_XBUTTONUP:
 		{
-			int button = -1;
-
-			switch (msg)
-			{
-			case WM_LBUTTONUP:  button = Mouse::Button::Left;   break;
-			case WM_RBUTTONUP:  button = Mouse::Button::Right;  break;
-			case WM_MBUTTONUP:  button = Mouse::Button::Middle; break;
-			case WM_XBUTTONUP:
-				{
-					WORD xButton = GET_XBUTTON_WPARAM(wParam);
-					if (xButton == XBUTTON1)      button = Mouse::Button::Button4;
-					else if (xButton == XBUTTON2) button = Mouse::Button::Button5;
-					break;
-				}
-			}
-
-			if (button >= 0 && button < Mouse::Button::ButtonCount)
-				Input::ProcessEventButton(input.mouseButtons[button], false);
+			// int button = -1;
+			//
+			// switch (msg)
+			// {
+			// case WM_LBUTTONUP:  button = Mouse::Button::Left;   break;
+			// case WM_RBUTTONUP:  button = Mouse::Button::Right;  break;
+			// case WM_MBUTTONUP:  button = Mouse::Button::Middle; break;
+			// case WM_XBUTTONUP:
+			// 	{
+			// 		WORD xButton = GET_XBUTTON_WPARAM(wParam);
+			// 		if (xButton == XBUTTON1)      button = Mouse::Button::Button4;
+			// 		else if (xButton == XBUTTON2) button = Mouse::Button::Button5;
+			// 		break;
+			// 	}
+			// }
+			//
+			// if (button >= 0 && button < Mouse::Button::ButtonCount)
+			// 	Input::ProcessEventButton(input.mouseButtons[button], false);
 
 			return 0;
 		}
 	case WM_MOUSEWHEEL:
-		input.scrollDelta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+		// input.scrollDelta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
 		break;
 	case WM_SYSKEYDOWN:
 	case WM_KEYDOWN:
 		{
-			const auto key = MapKeys(wParam, lParam);
-			if (key != Keyboard::Key::ButtonCount)
-				Input::ProcessEventButton(input.keyboard[key], true);
-
+			// const auto key = MapKeys(wParam, lParam);
+			// if (key != Keyboard::Key::ButtonCount)
+			// 	Input::ProcessEventButton(input.keyboard[key], true);
+			//
 			if (wParam == VK_ESCAPE)
 			{
 				DestroyWindow(hwnd);
@@ -496,31 +510,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	case WM_SYSKEYUP:
 	case WM_KEYUP:
 		{
-			const auto key = MapKeys(wParam, lParam);
-			if (key != Keyboard::Key::ButtonCount)
-				Input::ProcessEventButton(input.keyboard[key], false);
+			// const auto key = MapKeys(wParam, lParam);
+			// if (key != Keyboard::Key::ButtonCount)
+			// 	Input::ProcessEventButton(input.keyboard[key], false);
 			return 0;
 		}
 	case WM_MOUSEMOVE:
 	case WM_NCMOUSEMOVE:
 		{
-			if (!input.useRawInput)
-			{
-				const f32 currentX = static_cast<f32>(GET_X_LPARAM(lParam));
-				const f32 currentY = static_cast<f32>(GET_Y_LPARAM(lParam));
-
-				// Calculate relative movement (delta)
-				input.xrel = currentX - input.lastX;
-				input.yrel = currentY - input.lastY;
-
-				// Update the last cursor positions
-				input.lastX = currentX;
-				input.lastY = currentY;
-
-				// Update the current cursor positions
-				input.cursorX = currentX;
-				input.cursorY = currentY;
-			}
+			// if (!input.useRawInput)
+			// {
+			// 	const f32 currentX = static_cast<f32>(GET_X_LPARAM(lParam));
+			// 	const f32 currentY = static_cast<f32>(GET_Y_LPARAM(lParam));
+			//
+			// 	// Calculate relative movement (delta)
+			// 	input.xrel = currentX - input.lastX;
+			// 	input.yrel = currentY - input.lastY;
+			//
+			// 	// Update the last cursor positions
+			// 	input.lastX = currentX;
+			// 	input.lastY = currentY;
+			//
+			// 	// Update the current cursor positions
+			// 	input.cursorX = currentX;
+			// 	input.cursorY = currentY;
+			// }
 			break;
 		}
 	case WM_SIZE:
@@ -598,6 +612,7 @@ void Platform::StartFrame(WindowContext& window)
 	const f64 deltaTicks = currentTicks - window.lastFrameTime;
 	window.deltaTime     = deltaTicks / static_cast<f64>(window.perfCountFrequency);
 	window.elapsedTime  += window.deltaTime;
+	window.frameTime     = static_cast<f32>(window.deltaTime * 1000.0);
 	window.fps           = (window.deltaTime > 0.0) ? static_cast<f32>(1.0 / window.deltaTime) : 0.0f;
 
 	window.lastFrameTime = currentTicks;
@@ -631,6 +646,83 @@ Platform::BatteryState Platform::GetBatteryState()
 		state.HasBattery         = false;
 	}
 	return state;
+}
+
+void Platform::CenterMouse(const WindowContext* window)
+{
+	HWND hwnd = static_cast<HWND>(window->handle);
+
+	RECT rc{};
+	GetClientRect(hwnd, &rc);
+
+	POINT pt{};
+	pt.x = (rc.left + rc.right) / 2;
+	pt.y = (rc.top + rc.bottom) / 2;
+
+	// Convert client center → screen coords, then warp
+	ClientToScreen(hwnd, &pt);
+	SetCursorPos(pt.x, pt.y);
+}
+
+void Platform::HideCursor(bool show)
+{
+	ShowCursor(show ? 1 : 0);
+}
+
+bool GetClientRectOnScreen(HWND hwnd, RECT& rect)
+{
+	// Get the client area dimensions in client coordinates.
+	if (!GetClientRect(hwnd, &rect))
+	{
+		return false;
+	}
+
+	// Convert the client coordinates to screen coordinates.
+	POINT upperLeft = {rect.left, rect.top};
+	POINT lowerRight = {rect.right, rect.bottom};
+
+	if (!MapWindowPoints(hwnd, nullptr, &upperLeft, 1))
+	{
+		return false;
+	}
+	if (!MapWindowPoints(hwnd, nullptr, &lowerRight, 1))
+	{
+		return false;
+	}
+
+	// Update the RECT with the new screen coordinates.
+	rect.left = upperLeft.x;
+	rect.top = upperLeft.y;
+	rect.right = lowerRight.x;
+	rect.bottom = lowerRight.y;
+
+	return true;
+}
+
+void Platform::LockCursor(WindowContext& wc, bool enable)
+{
+	HWND hwnd = static_cast<HWND>(wc.handle);
+	if (IsWindow(hwnd) == 0) return;
+
+	if (enable) {
+		RECT screenClip{};
+		if (!GetClientRectOnScreen(hwnd, screenClip)) return;
+
+		// Constrain pointer + route mouse to our window.
+		ClipCursor(&screenClip);
+		SetCapture(hwnd);
+
+		// Hide cursor and mark locked.
+		HideCursor(false);
+
+		// Warp once on transition (you’re already suppressing first deltas).
+		CenterMouse(&wc);
+	} else {
+		// Release everything.
+		ClipCursor(nullptr);
+		ReleaseCapture();
+		HideCursor(true);
+	}
 }
 
 bool Platform::ProcessMessages(WindowContext* /*unused*/)

@@ -18,10 +18,9 @@ namespace Renderer
 		VmaAllocation allocation = VK_NULL_HANDLE;
 		VmaAllocationInfo allocationInfo = {}; // contains mapped data, offsets and such lol
 		GPUBufferInfo info;
-		int allocCount = 0;
 
 		VulkanBuffer() = default;
-		void Init(VulkanDevice* device, const GPUBufferInfo& info);
+		void Init(VulkanDevice* inputDevice, const GPUBufferInfo& inputInfo);
 		void Init(VulkanDevice* device, const BufferPreset preset, u64 size) { Init(device, GPUBufferInfo::FromPreset(preset, size)); };
 
 		// Constructor Versions

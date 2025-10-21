@@ -5,34 +5,34 @@
 #include "VulkanBuffer.h"
 #include <vk_mem_alloc.h>
 
-#include "Logger.h"
 #include "VulkanCheck.h"
 #include "VulkanDebugUtils.h"
 #include "VulkanInit.h"
+#include "Tools/Logger.h"
 
 using namespace Renderer;
 
-void VulkanBuffer::Init(VulkanDevice* device, const GPUBufferInfo& info)
+void VulkanBuffer::Init(VulkanDevice* inputDevice, const GPUBufferInfo& inputInfo)
 {
-	this->device = device;
-	this->info = info;
+	this->device = inputDevice;
+	this->info = inputInfo;
 	assert(device && "VulkanDevice must not be null");
 	assert(info.size > 0 && "Buffer size must be greater than 0");
 	VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
 	// Vulkan usage flags
-	if (HasFlag(info.usage, GPUBufferFlag::VERTEX))                usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-	if (HasFlag(info.usage, GPUBufferFlag::INDEX))                 usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-	if (HasFlag(info.usage, GPUBufferFlag::STORAGE))               usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-	if (HasFlag(info.usage, GPUBufferFlag::CONSTANT))              usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-	if (HasFlag(info.usage, GPUBufferFlag::SHADER_DEVICE_ADDRESS)) usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-	if (HasFlag(info.usage, GPUBufferFlag::SHADER_BINDING_TABLE))  usage |= VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR;
-	if (HasFlag(info.usage, GPUBufferFlag::INDIRECT))				usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+	if (HasAny(inputInfo.usage, GPUBufferFlag::Vertex))                usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	if (HasAny(inputInfo.usage, GPUBufferFlag::Index))                 usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+	if (HasAny(inputInfo.usage, GPUBufferFlag::Storage))               usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+	if (HasAny(inputInfo.usage, GPUBufferFlag::Constant))              usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+	if (HasAny(inputInfo.usage, GPUBufferFlag::ShaderDeviceAddress ))  usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+	if (HasAny(inputInfo.usage, GPUBufferFlag::ShaderBindingTable))    usage |= VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR;
+	if (HasAny(inputInfo.usage, GPUBufferFlag::Indirect))				usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
 	// Create buffer info AFTER usage is finalized
 	VkBufferCreateInfo bufferInfo = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size = info.size,
+		.size = inputInfo.size,
 		.usage = usage,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
@@ -41,7 +41,7 @@ void VulkanBuffer::Init(VulkanDevice* device, const GPUBufferInfo& info)
 	VmaAllocationCreateInfo allocInfo{};
 	allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
 
-	switch (info.heapType)
+	switch (inputInfo.heapType)
 	{
 	case GPUHeapType::Default:
 		allocInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
@@ -60,20 +60,28 @@ void VulkanBuffer::Init(VulkanDevice* device, const GPUBufferInfo& info)
 		break;
 
 	default:
-		LOG(Error, "Unknown heap type: {}", static_cast<int>(info.heapType));
+		LOG(Error, "Unknown heap type: {}", static_cast<i32>(inputInfo.heapType));
 		break;
 	}
 
-	if (info.commit)
+	if (inputInfo.commit)
 	{
 		allocInfo.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 	}
 
-	LOG(Debug, "Creating buffer: size={}, usage=0x{:X}, heapType={}, flags=0x{:X}", info.size, usage, static_cast<int>(info.heapType),
-	    allocInfo.flags);
-	VK_CHECK(vmaCreateBuffer(device->allocator, &bufferInfo, &allocInfo, &buffer, &allocation, &allocationInfo));
-	std::string debugName = " Buffer[" + GPUBufferFlagsToString(info.usage) + "][" + GPUHeapTypeToString(info.heapType) + "]";
-	NameObject(device->device, VK_OBJECT_TYPE_BUFFER, reinterpret_cast<u64>(buffer), debugName.c_str());
+	// --- Nsight capture guard: avoid dedicated when host-visible (Upload/Readback) ---
+#ifdef NSIGHT_CAPTURE
+	if (inputInfo.heapType == GPUHeapType::Upload ||
+		inputInfo.heapType == GPUHeapType::Readback)
+	{
+		allocInfo.flags &= ~VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+	}
+#endif
+	// LOG(Debug, "Creating buffer: size={}, usage=0x{:X}, heapType={}, flags=0x{:X}", inputInfo.size, usage, static_cast<i32>(inputInfo.heapType),
+	//     allocInfo.flags);
+	VK_CHECK(vmaCreateBuffer(inputDevice->allocator, &bufferInfo, &allocInfo, &buffer, &allocation, &allocationInfo));
+	std::string debugName = " Buffer[" + GPUBufferFlagsToString(inputInfo.usage) + "][" + GPUHeapTypeToString(inputInfo.heapType) + "]";
+	NameObject(inputDevice->device, VK_OBJECT_TYPE_BUFFER, reinterpret_cast<u64>(buffer), debugName.c_str());
 }
 
 void* VulkanBuffer::Map() const

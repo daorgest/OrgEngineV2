@@ -20,6 +20,8 @@ bool VulkanQueryPool::Init(VulkanDevice* device, u32 queryCount)
 	};
 	VK_CHECK(vkCreateQueryPool(device->device, &createInfo, nullptr, &queryPool));
 
+	// initialize state so first vkGetQueryPoolResults won't trip validation
+	vkResetQueryPool(device->device, queryPool, 0, queryCount);
 	queryResults.resize(queryCount);
 	return true;
 }
@@ -34,14 +36,13 @@ void VulkanQueryPool::Reset(VkCommandBuffer cmd) const
 	vkCmdResetQueryPool(cmd, queryPool, 0, queryCount);
 }
 
-void VulkanQueryPool::WriteTimestamp(VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage, uint32_t queryIndex) const {
+void VulkanQueryPool::WriteTimestamp(VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage, u32 queryIndex) const {
 	assert(queryIndex < queryCount);
 	vkCmdWriteTimestamp2(cmd, stage, queryPool, queryIndex);
 }
 
-void VulkanQueryPool::FetchResults()
+bool VulkanQueryPool::FetchResults()
 {
-	queryResults.resize(queryCount);
 
 	VkResult res = vkGetQueryPoolResults(
 		device->device,
@@ -54,44 +55,33 @@ void VulkanQueryPool::FetchResults()
 		VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT
 	);
 
-	if (res != VK_SUCCESS && res != VK_NOT_READY)
+	if (res == VK_NOT_READY)
+		return false; // GPU not done yet; try next frame (after fence)
+
+	if (res != VK_SUCCESS)
 	{
-		fprintf(stderr, "vkGetQueryPoolResults failed with error code 0x%X.\n", res);
-		return;
+		fprintf(stderr, "vkGetQueryPoolResults failed: 0x%X\n", res);
+		return false;
 	}
-
-	// Conversion sourced from Godot Engine's Vulkan rendering driver.
-	auto mult64to128 = [](u64 u, u64 v, u64 &h, u64 &l) {
-		u64 u1 = (u & 0xffffffff);
-		u64 v1 = (v & 0xffffffff);
-		u64 t = (u1 * v1);
-		u64 w3 = (t & 0xffffffff);
-		u64 k = (t >> 32);
-
-		u >>= 32;
-		t = (u * v1) + k;
-		k = (t & 0xffffffff);
-		u64 w1 = (t >> 32);
-
-		v >>= 32;
-		t = (u1 * v) + k;
-		k = (t >> 32);
-
-		h = (u * v) + w1 + k;
-		l = (t << 32) + w3;
-	};
-
-	constexpr u64 shift_bits = 16;
-	f64 timestampPeriod = f64(device->deviceProperties.limits.timestampPeriod);
-	u64 scale = u64(timestampPeriod * f64(1 << shift_bits));
-
-	// Convert all timestamps using the trick
-	for (auto& [time, available] : queryResults)
-	{
-		u64 hi = 0;
-		u64 lo = 0;
-		mult64to128(time, scale, hi, lo);
-		time = (lo >> shift_bits) | (hi << (64 - shift_bits));
-	}
-
+	return true;
 }
+
+f32 VulkanQueryPool::DeltaMs(u32 beginIdx, u32 endIdx) const
+{
+	if (beginIdx >= queryResults.size() || endIdx >= queryResults.size())
+		return 0.0f;
+
+	const auto& b = queryResults[beginIdx];
+	const auto& e = queryResults[endIdx];
+
+	// Must be available (non-zero per spec when WITH_AVAILABILITY_BIT)
+	if (b.available == 0 || e.available == 0 || e.time <= b.time)
+		return 0.0f;
+
+	// timestampPeriod is *nanoseconds per tick*
+	const f32 periodNs = device->deviceProperties.limits.timestampPeriod;
+	const f64 ns = static_cast<f64>(e.time - b.time) * static_cast<f64>(periodNs);
+
+	return static_cast<f32>(ns * 1e-6); // ns -> ms
+}
+

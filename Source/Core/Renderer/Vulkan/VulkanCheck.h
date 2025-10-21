@@ -111,13 +111,16 @@ static const char* VkResultToString(VkResult input) {
     }
 }
 
-#define VK_CHECK(expr)                                                         \
-    do {                                                                       \
-        VkResult __result = (expr);                                            \
-        if (__result != VK_SUCCESS) {                                          \
-            std::fprintf(stderr, "[VK_CHECK] '%s' failed at line %d with %d (%s) \n",\
-                        #expr, __LINE__, static_cast<int>(__result), VkResultToString(__result));          \
-        }                                                                      \
+#define VK_CHECK(expr)                                                          \
+    do {                                                                        \
+        VkResult __result = (expr);                                             \
+        if (__result != VK_SUCCESS) {                                           \
+            fmt::print(                                                         \
+                "[VK_CHECK] '{}' failed at line {} with {} ({})\n",             \
+                #expr, __LINE__, static_cast<int>(__result),                    \
+                VkResultToString(__result));                                    \
+            std::fflush(stderr);                                                \
+        }                                                                       \
     } while (0)
 #else
 #define VK_CHECK(expr) (expr)

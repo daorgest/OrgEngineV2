@@ -3,7 +3,7 @@
 //
 
 #pragma once
-#include "Array.h"
+#include "Tools/Array.h"
 
 constexpr u32 CONTROLLER_COUNT = 1;
 constexpr f32 MAX_THUMB_VALUE = 32767.0f;
@@ -35,7 +35,7 @@ namespace Gamepad
 		LeftShoulder, RightShoulder,
 		ButtonCount
 	};
-}
+}  // namespace Gamepad
 
 namespace Keyboard
 {
@@ -43,43 +43,37 @@ namespace Keyboard
 	{
 		Unknown = 0,
 
-		// Letters
 		A, B, C, D, E, F, G, H, I, J, K, L, M,
 		N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
 
-		// Numbers (Top row)
 		Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
 
-		// Modifiers & control
 		Shift, Ctrl, Alt,
 
-		// Symbols and punctuation
 		Plus_Equal, Minus_Underscore, Period_RightArrow, Comma_LeftArrow, SemiColon, Question_BackSlash,
 		Tilde, Quotes, SquareBracketsOpen, SquareBracketsClose, Backslash, Slash,
 
-		// Control Keys
 		Tab, Enter, Escape, Backspace, Space,
 		Insert, Delete, Home, End,
 		Up, Down, Left, Right,
 
-		// Function Keys
 		F1, F2, F3, F4, F5, F6,
 		F7, F8, F9, F10, F11, F12,
 
-		// Meta Keys
 		CapsLock, NumLock, ScrollLock,
 		PrintScreen, Pause, Menu,
 
 		ButtonCount
 	};
-}
+}  // namespace Keyboard
 
 struct ButtonState
 {
 	u8 pressed : 1;
 	u8 held : 1;
 	u8 released : 1;
-	u8 unused : 5;
+	u8 seenThisFrame : 1;
+	u8 unused : 4;
 };
 
 struct InputConfig
@@ -99,16 +93,19 @@ struct Input
 
 	f32 cursorX = 0.0f;
 	f32 cursorY = 0.0f;
-	f32 xrel = 0.0f, yrel = 0.0f;
-	f32 lastX = 0.0f, lastY = 0.0f;
-	i16 scrollDelta = 0;
+	f64 xrel = 0.0f, yrel = 0.0f;
+	f64 lastX = 0.0f, lastY = 0.0f;
 
+	i64 scrollX = 0, scrollY = 0;
+	i64 prevWheelX = 0, prevWheelY = 0;
 	f32 leftMotorVibration = 0.0f, rightMotorVibration = 0.0f;
 	i16 thumbLeftX = 0, thumbLeftY = 0;
 	i16 thumbRightX = 0, thumbRightY = 0;
 	u8 leftTrigger = 0, rightTrigger = 0;
 
 	bool usingController = false;
+	bool usingKeyboard = false;
+	bool usingMouse = false;
 	bool useRawInput = false;
 	bool mouseLookActive = false;
 
@@ -118,7 +115,7 @@ struct Input
 	static void ResetInputOnFocusLoss();
 
 	// Access helpers (instead of my usual way)
-	[[nodiscard]] bool IsKeyPressed(Keyboard::Key k) const { return keyboard[k].pressed; }
+	[[nodiscard]] bool IsKeyDown(Keyboard::Key k)    const { return keyboard[k].pressed; }
 	[[nodiscard]] bool IsKeyHeld(Keyboard::Key k)    const { return keyboard[k].held; }
 	[[nodiscard]] bool IsKeyReleased(Keyboard::Key k)const { return keyboard[k].released; }
 };

@@ -4,11 +4,206 @@
 
 #include "VulkanPipeline.h"
 
-#include "Array.h"
-#include "Logger.h"
 #include "volk.h"
+#include "Tools/Array.h"
+#include "Tools/Logger.h"
 
 using namespace Renderer;
+
+void VulkanPipeline::Destroy() const
+{
+	if (vk != VK_NULL_HANDLE)
+		vkDestroyPipeline(device->device, vk, nullptr);
+	if (vkLayout != VK_NULL_HANDLE)
+		vkDestroyPipelineLayout(device->device, vkLayout, nullptr);
+}
+
+static VkPipelineLayout CreatePipelineLayoutFromDesc(VkDevice device, const PipelineLayoutDesc& desc,
+                                                     const std::optional<VkPushConstantRange>& builderPCR)
+{
+	const VkPushConstantRange* pPCR = nullptr;
+	u32 pcrCount = 0;
+
+	if (!desc.pushRanges.empty())
+	{
+		pPCR = desc.pushRanges.data();
+		pcrCount = static_cast<u32>(desc.pushRanges.size());
+	}
+	else if (builderPCR.has_value() && builderPCR->size > 0)
+	{
+		pPCR = &(*builderPCR);
+		pcrCount = 1;
+	}
+
+	VkPipelineLayoutCreateInfo plInfo{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = static_cast<u32>(desc.setLayouts.size()),
+		.pSetLayouts = desc.setLayouts.data(),
+		.pushConstantRangeCount = pcrCount,
+		.pPushConstantRanges = pPCR,
+	};
+
+	VkPipelineLayout layout = VK_NULL_HANDLE;
+	vkCreatePipelineLayout(device, &plInfo, nullptr, &layout);
+	return layout;
+}
+
+Result<bool> VulkanPipeline::Create(const VulkanDevice* device, const PipelineLayoutDesc& layoutDesc, const VulkanPipelineBuilder& builder)
+{
+	this->device = device;
+
+	if (!device || device->device == VK_NULL_HANDLE) {
+		LOG(Error, "VulkanPipeline::Create called with null VulkanDevice");
+		return false;
+	}
+	// 0) Collect optional push-constant range from builder
+	std::optional<VkPushConstantRange> maybePushConstants;
+	if (builder.data.config.hasPushConstant)
+	{
+		maybePushConstants = builder.data.config.pushConstantRange;
+	}
+
+	// 1) Create/resolve pipeline layout
+	if (builder.data.config.layout != VK_NULL_HANDLE)
+	{
+		vkLayout = builder.data.config.layout; // pre-supplied by caller
+	}
+	else
+	{
+		vkLayout = CreatePipelineLayoutFromDesc(device->device, layoutDesc, maybePushConstants);
+		if (vkLayout == VK_NULL_HANDLE)
+		{
+			LOG(Error, "Failed to create VkPipelineLayout");
+			return false;
+		}
+	}
+
+	// 2) Determine pipeline kind based on stages
+	bool hasCompute = false;
+	bool hasGraphics = false;
+	for (const auto& s : builder.data.shaderStages.stages)
+	{
+		if (s.stage & VK_SHADER_STAGE_COMPUTE_BIT) hasCompute = true;
+		if (s.stage & (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+			VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+			VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT))
+		{
+			hasGraphics = true;
+		}
+	}
+
+	// 3) Basic validation
+	if (!hasCompute && !hasGraphics)
+	{
+		LOG(Error, "No shader stages specified for pipeline creation");
+		return false;
+	}
+	if (hasCompute && hasGraphics)
+	{
+		LOG(Error, "Mixed compute+graphics stages not supported in one pipeline");
+		return false;
+	}
+
+	// 4) Create pipeline
+	if (hasCompute)
+	{
+		// Expect exactly one compute stage
+		const VkPipelineShaderStageCreateInfo* stage = nullptr;
+		for (const auto& s : builder.data.shaderStages.stages)
+		{
+			if (s.stage == VK_SHADER_STAGE_COMPUTE_BIT)
+			{
+				stage = &s;
+				break;
+			}
+		}
+		if (stage == nullptr)
+		{
+			LOG(Error, "Compute pipeline requested but no compute stage provided");
+			return false;
+		}
+
+		const VkComputePipelineCreateInfo ci = {
+			.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+			.stage = *stage,
+			.layout = vkLayout,
+		};
+
+		if (vkCreateComputePipelines(device->device, VK_NULL_HANDLE, 1, &ci, nullptr, &vk) != VK_SUCCESS)
+		{
+			LOG(Error, "vkCreateComputePipelines failed");
+			return false;
+		}
+	}
+	else
+	{
+		// Graphics
+		// Sanity: dynamic rendering formats
+		if (builder.data.config.renderInfo.colorAttachmentCount > 0 &&
+			builder.data.config.renderInfo.pColorAttachmentFormats == nullptr)
+		{
+			LOG(Error, "colorAttachmentCount > 0 but pColorAttachmentFormats == nullptr");
+			return false;
+		}
+
+		VkPipelineViewportStateCreateInfo viewportState = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+			.viewportCount = 1,
+			.scissorCount = 1
+		};
+
+		VkPipelineColorBlendStateCreateInfo colorBlending = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			.logicOpEnable = VK_FALSE,
+			.logicOp = VK_LOGIC_OP_COPY,
+			.attachmentCount = 1,
+			.pAttachments = &builder.data.config.colorBlendAttachment
+		};
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+			.vertexBindingDescriptionCount = static_cast<u32>(builder.data.config.bindings.size()),
+			.pVertexBindingDescriptions = builder.data.config.bindings.data(),
+			.vertexAttributeDescriptionCount = static_cast<u32>(builder.data.config.attributes.size()),
+			.pVertexAttributeDescriptions = builder.data.config.attributes.data(),
+		};
+
+		VkGraphicsPipelineCreateInfo pipelineInfo = {
+			.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+			.pNext = &builder.data.config.renderInfo,
+			.stageCount = static_cast<u32>(builder.data.shaderStages.stages.size()),
+			.pStages = builder.data.shaderStages.stages.data(),
+			.pVertexInputState = &vertexInputInfo,
+			.pInputAssemblyState = &builder.data.config.inputAssembly,
+			.pViewportState = &viewportState,
+			.pRasterizationState = &builder.data.config.rasterizer,
+			.pMultisampleState = &builder.data.config.multisampling,
+			.pDepthStencilState = &builder.data.config.depthStencil,
+			.pColorBlendState = &colorBlending,
+			.layout = vkLayout,
+		};
+
+		constexpr Array state = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+		VkPipelineDynamicStateCreateInfo dynamicInfo{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+			.dynamicStateCount = static_cast<u32>(state.size()),
+			.pDynamicStates = &state.front(),
+		};
+		pipelineInfo.pDynamicState = &dynamicInfo;
+
+		if (vkCreateGraphicsPipelines(device->device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk) != VK_SUCCESS)
+		{
+			LOG(Error, "vkCreateGraphicsPipelines failed");
+			return false;
+		}
+	}
+
+	return true;
+}
+
 
 VulkanPipelineBuilder::VulkanPipelineBuilder()
 {
@@ -38,7 +233,7 @@ VulkanPipelineBuilder::VulkanPipelineBuilder()
 	data.shaderStages.stages.clear();
 }
 
-VkPipeline VulkanPipelineBuilder::BuildPipeline(VkDevice device)
+VulkanPipeline VulkanPipelineBuilder::BuildPipeline(VulkanDevice* device)
 {
 	VkPipelineViewportStateCreateInfo viewportState = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
@@ -91,12 +286,12 @@ VkPipeline VulkanPipelineBuilder::BuildPipeline(VkDevice device)
 	};
 	pipelineInfo.pDynamicState = &dynamicInfo;
 
-	VkPipeline pipeline;
-	VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+	VulkanPipeline pipeline(device);
+	VkResult result = vkCreateGraphicsPipelines(device->device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+		&pipeline.vk);
 	if (result != VK_SUCCESS)
 	{
 		LOG(Error, "Failed to create pipeline");
-		return VK_NULL_HANDLE;
 	}
 	return pipeline;
 }
@@ -296,7 +491,7 @@ VulkanPipelineBuilder& VulkanPipelineBuilder::EnableBlendingAlphaBlend()
 	return *this;
 }
 
-VulkanPipelineBuilder& VulkanPipelineBuilder::Layout(VkPipelineLayout& layout)
+VulkanPipelineBuilder& VulkanPipelineBuilder::Layout(const VkPipelineLayout& layout)
 {
 	data.config.layout = layout;
 	return *this;

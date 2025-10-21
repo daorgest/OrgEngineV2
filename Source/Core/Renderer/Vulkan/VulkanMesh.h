@@ -4,12 +4,11 @@
 
 #pragma once
 #include "MeshData.h"
-#include "Vector.h"
-#include "volk.h"
+#include "Tools/Vector.h"
 
+#include <glm/glm.hpp>
 
-#include <memory>
-
+#include "AABB.h"
 #include "VulkanBuffer.h"
 #include "VulkanDescriptors.h"
 struct ArenaAllocator;
@@ -23,10 +22,11 @@ namespace Renderer
 	struct VulkanDevice;
 	struct VulkanBuffer;
 
-	struct TextureFallback
+	struct TextureOrFallback
 	{
 		VulkanImage* fallbackImage = nullptr;
 		VulkanSampler* fallbackSampler = nullptr;
+		VulkanImage* fallbackNormalImage = nullptr;
 	};
 
 	struct VulkanMaterial
@@ -34,8 +34,7 @@ namespace Renderer
 		VulkanImage* colorImage = nullptr;
 		VulkanSampler* sampler = nullptr;
 		VulkanImage* normalImage = nullptr;
-		u32 materialIndex = 0;
-		VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+		DescriptorSet descriptorSet;
 	};
 
 	struct VulkanModel
@@ -44,35 +43,46 @@ namespace Renderer
 		Vector<VulkanImage> images;
 		Vector<VulkanSampler> samplers;
 		Vector<VulkanMaterial> materials;
-		VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+		DescriptorLayout layout;
 		DescriptorAllocatorGrowable descriptorPool;
+
+		AABB modelAABB;
 
 		// Materials soon...AABB, etc
 		VulkanModel() = default;
 
-		void LoadModel(VulkanDevice* device, const LoadedModel& loadedModel, TextureFallback* fallback);
+		VulkanModel(VulkanDevice* device, LoadedModel& loadedModel, TextureOrFallback& fallback);
 		void Destroy(const VulkanDevice* device);
 	};
 
 
-	struct VulkanModelComponent
+	struct ModelComponent
 	{
 		VulkanModel* model = nullptr;
-		Mat4x4 transform;
+		glm::mat4 transform = {1.0f};
+	};
+
+	struct DrawCache {
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+		const VulkanMaterial* lastMat = nullptr;   // optional (keep if you want)
+		VkDescriptorSet      lastMatSet = VK_NULL_HANDLE;  // <-- add this
+		VkBuffer             lastIndex = VK_NULL_HANDLE;
+		VkDeviceSize         lastIndexOffset = ~VkDeviceSize{0};
 	};
 
 	struct VulkanMeshPart
 	{
 		VulkanBuffer vertexBuffer;
 		VulkanBuffer indexBuffer;
-		u64 vertexAddress;
-
+		u64 vertexAddress = 0;
 		u32 indexCount = 0;
 		u32 materialIndex = 0;
-		std::string materialName = "albedo";
+
+		glm::mat4 transform = {1.0f};
+		AABB localBounds;
 
 		void Destroy();
 		bool Create(VulkanDevice* device, const MeshPart& mesh);
-		void Draw(VkCommandBuffer cmd, VkPipelineLayout pipelineLayout, VkDescriptorSet materialSet) const;
+		void Draw(VkCommandBuffer cmd, VkPipelineLayout pipelineLayout, DescriptorSet materialSet) const;
 	};
 }

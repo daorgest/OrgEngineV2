@@ -5,34 +5,139 @@
 #pragma once
 #include <cassert>
 #include <cmath>
+#include <optional>
+#include <span>
 #include <string>
 #include <type_traits>
 
-#include "PrimTypes.h"
-#include "Vector.h"
+#include "RendererTypes.h"
+#include "Tools/Vector.h"
+
+#define ENUM_CLASS_BITOPS(Enum)                                                        \
+[[nodiscard]] constexpr Enum operator|(Enum a, Enum b) noexcept {                    \
+return static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); }         \
+[[nodiscard]] constexpr Enum operator&(Enum a, Enum b) noexcept {                    \
+return static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); }         \
+[[nodiscard]] constexpr Enum operator^(Enum a, Enum b) noexcept {                    \
+return static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); }         \
+[[nodiscard]] constexpr Enum operator~(Enum a) noexcept {                            \
+return static_cast<Enum>(~std::to_underlying(a)); }                                 \
+constexpr Enum& operator|=(Enum& a, Enum b) noexcept { return a = (a | b); }         \
+constexpr Enum& operator&=(Enum& a, Enum b) noexcept { return a = (a & b); }         \
+constexpr Enum& operator^=(Enum& a, Enum b) noexcept { return a = (a ^ b); }         \
+/* == / != against underlying integer type */                                        \
+[[nodiscard]] constexpr bool operator==(Enum a, std::underlying_type_t<Enum> u) noexcept { \
+return std::to_underlying(a) == u; }                                               \
+[[nodiscard]] constexpr bool operator==(std::underlying_type_t<Enum> u, Enum a) noexcept { \
+return u == std::to_underlying(a); }                                               \
+[[nodiscard]] constexpr bool operator!=(Enum a, std::underlying_type_t<Enum> u) noexcept { \
+return std::to_underlying(a) != u; }                                               \
+[[nodiscard]] constexpr bool operator!=(std::underlying_type_t<Enum> u, Enum a) noexcept { \
+return u != std::to_underlying(a); }
 
 template <typename E>
-constexpr bool HasFlag(E value, E flag)
+[[nodiscard]] constexpr bool HasAny(E value, E mask)
 {
-	using UT = std::underlying_type_t<E>;
-	return (static_cast<UT>(value) & static_cast<UT>(flag)) != 0;
+	using U = std::underlying_type_t<E>;
+	return (static_cast<U>(value) & static_cast<U>(mask)) != 0;
 }
+
+template <typename E>
+[[nodiscard]] constexpr bool HasAll(E value, E mask)
+{
+	using U = std::underlying_type_t<E>;
+	return (static_cast<U>(value) & static_cast<U>(mask)) == static_cast<U>(mask);
+}
+
+struct Extent2D
+{
+	u32 width;
+	u32 height;
+
+	[[nodiscard]] bool IsZero() const { return width == 0 || height == 0; }
+	bool operator==(const Extent2D& rhs) const { return width == rhs.width && height == rhs.height; }
+};
+
+struct Extent3D
+{
+	u32 width = 0;
+	u32 height = 0;
+	u32 depth = 1;
+};
+
+struct Viewport
+{
+	f32 x{}, y{}, width{}, height{}, minDepth = 0.f, maxDepth = 1.f;
+};
 
 // Present Modes
 
 enum class PresentMode
 {
-	VSyncOn,         // Synchronized to vertical blank (tearing-free)
-	VSyncOff,        // Present as fast as possible (tearing allowed)
-	LowLatency,      // Lower latency, minimizes tearing if supported
-	RelaxedVSync     // VSync with more tolerance (optional, rare)
+	VSyncOn, // Synchronized to vertical blank (tearing-free)
+	VSyncOff, // Present as fast as possible (tearing allowed)
+	LowLatency, // Lower latency, minimizes tearing if supported
+	RelaxedVSync // VSync with more tolerance (optional, rare)
 };
+
+static constexpr std::pair<PresentMode, const char*> kVsyncModes[] = {
+	{ PresentMode::VSyncOn,  "VSync On"  },
+	{ PresentMode::VSyncOff, "VSync Off" },
+	{ PresentMode::RelaxedVSync,  "Adaptive"  },
+	{ PresentMode::LowLatency,  "Mailbox"  }
+};
+
 
 enum class BufferingMode : u32
 {
 	Double = 2,
 	Triple = 3,
-	Quad   = 4
+	Quad = 4
+};
+
+// Pipelines
+enum class PrimitiveTopology : u8
+{
+	PointList,
+	LineList,
+	LineStrip,
+	TriangleList,
+	TriangleStrip,
+	TriangleFan
+};
+
+enum class PolygonMode : u8 { Fill, Line, Point };
+
+enum class CullMode : u8 { None, Front, Back, FrontAndBack };
+
+enum class FrontFace : u8 { CounterClockwise, Clockwise };
+
+enum class SampleCount : u8 { X1, X2, X4, X8, X16, X32, X64 };
+
+enum class CompareOp : u8
+{
+	Never,
+	Less,
+	Equal,
+	LessOrEqual,
+	Greater,
+	NotEqual,
+	GreaterOrEqual,
+	Always
+};
+
+// “Dynamic state” list is API-neutral; backends map to their own dynamic states.
+enum class DynamicState : u8
+{
+	Viewport,
+	Scissor,
+	LineWidth,
+	DepthBias,
+	BlendConstants,
+	DepthBounds,
+	StencilCompareMask,
+	StencilWriteMask,
+	StencilReference
 };
 
 // Meshes
@@ -106,25 +211,6 @@ enum class TextureLayout
 	Unknown
 };
 
-namespace ImageUsage
-{
-	enum Enum : u32
-	{
-		NONE = 0,
-		TRANSFER_SRC = 1 << 0, // Source for copy operations
-		TRANSFER_DST = 1 << 1, // Destination for copy operations
-		SAMPLED = 1 << 2, // Sampled texture
-		COLOR_ATTACHMENT = 1 << 3, // Render target
-		DEPTH_STENCIL_ATTACHMENT = 1 << 4, // Depth/stencil buffer
-		STORAGE = 1 << 5, // Storage image
-		INPUT_ATTACHMENT = 1 << 6, // Subpass input
-		RESOLVE_DST = 1 << 7, // Resolve operation destination
-		RESOLVE_SRC = 1 << 8, // Resolve operation source
-	};
-};
-
-typedef u32 ImageUsageFlags;
-
 enum class DepthFormat
 {
 	D32_SFLOAT, // 32-bit floating-point Depth format
@@ -135,10 +221,11 @@ enum class DepthFormat
 
 enum class TextureDimension
 {
-	TEXTURE_1D,
-	TEXTURE_2D,
-	TEXTURE_3D,
-	NONE
+	Texture1D,
+	Texture2D,
+	Texture3D,
+	CubeMap,
+	None
 };
 
 enum class ImageType : u32
@@ -146,6 +233,26 @@ enum class ImageType : u32
 	Image2D,
 	CubeMap
 };
+
+
+namespace ImageUsage
+{
+	enum Flags : u32
+	{
+		None            = 0,
+		TransferSrc     = 1 << 0,
+		TransferDst     = 1 << 1,
+		Sampled         = 1 << 2,
+		ColorAttachment = 1 << 3,
+		DepthStencil    = 1 << 4,
+		Storage         = 1 << 5,
+		InputAttachment = 1 << 6,
+		ResolveDst      = 1 << 7,
+		ResolveSrc      = 1 << 8,
+	};
+}
+
+using ImageUsageFlags = u32;
 
 
 // Samplers
@@ -199,61 +306,50 @@ struct SamplerDesc
 	bool unnormalizedCoords = false;
 };
 
-// Buffer
+// Buffers
+enum class GPUHeapType : u8 { Default, Upload, Readback, Unknown };
 
-enum class GPUBufferFlag : u32
+inline const char* GPUHeapTypeToString(GPUHeapType t)
 {
-	NONE = 0,
-	VERTEX = 1 << 0,
-	INDEX = 1 << 1,
-	STORAGE = 1 << 2,
-	CONSTANT = 1 << 3,
-	SHADER_DEVICE_ADDRESS = 1 << 4,
-	SHADER_BINDING_TABLE = 1 << 5,
-	INDIRECT = 1 << 6,
-};
-
-inline GPUBufferFlag operator|(GPUBufferFlag a, GPUBufferFlag b)
-{
-	return static_cast<GPUBufferFlag>(static_cast<u32>(a) | static_cast<u32>(b));
-}
-
-inline std::string GPUBufferFlagsToString(GPUBufferFlag flags)
-{
-	std::string out;
-
-	if (HasFlag(flags, GPUBufferFlag::VERTEX)) out += "VERTEX|";
-	if (HasFlag(flags, GPUBufferFlag::INDEX)) out += "INDEX|";
-	if (HasFlag(flags, GPUBufferFlag::STORAGE)) out += "STORAGE|";
-	if (HasFlag(flags, GPUBufferFlag::CONSTANT)) out += "CONSTANT|";
-	if (HasFlag(flags, GPUBufferFlag::INDIRECT)) out += "INDIRECT|";
-	if (HasFlag(flags, GPUBufferFlag::SHADER_DEVICE_ADDRESS)) out += "SHADER_DEVICE_ADDRESS|";
-	if (HasFlag(flags, GPUBufferFlag::SHADER_BINDING_TABLE)) out += "SHADER_BINDING_TABLE|";
-
-	if (!out.empty()) out.pop_back(); // remove trailing '|'
-	if (out.empty()) out = "NONE";
-
-	return out;
-}
-
-
-enum class GPUHeapType : u8
-{
-	Default,
-	Upload,
-	Readback,
-	Unknown
-};
-
-inline const char* GPUHeapTypeToString(GPUHeapType type)
-{
-	switch (type)
+	switch (t)
 	{
 	case GPUHeapType::Default: return "Default";
 	case GPUHeapType::Upload: return "Upload";
 	case GPUHeapType::Readback: return "Readback";
 	default: return "Unknown";
 	}
+}
+
+enum class GPUBufferFlag : u32
+{
+	None = 0,
+	Vertex = 1 << 0,
+	Index = 1 << 1,
+	Storage = 1 << 2,
+	Constant = 1 << 3,
+	ShaderDeviceAddress = 1 << 4,
+	ShaderBindingTable = 1 << 5,
+	Indirect = 1 << 6,
+};
+
+ENUM_CLASS_BITOPS(GPUBufferFlag)
+
+inline std::string GPUBufferFlagsToString(GPUBufferFlag flags)
+{
+	std::string out;
+
+	if (HasAny(flags, GPUBufferFlag::Vertex)) out += "VERTEX|";
+	if (HasAny(flags, GPUBufferFlag::Index)) out += "INDEX|";
+	if (HasAny(flags, GPUBufferFlag::Storage)) out += "STORAGE|";
+	if (HasAny(flags, GPUBufferFlag::Constant)) out += "CONSTANT|";
+	if (HasAny(flags, GPUBufferFlag::Indirect)) out += "INDIRECT|";
+	if (HasAny(flags, GPUBufferFlag::ShaderDeviceAddress)) out += "SHADER_DEVICE_ADDRESS|";
+	if (HasAny(flags, GPUBufferFlag::ShaderBindingTable)) out += "SHADER_BINDING_TABLE|";
+
+	if (!out.empty()) out.pop_back(); // remove trailing '|'
+	if (out.empty()) out = "NONE";
+
+	return out;
 }
 
 enum class BufferPreset
@@ -272,7 +368,7 @@ struct GPUBufferInfo
 {
 	u64 size = 0;
 	GPUHeapType heapType = GPUHeapType::Unknown;
-	GPUBufferFlag usage = GPUBufferFlag::NONE;
+	GPUBufferFlag usage = GPUBufferFlag::None;
 	bool commit = false;
 	const char* name = nullptr;
 
@@ -281,38 +377,39 @@ struct GPUBufferInfo
 		switch (preset)
 		{
 		case BufferPreset::VertexGPU:
-			return {size, GPUHeapType::Upload, GPUBufferFlag::VERTEX};
+			return {size, GPUHeapType::Upload, GPUBufferFlag::Vertex};
 
 		case BufferPreset::VertexStorageGPU:
-			return {size, GPUHeapType::Upload, GPUBufferFlag::VERTEX | GPUBufferFlag::STORAGE | GPUBufferFlag::SHADER_DEVICE_ADDRESS};
+			return {size, GPUHeapType::Upload, GPUBufferFlag::Vertex | GPUBufferFlag::Storage | GPUBufferFlag::ShaderDeviceAddress};
 
 		case BufferPreset::IndexGPU:
-			return {size, GPUHeapType::Default, GPUBufferFlag::INDEX};
+			return {size, GPUHeapType::Default, GPUBufferFlag::Index};
 
 		case BufferPreset::UniformHost:
-			return {size, GPUHeapType::Upload, GPUBufferFlag::CONSTANT, true};
+			return {size, GPUHeapType::Upload, GPUBufferFlag::Constant, true};
 
 		case BufferPreset::StagingUpload:
-			return {size, GPUHeapType::Upload, GPUBufferFlag::NONE, true};
+			return {size, GPUHeapType::Upload, GPUBufferFlag::None, true};
 
 		case BufferPreset::StagingDownload:
-			return {size, GPUHeapType::Readback, GPUBufferFlag::NONE, true};
+			return {size, GPUHeapType::Readback, GPUBufferFlag::None, true};
 
 		case BufferPreset::StorageGPU:
-			return {size, GPUHeapType::Default, GPUBufferFlag::STORAGE | GPUBufferFlag::SHADER_DEVICE_ADDRESS};
+			return {size, GPUHeapType::Default, GPUBufferFlag::Storage | GPUBufferFlag::ShaderDeviceAddress};
 
 		case BufferPreset::StorageHostPersistent:
-			return {size, GPUHeapType::Upload, GPUBufferFlag::STORAGE, true};
+			return {size, GPUHeapType::Upload, GPUBufferFlag::Storage, true};
 
 		default:
 			assert(false && "Unknown BufferPreset");
-			break;
+			return {};
 		}
 	}
 };
 
 enum class DescriptorType
 {
+	Unknown,
 	Sampler,
 	SampledImage,
 	CombinedImageSampler,
@@ -323,28 +420,24 @@ enum class DescriptorType
 	AccelerationStructure
 };
 
-// Vendors/Shader Format
-
-namespace ShaderStage
+enum class ShaderStage : u32
 {
-	enum Enum : u32
-	{
-		NONE           = 0,
-		VERTEX         = 1 << 0,
-		FRAGMENT       = 1 << 1,
-		COMPUTE        = 1 << 2,
-		RAYGEN         = 1 << 3,
-		ANY_HIT        = 1 << 4,
-		CLOSEST_HIT    = 1 << 5,
-		MISS           = 1 << 6,
-		CALLABLE       = 1 << 7,
+	None = 0,
+	Vertex = 1 << 0,
+	Fragment = 1 << 1,
+	Compute = 1 << 2,
+	RayGen = 1 << 3,
+	AnyHit = 1 << 4,
+	ClosestHit = 1 << 5,
+	Miss = 1 << 6,
+	Callable = 1 << 7,
 
-		ALL_GRAPHICS   = VERTEX | FRAGMENT,
-		ALL            = 0xFFFFFFFF
-	};
-}
-typedef u32 ShaderStageFlags;
+	AllGraphics = Vertex | Fragment,
+	All = 0xFFFFFFFF
+};
 
+ENUM_CLASS_BITOPS(ShaderStage)
+using ShaderStageFlags = ShaderStage;
 
 enum class ShaderFormat
 {
@@ -353,44 +446,57 @@ enum class ShaderFormat
 	SPIRV,
 };
 
+// RenderPass
+enum class LoadOP
+{
+	Load,
+	Clear,
+	DontCare
+};
+
+enum class StoreOp
+{
+	Store,
+	DontCare
+};
+
 enum class GPUVendor
 {
 	UNKNOWN = 0x0,
 	AMD = 0x1002,
 	Nvidia = 0x10DE,
-	INTEL = 0x8086
+	Intel = 0x8086,
+	Apple = 0x106B
 };
 
-struct Extent2D
+enum class GPUDeviceType
 {
-	u32 width;
-	u32 height;
-
-	[[nodiscard]] bool IsZero() const { return width == 0 || height == 0; }
-	bool operator==(const Extent2D& rhs) const { return width == rhs.width && height == rhs.height; }
+	Unknown,
+	Integrated,
+	Discrete,
+	Virtual,
+	CPU
 };
 
-struct Extent3D
+struct GPUDeviceDesc
 {
-	u32 width;
-	u32 height;
-	u32 depth;
-};
-
-struct Viewport
-{
-	f32 x{}, y{}, width{}, height{}, minDepth = 0.f, maxDepth = 1.f;
+	std::string name = "Unknown";
+	GPUDeviceType type = GPUDeviceType::Unknown;
+	GPUVendor vendor = GPUVendor::UNKNOWN;
+	u64 driverVersion = 0;
+	u64 dedicatedVideoMemory = 0;
 };
 
 // NOTE: ImageType is 2D by default
 struct TextureInfo
 {
-	Extent3D extent;
+	Extent3D extent = {};
 	u16 mipLevels = 1;
+	u16 arrayLayers = 1;
 	ImageType type = ImageType::Image2D;
 	TextureFormat format = TextureFormat::IMAGE_FORMAT_UNKNOWN;
-	TextureDimension dimension = TextureDimension::TEXTURE_2D;
-	ImageUsageFlags usage = ImageUsage::NONE;
+	TextureDimension dimension = TextureDimension::Texture2D;
+	ImageUsageFlags usage = ImageUsage::None;
 
 	void EnableMipmaps()
 	{
@@ -414,24 +520,46 @@ struct TextureData
 // Descriptor Binding
 struct Binding
 {
-	u32 binding;
+	u32 binding = 0;
 	DescriptorType type = DescriptorType::UniformBuffer;
 	size_t size = 0;
 };
 
 struct UniformBufferDesc
 {
-	u32 framesInFlight = 1; // per-frame copies (for FIF)
-	ShaderStageFlags stageFlags = 0; // shader stages
-	std::string_view debugName; // optional
+	ShaderStageFlags stageFlags; // shader stages
 	Vector<Binding> bindings; // resource bindings
 };
 
-enum class DebugView
+enum class DebugView : i32
 {
-	None,        // Default lit
-	Albedo,      // Texture color
-	Normals,     // World-space normal
-	Depth,       // Linearized depth
-	Material
+	Material = 0,
+	Albedo   = 1,
+	Normal   = 2,
+	DepthRaw = 3,   // hardware depth buffer
+	DepthLin = 4,   // linearized depth (world units)
+	DepthLog = 5,   // log-mapped depth for visualization
+	UVs      = 6,
 };
+
+struct DebugViewItem
+{
+	DebugView value;
+	const char* label;
+};
+
+inline constexpr DebugViewItem kDebugViews[] = {
+	{DebugView::Material, "Material"},
+	{DebugView::Albedo, "Albedo"},
+	{DebugView::Normal, "Normals (mapped)"},
+	{DebugView::DepthRaw, "Depth (raw)"},
+	{DebugView::DepthLin, "Depth (linear)"},
+	{DebugView::DepthLog, "Depth (log)"},
+	{DebugView::UVs, "UVs"},
+};
+
+inline const char* DebugViewToString(DebugView v)
+{
+	for (const auto& [value, label] : kDebugViews) if (value == v) return label;
+	return "Unknown";
+}

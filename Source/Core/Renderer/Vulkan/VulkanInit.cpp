@@ -3,13 +3,12 @@
 //
 #include "VulkanInit.h"
 
-#include <volk.h>
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
-#include "Logger.h"
-#include "Vector.h"
 #include "VulkanCheck.h"
+#include "Tools/Logger.h"
+#include "Tools/Vector.h"
 #include "tracy/Tracy.hpp"
 
 using namespace Renderer;
@@ -55,7 +54,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
 	else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
 		severityStr = "VERBOSE";
 
-	const char* typeStr = "GENERAL";
+	auto typeStr = "GENERAL";
 	if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
 		typeStr = "VALIDATION";
 	else if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
@@ -222,7 +221,6 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 	ZoneScopedN("Init Device");
 	this->instance = inst;
 
-	// 1. Pick physical device
 	u32 deviceCount = 0;
 	VK_CHECK(vkEnumeratePhysicalDevices(inst->instance, &deviceCount, nullptr));
 	if (deviceCount == 0)
@@ -234,39 +232,85 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 	Vector<VkPhysicalDevice> devices(deviceCount);
 	vkEnumeratePhysicalDevices(inst->instance, &deviceCount, devices.data());
 
-	// Just pick the first device with graphics and compute support....if not fail
+	VkPhysicalDevice bestDevice = VK_NULL_HANDLE;
+	u32 bestQueueIndex = ~0u;
+	u64 bestScore = 0;
+
 	for (const auto& dev : devices)
 	{
-		// lets check for min Vulkan 1.3 support, and store physical device properties
-		vkGetPhysicalDeviceProperties(dev, &deviceProperties);
-		if (deviceProperties.apiVersion < VK_API_VERSION_1_3)
-		{
-			LOG(Error, "GPU does not support Vulkan 1.3 API!");
-			return false;
-		}
+		// let's check for min Vulkan 1.3 support, and store physical device properties
+		VkPhysicalDeviceProperties props{};
+		vkGetPhysicalDeviceProperties(dev, &props);
+		if (props.apiVersion < VK_API_VERSION_1_3)
+			continue;
 
+		// check queue families
 		u32 queueFamilyCount = 0;
 		vkGetPhysicalDeviceQueueFamilyProperties(dev, &queueFamilyCount, nullptr);
 		Vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
 		vkGetPhysicalDeviceQueueFamilyProperties(dev, &queueFamilyCount, queueFamilies.data());
 
+		int gfxComputeIndex = -1;
 		for (u32 i = 0; i < queueFamilyCount; ++i)
 		{
-			if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT && queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT)
+			if ((queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
+				(queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT))
 			{
-				physicalDevice = dev;
-				graphicsQueueIndex = i;
+				gfxComputeIndex = i;
 				break;
 			}
 		}
+		if (gfxComputeIndex < 0)
+			continue;
 
-		if (physicalDevice != VK_NULL_HANDLE)
-			break; // Found a suitable device, exit outer loop
+		// calculate VRAM
+		VkPhysicalDeviceMemoryProperties mp{};
+		vkGetPhysicalDeviceMemoryProperties(dev, &mp);
+		u64 vram = 0;
+		for (u32 h = 0; h < mp.memoryHeapCount; ++h)
+		{
+			if (mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+				vram += mp.memoryHeaps[h].size;
+		}
+
+		// scoring system to pick best gpu for the job
+		u64 score = 0;
+		if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)   score += 2000;
+		if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) score += 200;
+		score += vram / (128ull * 1024ull * 1024);  // +1 per 128 MB VRAM
+		score += props.limits.maxImageDimension2D / 1024;
+		score += (props.driverVersion & 0xFFF);        // small tie-breaker
+
+		if (score > bestScore)
+		{
+			bestScore      = score;
+			bestDevice     = dev;
+			bestQueueIndex = gfxComputeIndex;
+
+			// fill deviceDesc for UI
+			deviceDesc.name                 = props.deviceName;
+			deviceDesc.vendor               = static_cast<GPUVendor>(props.vendorID);
+			deviceDesc.type                 = static_cast<GPUDeviceType>(props.deviceType);
+			deviceDesc.driverVersion        = props.driverVersion;
+			deviceDesc.dedicatedVideoMemory = vram;
+		}
 	}
 
-	if (graphicsQueueIndex < 0)
+	if (bestDevice == VK_NULL_HANDLE || bestQueueIndex == ~0u)
 	{
 		LOG(Error, "Failed to find GPU with Graphics/Compute support!");
+		return false;
+	}
+
+	physicalDevice     = bestDevice;
+	graphicsQueueIndex = bestQueueIndex;
+
+
+
+	vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+
+	if (deviceProperties.limits.timestampPeriod == 0.0f) {
+		LOG(Error, "Timestamp queries not supported on this GPU");
 		return false;
 	}
 
@@ -284,7 +328,6 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 
 	// Check optional FIFO_LATEST_READY
 	bool supportsFifoLatestReady = false;
-
 	for (const auto& [extensionName, specVersion] : deviceExtensions) {
 		if (strcmp(extensionName, "VK_KHR_present_mode_fifo_latest_ready") == 0 ||
 			strcmp(extensionName, "VK_EXT_present_mode_fifo_latest_ready") == 0)
@@ -317,7 +360,7 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 		.pNext = &features12
 	};
 
-#ifndef USE_DESCRIPTOR_BUFFER
+#ifdef USE_DESCRIPTOR_BUFFER
 	VkPhysicalDeviceDescriptorBufferFeaturesEXT featuresDescBuf{
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
 		.pNext = &features13
@@ -369,7 +412,7 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 		LOG(Info, "FIFO_LATEST_READY feature is supported");
 		fifoLatestReadyFeature.presentModeFifoLatestReady = VK_TRUE;
 	} else {
-		LOG(Warning, "FIFO_LATEST_READY feature not supported — will fallback.");
+		LOG(Warning, "FIFO_LATEST_READY feature not supported - will fallback.");
 		fifoLatestReadyFeature.presentModeFifoLatestReady = VK_FALSE;
 	}
 
@@ -439,6 +482,32 @@ bool VulkanDevice::InitImmediate()
 
 	return true;
 }
+
+std::string VulkanDevice::DecodeDriverVersion(u32 driverVersion, GPUVendor vendor)
+{
+	switch (vendor)
+	{
+	case GPUVendor::Nvidia:
+		return std::to_string((driverVersion >> 22) & 0x3FF) + "." +
+			   std::to_string((driverVersion >> 14) & 0xFF);
+
+	case GPUVendor::Intel:
+		return std::to_string(driverVersion >> 14) + "." +
+			   std::to_string(driverVersion & 0x3FFF);
+
+	case GPUVendor::AMD:
+		return std::to_string((driverVersion >> 22) & 0x3FF) + "." +
+			   std::to_string((driverVersion >> 12) & 0x3FF) + "." +
+			   std::to_string(driverVersion & 0xFFF);
+
+	case GPUVendor::Apple: // Apple tends to report plain values, no decode
+		return std::to_string(driverVersion);
+
+	default: // Unknown Vendor
+		return "Unknown Driver Version (0x" + fmt::format("{:X}", driverVersion) + ")";
+	}
+}
+
 
 void VulkanDevice::Destroy()
 {

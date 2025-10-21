@@ -4,28 +4,28 @@
 
 #pragma once
 #include <optional>
-#include <vulkan/vulkan_core.h>
+#include <span>
 
-#include "Vector.h"
 #include "VulkanTexture.h"
+#include "Tools/Vector.h"
 
 struct Extent2D;
 
 namespace Renderer
 {
+
+	struct RenderPassDesc
+	{
+		std::span<const VulkanImage> renderPasses;
+		const VulkanImage* depthTexture = nullptr;
+	};
+
 	struct VulkanRenderPass
 	{
-		Vector<VkImageView> colorAttachments;
-		Vector<VkRenderingAttachmentInfo> colorAttachmentInfos;
+		Vector<VkRenderingAttachmentInfo> colorInfos;
+		std::optional<VkRenderingAttachmentInfo> depthInfo;
 
-		std::optional<VkImageView> depthStencilAttachment;
-		std::optional<VkRenderingAttachmentInfo> depthAttachmentInfo;
-
-		Vector<VkClearValue> clearValues;
-		VkRect2D renderArea;
-
-		void Begin(VkCommandBuffer commandBuffer, VkAttachmentLoadOp loadOp);
-		void Begin(VkCommandBuffer cmd, const Extent2D& size, VkImageView targetView, bool clear = true);
+		void Begin(VkCommandBuffer cmd, const Extent2D& size, const RenderPassDesc& renderInfo, bool clear = true);
 		void End(VkCommandBuffer commandBuffer);
 	};
 }

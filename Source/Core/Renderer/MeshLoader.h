@@ -10,7 +10,8 @@ namespace Assets
 {
 	struct MeshLoader
 	{
-		static std::expected<LoadedModel, std::string> LoadOBJ(const char* filePath);
-		static std::expected<LoadedModel, std::string> LoadModelFromSource(MeshSourceType type, const void *data);
+		static Result<LoadedModel> LoadFBX(const char* path);
+		static Result<LoadedModel> LoadOBJ(const char* filePath);
+		static Result<LoadedModel> LoadModelFromSource(MeshSourceType type, const void *data);
 	};
 }

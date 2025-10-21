@@ -6,10 +6,18 @@
 
 #include "Camera.h"
 #include "imoguizmo.hpp"
-#include "Mat4x4.h"
 #include "MathFuncs.h"
+#include "MeshData.h"
+#include "MeshStats.h"
+#include "RendererTypes.h"
+#include "VulkanConvert.h"
+#include "VulkanMesh.h"
 #include "VulkanRenderPass.h"
 #include "VulkanSwapchain.h"
+#include "glm/ext/matrix_clip_space.hpp"
+#include "glm/gtc/type_ptr.hpp"
+#include "glm/gtx/norm.hpp"
+#include "Input/InputSys.h"
 #ifndef IMGUI_DISABLE
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -119,7 +127,7 @@ void EditorUI::InitEditorStyles()
 	style.ImageBorderSize = 1.0f;
 }
 
-// For multi-viewport support (we not using this yet too complicated)
+// For multi-viewport support (we're not using this yet too complicated)
 static int CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc, ImU64* outVkSurface)
 {
 	VkWin32SurfaceCreateInfoKHR createInfo = {};
@@ -131,7 +139,7 @@ static int CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const vo
 
 
 bool EditorUI::Init(const Renderer::VulkanInstance* instance, const Renderer::VulkanDevice* device,
-                                  Renderer::VulkanSwapchain* swapchain)
+                    Renderer::VulkanSwapchain* swapchain) const
 {
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
@@ -139,10 +147,12 @@ bool EditorUI::Init(const Renderer::VulkanInstance* instance, const Renderer::Vu
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 	io.ConfigFlags |= ImGuiConfigFlags_IsSRGB;
 	io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
-
 	io.ConfigDpiScaleFonts = true;
+	io.ConfigDebugHighlightIdConflicts = true;
+
 	ImGui::GetWindowDpiScale();
 
 	InitEditorStyles();
@@ -160,19 +170,23 @@ bool EditorUI::Init(const Renderer::VulkanInstance* instance, const Renderer::Vu
 		.QueueFamily = device->graphicsQueueIndex,
 		.Queue = device->graphicsQueue,
 		.DescriptorPool = imguiDescriptorPool,
-		.MinImageCount = swapchain->imageCount,
-		.ImageCount = swapchain->imageCount,
-		.MSAASamples = VK_SAMPLE_COUNT_1_BIT,
-		.DescriptorPoolSize = 1000, // yay no bloat thx zeux
+		.DescriptorPoolSize = 1000,
+		.MinImageCount = MAX_FRAME_OVERLAP, // Must match frames in flight, not swapchain images
+		.ImageCount = MAX_FRAME_OVERLAP,    // Must match frames in flight, not swapchain images
 		.UseDynamicRendering = true,
+	};
+
+	ImGui_ImplVulkan_PipelineInfo pipelineInfo = {
+		.MSAASamples = Renderer::ToVk(SampleCount::X1),
 		.PipelineRenderingCreateInfo = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
 			.colorAttachmentCount = 1,
 			.pColorAttachmentFormats = &swapchain->surfaceFormat.format
-		}
+		},
 	};
 
 	ImGui_ImplVulkan_Init(&initInfo);
+	ImGui_ImplVulkan_CreateMainPipeline(&pipelineInfo);
 
 	// Font loading
 	ImFontConfig cfg;
@@ -183,7 +197,7 @@ bool EditorUI::Init(const Renderer::VulkanInstance* instance, const Renderer::Vu
 
 	// Loading font
 	constexpr f32 fontSize = 18.0f;
-	// we gonna rip this out from windows
+	// we're going to rip this out from windows
 	io.Fonts->AddFontFromFileTTF(R"(C:\Windows\Fonts\segoeui.ttf)", fontSize, &cfg);
 	return true;
 }
@@ -205,22 +219,60 @@ void EditorUI::BeginFrame()
 void EditorUI::EndFrame()
 {
 	ImGui::Render();
+	ImGui::UpdatePlatformWindows();
 }
 
-void EditorUI::Render(VkCommandBuffer cmd) const
+void EditorUI::Render(const VkCommandBuffer cmd)
 {
 	ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 }
 
+
+void EditorUI::DrawOverlayMinimizeButton()
+{
+	// Tiny button in the top-right corner of the viewport
+	ImGuiViewport* vp = ImGui::GetMainViewport();
+	const float pad = 8.0f;
+	ImVec2 pos = ImVec2(vp->WorkPos.x + vp->WorkSize.x - 28.0f, vp->WorkPos.y + pad);
+	ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+	ImGui::SetNextWindowBgAlpha(0.25f);
+	ImGuiWindowFlags wflags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize |
+		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoMove;
+	if (ImGui::Begin("##overlay_toggle", nullptr, wflags))
+	{
+		const char8_t* label = overlayHidden_ ? u8"▶" : u8"◀"; // simple chevron
+		if (ImGui::Button(reinterpret_cast<const char*>(label))) overlayHidden_ = !overlayHidden_;
+		ImGui::End();
+	}
+}
+
+// void EditorUI::BuildDefaultLayout()
+// {
+// 	// Clear any existing layout on this dockspace
+// 	ImGui::DockBuilderRemoveNode(dockspaceID_);
+// 	ImGui::DockBuilderAddNode(dockspaceID_, ImGuiDockNodeFlags_DockSpace);
+// 	ImGui::DockBuilderSetNodeSize(dockspaceID_, ImGui::GetMainViewport()->WorkSize);
+//
+// 	// Create one central node to host a tab bar
+// 	u32 center = dockspaceID_;
+//
+// 	// Dock windows as tabs in the same node (order defines initial tab order)
+// 	ImGui::DockBuilderDockWindow("Scene Stats",   center);
+// 	ImGui::DockBuilderDockWindow("Input Debug",   center);
+// 	ImGui::DockBuilderDockWindow("Lighting",      center);
+// 	ImGui::DockBuilderDockWindow("Rendering",     center);
+//
+// 	ImGui::DockBuilderFinish(dockspaceID_);
+// }
+
 void EditorUI::DrawCameraGizmo(const Camera* camera)
 {
-	Mat4x4 viewMatrix = camera->GetViewMatrix();
-	const Mat4x4 gizmoProj = Mat4x4::Perspective(Radians(90.0f), 1.0f, 0.1f, 1000.0f);
+	glm::mat4 view = camera->GetViewMatrix();
+	const glm::mat4 proj = glm::perspective(Radians(90.0f), 1.0f, 0.1f, 1000.0f);
 
 	const ImGuiIO& io = ImGui::GetIO();
 	const float displayWidth = io.DisplaySize.x;
-
-	const float dpiScale = 1;
+	const float dpiScale = (io.DisplayFramebufferScale.x > 0.0f) ? io.DisplayFramebufferScale.x : 1.0f;
 
 	// UI position / scale
 	constexpr float baseGizmoSize = 125.0f;
@@ -231,7 +283,568 @@ void EditorUI::DrawCameraGizmo(const Camera* camera)
 	const float gizmoSize = baseGizmoSize * dpiScale;
 	const float yOffset = baseYOffset * dpiScale;
 	const float xOffset = baseXOffset * dpiScale;
-	ImOGuizmo::SetRect(displayWidth - gizmoSize - xOffset, yOffset, gizmoSize);
 	ImOGuizmo::BeginFrame();
-	ImOGuizmo::DrawGizmo(viewMatrix.m, gizmoProj.m, 5.0f);
+	ImOGuizmo::SetRect(displayWidth - gizmoSize - xOffset, yOffset, gizmoSize);
+	ImOGuizmo::DrawGizmo(glm::value_ptr(view), glm::value_ptr(proj), 5.0f);
+}
+
+void EditorUI::DrawCameraProperties(Camera& camera)
+{
+	ImGui::TextUnformatted("Camera");
+	ImGui::Separator();
+
+	// 2-column property table: Label | Control
+	if (ImGui::BeginTable("CameraProps", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg))
+	{
+		ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+		ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+		auto Row = [](const char* label, auto drawWidget)
+		{
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(label);
+
+			ImGui::TableSetColumnIndex(1);
+			drawWidget();
+		};
+
+		// Position
+		Row("Position", [&]
+		{
+			ImGui::PushID("pos");
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("World-space position (XYZ)");
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Reset")) camera.position = {0.0f, 0.0f, 0.0f};
+			ImGui::PopID();
+		});
+
+		// Forward (normalized)
+		Row("Forward", [&]
+		{
+			ImGui::PushID("fwd");
+			bool changed = ImGui::DragFloat3("##value", glm::value_ptr(camera.forward), 0.01f, -1.0f, 1.0f, "%.3f");
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("View direction. Will be normalized.");
+			// Normalize to keep it a proper direction vector
+			if (changed)
+			{
+				if (glm::length2(camera.forward) > 1e-8f)
+					camera.forward = glm::normalize(camera.forward);
+				else
+					camera.forward = {0, 0, -1};
+			}
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Reset")) camera.forward = {0.0f, 0.0f, -1.0f};
+			ImGui::PopID();
+		});
+
+		// FOV (deg)
+		Row("FOV (deg)", [&]
+		{
+			ImGui::PushID("fov");
+			if (ImGui::SliderFloat("##value", &camera.fov, 10.0f, 120.0f, "%.1f"))
+			{
+				camera.fov = glm::clamp(camera.fov, 1.0f, 179.0f);
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vertical field-of-view in degrees");
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Reset")) camera.fov = 60.0f;
+			ImGui::PopID();
+		});
+
+		// Near/Far
+		Row("Near / Far", [&]
+		{
+			ImGui::PushID("nf");
+			float nf[2] = {camera.nearPlane, camera.farPlane};
+			if (ImGui::InputFloat2("##value", nf, "%.3f"))
+			{
+				camera.nearPlane = glm::max(0.001f, nf[0]);
+				camera.farPlane = glm::max(camera.nearPlane + 0.001f, nf[1]);
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clip planes. Keep near as large as possible for depth precision.");
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Tighten"))
+			{
+				// optional helper to keep reasonable defaults
+				camera.nearPlane = 0.05f;
+				camera.farPlane = 2000.0f;
+			}
+			ImGui::PopID();
+		});
+
+		ImGui::EndTable();
+	}
+}
+
+void EditorUI::DrawLightingPanel(Vector<LightUBO>& lights, Camera& camera, Camera*& activeCamera, LightMeta& lightMeta)
+{
+	if (!ImGui::Begin("Lighting"))
+	{
+		ImGui::End();
+		return;
+	}
+
+	ImGui::Text("Lights: %u", static_cast<u32>(lights.size()));
+	ImGui::Separator();
+
+	// Quick add buttons
+	if (ImGui::Button("+ Directional"))
+	{
+		LightUBO l{};
+		l.type = static_cast<u32>(LightType::Directional);
+		l.direction = glm::normalize(glm::vec3{-0.5f, -1.0f, -0.3f});
+		l.color = glm::vec3(1.0f, 0.95f, 0.85f);
+		l.intensity = 2.0f;
+		lights.push_back(l);
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("+ Point"))
+	{
+		LightUBO l{};
+		l.type = static_cast<u32>(LightType::Point);
+		l.position = activeCamera->position + activeCamera->forward * 2.0f;
+		l.range = 8.0f;
+		l.color = glm::vec3(1.0f);
+		l.intensity = 5.0f;
+		lights.push_back(l);
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("+ Spot"))
+	{
+		LightUBO l{};
+		l.type = static_cast<u32>(LightType::Spot);
+		l.position = activeCamera->position;
+		l.direction = glm::normalize(activeCamera->forward);
+		l.range = 12.0f;
+		l.innerCone = std::cos(glm::radians(12.0f));
+		l.outerCone = std::cos(glm::radians(20.0f));
+		l.color = glm::vec3(1.0f);
+		l.intensity = 6.0f;
+		lights.push_back(l);
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Clear")) lights.clear();
+
+	ImGui::Separator();
+
+	constexpr float dirStep = 0.05f;
+	constexpr float posStep = 0.05f;
+	constexpr float intensityStep = 0.25f;
+	constexpr float rangeStep = 0.5f;
+
+	static const char* typeLabels[] = {"Directional", "Point", "Spot"};
+
+	auto normalizeIfNonZero = [](glm::vec3 v)
+	{
+		const float len2 = glm::length2(v);
+		return (len2 > 1e-6f) ? glm::normalize(v) : glm::vec3(0.0f, 1.0f, 0.0f);
+	};
+
+	for (size_t i = 0; i < lights.size(); /* inc inside */)
+	{
+		ImGui::PushID(static_cast<int>(i));
+		ImGui::SeparatorText(("Light " + std::to_string(i)).c_str());
+
+		LightUBO& l = lights[i];
+
+		int type = static_cast<int>(l.type);
+		if (ImGui::Combo("Type", &type, typeLabels, IM_ARRAYSIZE(typeLabels)))
+			l.type = static_cast<u32>(type);
+
+		ImGui::ColorEdit3("Color", &l.color.x);
+		ImGui::DragFloat("Intensity", &l.intensity, intensityStep, 0.0f, 1000.0f);
+
+		if (l.type == static_cast<u32>(LightType::Directional))
+		{
+			if (ImGui::DragFloat3("Direction", &l.direction.x, dirStep, -1.0f, 1.0f))
+				l.direction = normalizeIfNonZero(l.direction);
+
+			if (ImGui::Button("Face Camera"))
+				l.direction = normalizeIfNonZero(camera.forward);
+		}
+		else if (l.type == static_cast<u32>(LightType::Point))
+		{
+			ImGui::DragFloat3("Position", &l.position.x, posStep);
+			ImGui::DragFloat("Range", &l.range, rangeStep, 0.0f, 1000.0f);
+		}
+		else // Spot
+		{
+			ImGui::DragFloat3("Position", &l.position.x, posStep);
+
+			if (ImGui::DragFloat3("Direction", &l.direction.x, dirStep, -1.0f, 1.0f))
+				l.direction = normalizeIfNonZero(l.direction);
+
+			ImGui::SameLine();
+			if (ImGui::Button("Snap To Camera"))
+			{
+				l.position = activeCamera->position;
+				l.direction = normalizeIfNonZero(camera.forward);
+			}
+
+			ImGui::DragFloat("Range", &l.range, rangeStep, 0.1f, 1000.0f);
+
+			auto clamp1 = [](float v) { return std::clamp(v, -1.0f, 1.0f); };
+			float innerRad = std::acos(clamp1(l.innerCone));
+			float outerRad = std::acos(clamp1(l.outerCone));
+
+			bool changed = false;
+			changed |= ImGui::SliderAngle("Inner", &innerRad, 0.0f, 80.0f, "%.1f°");
+
+			const float minSep = glm::radians(1.0f);
+			const float outerMin = innerRad + minSep;
+			changed |= ImGui::SliderAngle("Outer", &outerRad, outerMin, 89.0f, "%.1f°");
+
+			if (changed)
+			{
+				l.innerCone = std::cos(innerRad);
+				l.outerCone = std::cos(outerRad);
+			}
+		}
+
+		bool removed = false;
+		if (ImGui::Button("Remove"))
+		{
+			// lights.erase(lights.begin() + static_cast<ptrdiff_t>(i));
+			removed = true;
+		}
+
+		ImGui::PopID();
+		if (!removed) ++i;
+	}
+
+	// keep meta in sync
+	lightMeta.count = static_cast<u32>(lights.size());
+
+	ImGui::End();
+}
+
+void EditorUI::HoverToolTip(const char* tooltip)
+{
+	if (ImGui::IsItemHovered())
+	{
+		ImGui::BeginTooltip();
+		ImGui::TextUnformatted(tooltip);
+		ImGui::EndTooltip();
+	}
+}
+
+void EditorUI::DrawSceneStatsPanel(const Extent2D& extent, const std::string& gpuName, const std::string& driverString, const SceneStats& sceneStats,
+                                   const Vector<Renderer::ModelComponent>& models, Camera& camera)
+{
+	if (!ImGui::Begin("Scene Stats"))
+	{
+		ImGui::End();
+		return;
+	}
+
+	// Overview
+	if (ImGui::BeginTable("Overview", 2, ImGuiTableFlags_SizingStretchProp))
+	{
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::TextUnformatted("Resolution");
+		ImGui::TableSetColumnIndex(1);
+		ImGui::Text("%ux%u", extent.width, extent.height);
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::TextUnformatted("FPS");
+		ImGui::TableSetColumnIndex(1);
+		ImGui::Text("%.1f (%.3f ms)", ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate);
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::TextUnformatted("GPU");
+		ImGui::TableSetColumnIndex(1);
+		ImGui::Text("%s", gpuName.c_str());
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::TextUnformatted("Driver Ver");
+		ImGui::TableSetColumnIndex(1);
+		ImGui::Text("%s", driverString.c_str());
+		ImGui::EndTable();
+	}
+
+	ImGui::Separator();
+
+	// Camera properties
+	if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+		DrawCameraProperties(camera);
+
+	ImGui::Separator();
+
+	// Scene stats table (recompute verts/tris like before)
+	u32 totalVerts = 0;
+	u32 totalTris = 0;
+	u32 totalDraws = 0;
+	for (const auto& [model, transform] : models)
+	{
+		if (model == nullptr) continue;
+		for (const auto& part : model->parts)
+		{
+			if (part.vertexBuffer.buffer != VK_NULL_HANDLE)
+				totalVerts += static_cast<u32>(part.vertexBuffer.allocationInfo.size / sizeof(Vertex));
+			totalTris += part.indexCount / 3;
+			++totalDraws;
+		}
+	}
+
+	if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		if (ImGui::BeginTable("SceneTable", 2, ImGuiTableFlags_SizingStretchProp))
+		{
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted("Draw Calls");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%u", sceneStats.drawCallCount);
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted("Vertices");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%u", totalVerts);
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted("Triangles");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%u", totalTris);
+			ImGui::EndTable();
+		}
+	}
+
+	ImGui::Separator();
+
+	// Timing
+	const double gpuBusy = std::clamp((sceneStats.gpuDrawTime / (1000.0 / ImGui::GetIO().Framerate)) * 100.0, 0.0, 100.0);
+	if (ImGui::CollapsingHeader("Timing", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		if (ImGui::BeginTable("TimingTable", 2, ImGuiTableFlags_SizingStretchProp))
+		{
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted("CPU Draw Time");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%.3f ms", sceneStats.cpuDrawTime);
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted("GPU Draw Time");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%.3f ms", sceneStats.gpuDrawTime);
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted("GPU Busy");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%.1f %%", gpuBusy);
+			ImGui::EndTable();
+		}
+	}
+
+	ImGui::End();
+}
+
+void EditorUI::DrawRenderingPanel(Renderer::VulkanSwapchain* swapchain, DebugView& debugData)
+{
+	if (!ImGui::Begin("Rendering"))
+	{
+		ImGui::End();
+		return;
+	}
+
+	// Debug view mode
+	if (ImGui::BeginCombo("Debug View", DebugViewToString(debugData)))
+	{
+		for (const auto& [value, label] : kDebugViews)
+		{
+			bool selected = (debugData == value);
+			if (ImGui::Selectable(label, selected)) debugData = value;
+			if (selected) ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+
+	// VSync mode
+	static const char* vsyncModes[] = {"VSync On", "VSync Off", "Mailbox"};
+	int currentVsync = static_cast<int>(swapchain->presentMode);
+	if (ImGui::Combo("VSync Mode", &currentVsync, vsyncModes, IM_ARRAYSIZE(vsyncModes)))
+		swapchain->VsyncEnable(static_cast<PresentMode>(currentVsync));
+
+	ImGui::End();
+}
+
+void EditorUI::DrawCameraSpeedPopup(float cameraSpeed, float& popupTime)
+{
+	if (popupTime <= 0.0f) return;
+
+	const ImGuiViewport* viewport = ImGui::GetMainViewport();
+	ImVec2 pos = ImVec2(viewport->Size.x * 0.5f, viewport->Size.y * 0.12f);
+
+	const float alpha = std::min(1.0f, popupTime / 1.0f);
+	ImGui::SetNextWindowBgAlpha(alpha);
+	ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+	ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+
+	constexpr ImGuiWindowFlags flags =
+		ImGuiWindowFlags_NoDecoration |
+		ImGuiWindowFlags_AlwaysAutoResize |
+		ImGuiWindowFlags_NoSavedSettings |
+		ImGuiWindowFlags_NoFocusOnAppearing |
+		ImGuiWindowFlags_NoNav |
+		ImGuiWindowFlags_NoInputs;
+
+	if (ImGui::Begin("##CameraSpeedPopup", nullptr, flags))
+		ImGui::Text("Speed: %.2f", cameraSpeed);
+	ImGui::End();
+	ImGui::PopStyleVar();
+
+	popupTime -= ImGui::GetIO().DeltaTime;
+	ImGui::End();
+}
+
+// tiny helper for colored on/off badges
+static void Badge(const char* label, bool on, ImU32 onCol, ImU32 offCol)
+{
+	ImGui::SameLine(0, 0);
+	ImGui::PushStyleColor(ImGuiCol_Button, on ? onCol : offCol);
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? onCol : offCol);
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, on ? onCol : offCol);
+	ImGui::Button(label);
+	ImGui::PopStyleColor(3);
+}
+
+// Optional: names for a few keyboard keys you care about listing quickly.
+// If you want all of them, generate a table from your enum → string.
+static const char* KeyName(int k)
+{
+	using K = Keyboard::Key;
+	switch (static_cast<K>(k))
+	{
+	case K::W: return "W";
+	case K::A: return "A";
+	case K::S: return "S";
+	case K::D: return "D";
+	case K::Q: return "Q";
+	case K::E: return "E";
+	case K::Space: return "Space";
+	case K::Shift: return "Shift";
+	case K::Ctrl: return "Ctrl";
+	case K::Alt: return "Alt";
+	case K::F1: return "F1";
+	case K::F2: return "F2";
+	case K::F11: return "F11";
+	case K::Escape: return "Esc";
+	default: return nullptr;
+	}
+}
+
+// Call this from your debug menu
+void EditorUI::DrawInputDebugUI()
+{
+	if (!ImGui::Begin("Input Debug", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::End();
+		return;
+	}
+
+	// Summary row
+	{
+		ImGui::Text("Active Source:");
+		Badge("Keyboard", input.usingKeyboard, IM_COL32(88, 180, 88, 255), IM_COL32(60, 60, 60, 255));
+		Badge("Mouse", input.usingMouse, IM_COL32(88, 180, 255, 255), IM_COL32(60, 60, 60, 255));
+		Badge("Gamepad", input.usingController, IM_COL32(255, 180, 88, 255), IM_COL32(60, 60, 60, 255));
+		ImGui::NewLine();
+	}
+
+	// Mouse
+	if (ImGui::CollapsingHeader("Mouse", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::Text("Delta: (%.1f, %.1f)   Wheel: (%d, %d)", input.xrel, input.yrel, (int)input.scrollX, (int)input.scrollY);
+
+		ImGui::SeparatorText("Buttons");
+		ImGui::BeginTable("mouseBtns", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit);
+		ImGui::TableSetupColumn("Btn");
+		ImGui::TableSetupColumn("Held");
+		ImGui::TableSetupColumn("Pressed");
+		ImGui::TableSetupColumn("Released");
+		ImGui::TableHeadersRow();
+
+		auto rowBtn = [&](const char* name, int idx)
+		{
+			const ButtonState& b = input.mouseButtons[idx];
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(name);
+			ImGui::TableSetColumnIndex(1);
+			ImGui::Text("%s", b.held ? "true" : "false");
+			ImGui::TableSetColumnIndex(2);
+			ImGui::Text("%s", b.pressed ? "true" : "false");
+			ImGui::TableSetColumnIndex(3);
+			ImGui::Text("%s", b.released ? "true" : "false");
+		};
+		rowBtn("Left", Mouse::Left);
+		rowBtn("Right", Mouse::Right);
+		rowBtn("Middle", Mouse::Middle);
+		rowBtn("X1", Mouse::Button4);
+		rowBtn("X2", Mouse::Button5);
+
+		ImGui::EndTable();
+	}
+
+	// Keyboard
+	if (ImGui::CollapsingHeader("Keyboard", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		// Show commonly interesting keys in a compact grid
+		ImGui::SeparatorText("Common keys");
+		ImGui::BeginTable("kbGrid", 6, ImGuiTableFlags_SizingFixedFit);
+		int shown = 0;
+		for (int k = 0; k < (int)Keyboard::ButtonCount; ++k)
+		{
+			if (const char* nm = KeyName(k))
+			{
+				if ((shown++ % 6) == 0) ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex((shown - 1) % 6);
+				const ButtonState& b = input.keyboard[k];
+				ImU32 col = b.held ? IM_COL32(120, 200, 120, 255) : IM_COL32(80, 80, 80, 255);
+				ImGui::PushStyleColor(ImGuiCol_Button, col);
+				ImGui::Button(nm, ImVec2(44, 0));
+				ImGui::PopStyleColor();
+				if (b.pressed)
+				{
+					ImGui::SameLine();
+					ImGui::TextColored(ImVec4(0.7f, 1, 0.7f, 1), "*");
+				}
+				if (b.released)
+				{
+					ImGui::SameLine();
+					ImGui::TextColored(ImVec4(1, 0.6f, 0.6f, 1), "v");
+				}
+			}
+		}
+		ImGui::EndTable();
+
+		// Optionally list ALL currently held keys
+		if (ImGui::TreeNode("Held keys (all)"))
+		{
+			ImGui::TextUnformatted("Indices:");
+			ImGui::SameLine();
+			bool first = true;
+			for (int k = 0; k < (int)Keyboard::ButtonCount; ++k)
+				if (input.keyboard[k].held)
+				{
+					if (!first) ImGui::SameLine();
+					ImGui::Text("%d", k);
+					first = false;
+				}
+			if (first) ImGui::TextDisabled("none");
+			ImGui::TreePop();
+		}
+	}
+
+	ImGui::End();
 }

@@ -10,10 +10,10 @@
 [submodule "3rdParty/imgui"]
     branch = docking
 	path = 3rdParty/imgui
-	url = https://github.com/ocornut/imgui
+	url = https://github.com/ocornut/imgui.git
 [submodule "3rdParty/tracy"]
 	path = 3rdParty/tracy
-	url = https://github.com/wolfpld/tracy
+	url = https://github.com/wolfpld/tracy.git
 [submodule "3rdparty/meshoptimizer"]
 	path = 3rdparty/meshoptimizer
 	url = https://github.com/zeux/meshoptimizer.git
@@ -23,6 +23,3 @@
 [submodule "3rdParty/glm"]
 	path = 3rdParty/glm
 	url = https://github.com/g-truc/glm.git
-[submodule "3rdParty/gameinput"]
-	path = 3rdParty/gameinput
-	url = https://github.com/microsoftconnect/GameInput

@@ -6,15 +6,15 @@
 
 #include <format>
 
-#include "Arena.h"
-#include "Array.h"
-#include "Logger.h"
 #include "MathFuncs.h"
 #include "Vec4.h"
-#include "Vector.h"
 #include "VulkanBuffer.h"
 #include "VulkanCheck.h"
 #include "VulkanInit.h"
+#include "Tools/Arena.h"
+#include "Tools/Array.h"
+#include "Tools/Logger.h"
+#include "Tools/Vector.h"
 
 #include "VulkanConvert.h"
 #include "VulkanDebugUtils.h"
@@ -44,7 +44,7 @@ void VulkanImage::Init(VulkanDevice* device, TextureInfo& info)
 	const VkImageCreateInfo imageInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.flags = (info.type == ImageType::CubeMap) ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u,
-		.imageType = ToImgType(info.dimension),
+		.imageType = ToVkImageType(info.dimension),
 		.format = vkFormat,
 		.extent = {info.extent.width, info.extent.height, info.extent.depth},
 		.mipLevels = info.mipLevels,
@@ -63,7 +63,7 @@ void VulkanImage::Init(VulkanDevice* device, TextureInfo& info)
 	imageFormat = imageInfo.format;
 
 	VK_CHECK(vmaCreateImage(device->allocator, &imageInfo, &createInfo, &image, &allocation, &allocInfo));
-	NameObject(device->device, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(image), "AllocatedImage");
+	NameObject(device->device, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<u64>(image), "AllocatedImage");
 
 	const VkImageViewCreateInfo viewInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -104,36 +104,50 @@ void VulkanImage::MakeSampleable(VkCommandBuffer cmd)
 
 
 
-void VulkanImage::UploadTextureToGPU(const void* data, TextureInfo& texInfo)
+void VulkanImage::UploadTextureToGPU(const void* data, const TextureInfo& texInfo)
 {
 	VkDeviceSize dataSize = texInfo.extent.depth * texInfo.extent.width * texInfo.extent.height *
 		(texInfo.format == TextureFormat::D32_SFLOAT ? 1 : 4);
 
-	VulkanBuffer staging(device, BufferPreset::StagingUpload, dataSize);
-	memcpy(staging.allocationInfo.pMappedData, data, dataSize);
+	const u16 layers = std::max<u16>(1, texInfo.arrayLayers);
+	VkDeviceSize actualSize = dataSize * layers;
+
+	VulkanBuffer staging(device, BufferPreset::StagingUpload, actualSize);
+	memcpy(staging.allocationInfo.pMappedData, data, actualSize);
 
 	device->ImmediateSubmit([&](VkCommandBuffer cmd) {
 		Transition(cmd, imageLayout, TextureLayout::CopyDestination);
 
-		VkBufferImageCopy copyRegion = {
-			.bufferOffset = 0,
-			.bufferRowLength = 0,
-			.bufferImageHeight = 0,
-			.imageSubresource = {
-				.aspectMask     = this->subresourceRange.aspectMask,
-				.mipLevel       = 0,
-				.baseArrayLayer = 0,
-				.layerCount     = 1
-			},
-			.imageOffset = { 0, 0, 0 },
-			.imageExtent = {
-				.width  = texInfo.extent.width,
-				.height = texInfo.extent.height,
-				.depth  = texInfo.extent.depth
-			}
+		Vector<VkBufferImageCopy2> copyRegions(texInfo.arrayLayers); // now we can pass in array layers
+
+		for (u32 i = 0; i < texInfo.arrayLayers; i++)
+		{
+			VkBufferImageCopy2& r = copyRegions[i];
+			r.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+			r.bufferOffset = dataSize * i;
+			r.bufferRowLength = 0;
+			r.bufferImageHeight = 0;
+
+			r.imageSubresource.aspectMask = this->subresourceRange.aspectMask;
+			r.imageSubresource.mipLevel = 0;
+			r.imageSubresource.baseArrayLayer = i;
+			r.imageSubresource.layerCount = 1;
+
+			r.imageOffset = {0, 0, 0};
+			r.imageExtent = {texInfo.extent.width, texInfo.extent.height, texInfo.extent.depth};
+		}
+
+		VkCopyBufferToImageInfo2 copyInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+			.srcBuffer = staging.buffer,
+			.dstImage = this->image,
+			.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			.regionCount = static_cast<u32>(copyRegions.size()),
+			.pRegions = copyRegions.data()
 		};
 
-		vkCmdCopyBufferToImage(cmd, staging.buffer, this->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+		vkCmdCopyBufferToImage2(cmd, &copyInfo);
 
 		if (texInfo.mipLevels > 1) {
 			GenerateMipmaps(cmd, *this);
@@ -167,11 +181,11 @@ void VulkanImage::CreateImageView(VkFormat format)
 
 void VulkanImage::FillSubresoruceInfo()
 {
-	subresourceRange.aspectMask = (textureInfo.usage & ImageUsage::DEPTH_STENCIL_ATTACHMENT) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+	subresourceRange.aspectMask = (textureInfo.usage & ImageUsage::DepthStencil) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 	subresourceRange.baseMipLevel = 0;
 	subresourceRange.levelCount = textureInfo.mipLevels;
 	subresourceRange.baseArrayLayer = 0;
-	subresourceRange.layerCount = 1;
+	subresourceRange.layerCount = textureInfo.arrayLayers;
 }
 
 
@@ -254,9 +268,9 @@ void VulkanImage::Transition(VkCommandBuffer cmd, TextureLayout oldLayout, Textu
 		.subresourceRange = {
 			.aspectMask = aspectMask,
 			.baseMipLevel = 0,
-			.levelCount = 1,
+			.levelCount = textureInfo.mipLevels,
 			.baseArrayLayer = 0,
-			.layerCount = 1
+			.layerCount = textureInfo.arrayLayers,
 		}
 	};
 
@@ -284,7 +298,7 @@ void VulkanImage::GenerateMipmaps(VkCommandBuffer cmd, const VulkanImage& image)
 		return;
 	}
 
-    // Reuse this vector for barriers
+    // Reuse this for barriers
 	VkImageMemoryBarrier2 barriers[2]{};
 
     for (u32 mipLevel = 1; mipLevel < mipLevels; mipLevel++)
@@ -410,34 +424,55 @@ u32 PackUnorm4x8(const Vec4& v)
 	return u.out;
 }
 
-VulkanImage* VulkanImage::CreateCheckerboardTexture(VulkanDevice* device, ArenaAllocator& arena)
+auto VulkanImage::CreateCheckerboardTexture(VulkanDevice& device) -> VulkanImage
 {
-	constexpr u32 size = 16;
+	constexpr size_t size = 16;
 	const u32 magenta = PackUnorm4x8(Vec4(1, 0, 1, 1)); // Magenta
-	const u32 black   = PackUnorm4x8(Vec4(0, 0, 0, 1)); // Black
+	const u32 black = PackUnorm4x8(Vec4(0, 0, 0, 1)); // Black
 
 	Array<u32, size * size> pixels;
-	for (u32 y = 0; y < size; ++y)
+	for (u32 y = 0; y < size; y++)
 	{
-		for (u32 x = 0; x < size; ++x)
+		for (u32 x = 0; x < size; x++)
 		{
 			pixels[y * size + x] = ((x % 2) ^ (y % 2)) ? magenta : black;
 		}
 	}
 
 	TextureInfo texInfo = {
+		.extent		= {size, size, 1},
+		.mipLevels  = 1,
+		.type		= ImageType::Image2D,
+		.format		= TextureFormat::RGBA8_UNORM,
+		.dimension  = TextureDimension::Texture2D,
+		.usage      = ImageUsage::TransferDst | ImageUsage::Sampled
+	};
+
+	VulkanImage image{&device, texInfo};
+	image.UploadTextureToGPU(pixels.data(), texInfo);
+
+	return image;
+}
+
+auto VulkanImage::CreateDefaultNormalMap(VulkanDevice& device) -> VulkanImage
+{
+	constexpr size_t size = 1;
+	const u32 flat = PackUnorm4x8(Vec4(0.5f, 0.5f, 1.0f, 1.0f)); // Flat TS normal: (0.5, 0.5, 1.0, 1.0) → [128,128,255,255]
+
+	Array<u32, size * size> pixels;
+	for (u32 i = 0; i < size * size; i++) pixels[i] = flat;
+
+	TextureInfo texInfo = {
 		.extent     = { size, size, 1 },
 		.mipLevels  = 1,
 		.type       = ImageType::Image2D,
 		.format     = TextureFormat::RGBA8_UNORM,
-		.dimension  = TextureDimension::TEXTURE_2D,
-		.usage      = ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED
+		.dimension  = TextureDimension::Texture2D,
+		.usage      = ImageUsage::TransferDst | ImageUsage::Sampled
 	};
 
-	// Arena-allocated VulkanImage
-	auto* image = arena.Emplace<VulkanImage>(device, texInfo);
-	image->UploadTextureToGPU(pixels.data(), texInfo);
-
+	VulkanImage image{&device, texInfo};
+	image.UploadTextureToGPU(pixels.data(), texInfo);
 	return image;
 }
 
@@ -456,7 +491,7 @@ VulkanSampler::VulkanSampler(VulkanDevice* device, const SamplerDesc& desc)
 		.addressModeW = ToVk(desc.addressW),
 		.mipLodBias = desc.mipLodBias,
 		.anisotropyEnable = desc.anisotropyEnable ? VK_TRUE : VK_FALSE,
-		.maxAnisotropy = (f32)desc.maxAnisotropy,
+		.maxAnisotropy = static_cast<f32>(desc.maxAnisotropy),
 		.compareEnable = desc.compareEnable ? VK_TRUE : VK_FALSE,
 		.compareOp = VK_COMPARE_OP_ALWAYS,
 		.minLod = desc.minLod,

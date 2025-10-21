@@ -6,7 +6,7 @@
 #include "VulkanTexture.h"
 
 #include "RendererTypes.h"
-#include "Vector.h"
+#include "Tools/Vector.h"
 
 constexpr u32 UNDEFINED_EXTENT = UINT32_MAX;
 constexpr u32 DOUBLE_BUFFERING = 2;

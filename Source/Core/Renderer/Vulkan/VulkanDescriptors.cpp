@@ -6,12 +6,12 @@
 
 #include <cmath>
 
-#include "Logger.h"
 #include "VulkanBuffer.h"
 #include "VulkanCheck.h"
 #include "VulkanConvert.h"
 #include "VulkanInit.h"
 #include "VulkanTexture.h"
+#include "Tools/Logger.h"
 
 using namespace Renderer;
 
@@ -29,12 +29,11 @@ DescriptorLayoutBuilder& DescriptorLayoutBuilder::AddBinding(u32 binding, Descri
 	return *this;
 }
 
-VkDescriptorSetLayout DescriptorLayoutBuilder::Build(VkDevice device, ShaderStageFlags stageFlags, void* pNext,
-	VkDescriptorSetLayoutCreateFlags flags)
+DescriptorLayout DescriptorLayoutBuilder::Build(VkDevice device, ShaderStageFlags stageFlags, void* pNext, VkDescriptorSetLayoutCreateFlags flags)
 {
-	for (auto& b : bindings)
-	{
-		b.stageFlags |= ToVk(stageFlags);
+	const VkShaderStageFlags vkStages = ToVk(stageFlags);
+	for (auto& b : bindings) {
+		b.stageFlags = vkStages; // assign, don't accumulate
 	}
 
 	VkDescriptorSetLayoutCreateInfo info
@@ -49,12 +48,12 @@ VkDescriptorSetLayout DescriptorLayoutBuilder::Build(VkDevice device, ShaderStag
 	VkDescriptorSetLayout set;
 	VK_CHECK(vkCreateDescriptorSetLayout(device, &info, nullptr, &set));
 
-	return set;
+	return DescriptorLayout{ .vk = set };
 }
 
 
 // Descriptor Writer
-VkDescriptorWriter& VkDescriptorWriter::WriteImage(u32 binding, const std::optional<VulkanImage*> image, const VulkanSampler* sampler, DescriptorType type)
+DescriptorWriter& DescriptorWriter::WriteImage(u32 binding, const std::optional<VulkanImage*> image, const VulkanSampler* sampler, DescriptorType type)
 {
 	VkDescriptorType vkType = ToVk(type);
 
@@ -102,7 +101,7 @@ VkDescriptorWriter& VkDescriptorWriter::WriteImage(u32 binding, const std::optio
 	return *this;
 }
 
-VkDescriptorWriter& VkDescriptorWriter::WriteImageArray(u32 binding, std::span<const VulkanImage*> images, DescriptorType type)
+DescriptorWriter& DescriptorWriter::WriteImageArray(u32 binding, std::span<const VulkanImage*> images, DescriptorType type)
 {
 	if (images.empty()) return *this;
 
@@ -128,17 +127,15 @@ VkDescriptorWriter& VkDescriptorWriter::WriteImageArray(u32 binding, std::span<c
 	return *this;
 }
 
-VkDescriptorWriter& VkDescriptorWriter::WriteBuffer(const u32 binding, const std::optional<VulkanBuffer*> buffer, DescriptorType type)
+DescriptorWriter& DescriptorWriter::WriteBuffer(const u32 binding, const VulkanBuffer* buffer, DescriptorType type)
 {
-	if (!buffer.has_value() || buffer.value() == nullptr)
+	if (!buffer)
 		return *this;
 
-	const VulkanBuffer* buf = buffer.value();
-
 	bufferInfos.emplace_back(VkDescriptorBufferInfo{
-		.buffer = buf->buffer,
+		.buffer = buffer->buffer,
 		.offset = 0,
-		.range  = buf->info.size
+		.range  = buffer->info.size
 	});
 
 	writes.emplace_back(VkWriteDescriptorSet{
@@ -152,14 +149,14 @@ VkDescriptorWriter& VkDescriptorWriter::WriteBuffer(const u32 binding, const std
 	return *this;
 }
 
-void VkDescriptorWriter::Clear()
+void DescriptorWriter::Clear()
 {
 	imageInfos.clear();
 	bufferInfos.clear();
 	writes.clear();
 }
 
-void VkDescriptorWriter::UpdateSet(VkDevice device, VkDescriptorSet set)
+void DescriptorWriter::UpdateSet(VkDevice device, VkDescriptorSet set)
 {
 	for (auto& write : writes)
 	{
@@ -214,7 +211,8 @@ void DescriptorAllocatorGrowable::DestroyPools()
 	}
 	fullPools.clear();
 }
-VkDescriptorSet DescriptorAllocatorGrowable::Allocate(VkDescriptorSetLayout layout, void* pNext)
+
+DescriptorSet DescriptorAllocatorGrowable::Allocate(DescriptorLayout layout, void* pNext)
 {
 	VkDescriptorSet set = VK_NULL_HANDLE;
 
@@ -224,7 +222,7 @@ VkDescriptorSet DescriptorAllocatorGrowable::Allocate(VkDescriptorSetLayout layo
 		VkDescriptorPool pool = GetPool();
 		if (pool == VK_NULL_HANDLE) {
 			LOG(Error, "GetPool() returned null pool");
-			return VK_NULL_HANDLE;
+			return DescriptorSet{set};
 		}
 
 		VkDescriptorSetAllocateInfo allocInfo = {
@@ -232,7 +230,7 @@ VkDescriptorSet DescriptorAllocatorGrowable::Allocate(VkDescriptorSetLayout layo
 			.pNext              = pNext,
 			.descriptorPool     = pool,
 			.descriptorSetCount = 1,
-			.pSetLayouts        = &layout
+			.pSetLayouts        = &layout.vk
 		};
 
 		VkResult result = vkAllocateDescriptorSets(device->device, &allocInfo, &set);
@@ -248,12 +246,12 @@ VkDescriptorSet DescriptorAllocatorGrowable::Allocate(VkDescriptorSetLayout layo
 
 		if (result != VK_SUCCESS) {
 			LOG(Error, "Failed to allocate descriptor set (VkResult: {})", static_cast<int>(result));
-			return VK_NULL_HANDLE;
+			return DescriptorSet{ set };;
 		}
 
 		// Allocation succeeded — pool is still usable, so push it back for reuse
 		readyPools.push_back(pool);
-		return set;
+		return DescriptorSet{ set };;
 	}
 }
 
@@ -262,15 +260,15 @@ VkDescriptorPool DescriptorAllocatorGrowable::GetPool()
 {
 	if (!readyPools.empty())
 	{
-		VkDescriptorPool newPool = readyPools.back();
+		VkDescriptorPool pool = readyPools.back();
 		readyPools.pop_back();
-		return newPool;
+		return pool;
 	}
 
-	VkDescriptorPool newPool = CreatePool(setsPerPool);
-	if (newPool == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+	VkDescriptorPool pool = CreatePool(setsPerPool);
+	if (pool == VK_NULL_HANDLE) return VK_NULL_HANDLE;
 	setsPerPool = std::min<u32>(setsPerPool, 4092); // its 4096 for the hard limit but this is for funny alignment reasons
-	return newPool;
+	return pool;
 }
 
 VkDescriptorPool DescriptorAllocatorGrowable::CreatePool(u32 setCount)
@@ -280,8 +278,8 @@ VkDescriptorPool DescriptorAllocatorGrowable::CreatePool(u32 setCount)
 
 	for (const auto& [type, ratio] : ratios)
 	{
-		const u32 count = static_cast<u32>(std::ceil(ratio * setCount));
-		poolSizes.push_back({type, count});
+		const u32 count = static_cast<u32>(std::ceil(ratio * static_cast<f32>(setCount)));
+		poolSizes.push_back({ToVk(type), count});
 	}
 
 	VkDescriptorPoolCreateInfo poolInfo = {

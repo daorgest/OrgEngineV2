@@ -8,13 +8,13 @@
 #include <unordered_set>
 
 
-#include "Arena.h"
+#include "MathFuncs.h"
 #include "MeshLoader.h"
 #include "RendererTypes.h"
 #include "TextureManager.h"
-#include "Array.h"
-#include "MathFuncs.h"
-#include "Timer.h"
+#include "Tools/Arena.h"
+#include "Tools/Array.h"
+#include "Tools/Timer.h"
 
 #include "VulkanBuffer.h"
 #include "VulkanDescriptors.h"
@@ -24,69 +24,64 @@
 
 using namespace Renderer;
 
-void VulkanModel::LoadModel(VulkanDevice* device, const LoadedModel& loadedModel, TextureFallback* fallback)
+VulkanModel::VulkanModel(VulkanDevice* device, LoadedModel& loadedModel, TextureOrFallback& fallback)
 {
 	TIME_FUNCTION(); // Full LoadModel() time
-	assert(fallbackImage && "You must provide a fallbackImage to VulkanModel::LoadModel");
+	assert(fallback.fallbackImage && fallback.fallbackSampler && fallback.fallbackNormalImage &&
+		"Global fallbacks must be initialized before loading models");
 
 	// Shared sampler
 	{
 		TIME_BLOCK("Create Shared Sampler");
-		SamplerDesc samplerDesc{};
-		samplerDesc.minFilter = SamplerFilter::Linear;
-		samplerDesc.magFilter = SamplerFilter::Linear;
-		samplerDesc.mipFilter = SamplerMipFilter::Linear;
-
-		this->samplers.emplace_back(device, samplerDesc);
+		SamplerDesc samplerDesc = {
+			.minFilter = SamplerFilter::Linear,
+			.magFilter = SamplerFilter::Linear,
+			.mipFilter = SamplerMipFilter::Linear
+		};
+		samplers.emplace_back(device, samplerDesc);
 	}
 
-	VulkanSampler* sharedSampler = &this->samplers[0];
+	VulkanSampler* sharedSampler = samplers.data();
 
 	Array<DescriptorAllocatorGrowable::PoolSizeRatio, 4> sizes = {
-		{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 3.f},
-		{VK_DESCRIPTOR_TYPE_SAMPLER, 3.f},
-		{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3.f},
-		{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1.f}
+		{DescriptorType::SampledImage, 3},
+		{DescriptorType::Sampler, 3},
+		{DescriptorType::UniformBuffer, 3},
+		{DescriptorType::StorageBuffer, 1}
 	};
 
 	const u32 setsHint = std::max<u32>(1, static_cast<u32>(loadedModel.materials.size()));
 	descriptorPool.Init(device, setsHint, sizes);
 
-	// Reserve image storage + dedup map (keep pointers stable)
-	std::unordered_set<std::string> uniquePaths;
-	uniquePaths.reserve(loadedModel.materials.size());
-	for (const auto& m : loadedModel.materials)
-		if (!m.albedoPath.empty()) uniquePaths.insert(m.albedoPath);
-	images.reserve(images.size() + uniquePaths.size());
+	images.reserve(images.size() + loadedModel.materials.size() * 2); // albedo + normal image path deduplication
 
 	// path -> (image,sampler)
-	std::unordered_map<std::string, TextureFallback> loadedTextures;
-	loadedTextures.reserve(uniquePaths.size());
+	std::unordered_map<std::string, TextureOrFallback> loadedTextures;
+	loadedTextures.reserve(loadedModel.materials.size());
 
 	// Texture deduplication
-	auto loadTex = [&](const std::string& path) -> TextureFallback
+	auto loadTex = [&](const std::string& path, bool srgb) -> std::optional<TextureOrFallback>
 	{
 		TIME_BLOCK("Load Texture");
-		if (path.empty()) return *fallback;
+		if (path.empty()) return std::nullopt;
 
 		// Dedup check
-		if (auto it = loadedTextures.find(path); it != loadedTextures.end())
+		if (const auto it = loadedTextures.find(path); it != loadedTextures.end())
 			return it->second;
 
-		auto texData = TextureManager::LoadTextureFromSTB(path, true);
-		if (!texData) return *fallback;
+		auto texData = TextureManager::LoadTextureFromSTB(path, srgb);
+		if (!texData) return std::nullopt;
 
 		TextureInfo texInfo{
-			.extent    = { (u32)texData->width, (u32)texData->height, 1 },
+			.extent    = { static_cast<u32>(texData->width), static_cast<u32>(texData->height), 1 },
 			.mipLevels = 1,
 			.type      = ImageType::Image2D,
 			.format    = texData->format,
-			.dimension = TextureDimension::TEXTURE_2D,
-			.usage     = ImageUsage::SAMPLED | ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC
+			.dimension = TextureDimension::Texture2D,
+			.usage     = ImageUsage::Sampled | ImageUsage::TransferDst | ImageUsage::TransferSrc
 		};
 		texInfo.EnableMipmaps();
 
-		// Push by value (stack allocation inside vector)
 		images.emplace_back(device, texInfo);
 		VulkanImage& imgRef = images.back();
 
@@ -95,7 +90,7 @@ void VulkanModel::LoadModel(VulkanDevice* device, const LoadedModel& loadedModel
 			imgRef.UploadTextureToGPU(texData->data.data(), texInfo);
 		}
 
-		TextureFallback handle{ &imgRef, sharedSampler };
+		TextureOrFallback handle{ &imgRef, sharedSampler };
 		loadedTextures.emplace(path, handle);
 		return handle;
 	};
@@ -106,56 +101,138 @@ void VulkanModel::LoadModel(VulkanDevice* device, const LoadedModel& loadedModel
 		DescriptorLayoutBuilder builder;
 		builder.AddBinding(0, DescriptorType::SampledImage);
 		builder.AddBinding(1, DescriptorType::Sampler);
-		this->layout = builder.Build(device->device, ShaderStage::FRAGMENT);
+		builder.AddBinding(2, DescriptorType::SampledImage);
+		layout = builder.Build(device->device, ShaderStage::Fragment);
 	}
 
-	materials.reserve(materials.size() + loadedModel.materials.size());
+	materials.reserve(loadedModel.materials.size());
 
 	{
 		TIME_BLOCK("Create Materials");
+
+		DescriptorWriter w;
 		for (const auto& cpuMat : loadedModel.materials)
 		{
-			TextureFallback albedo = loadTex(cpuMat.albedoPath);
+			TextureOrFallback albedo = loadTex(cpuMat.albedoPath, true).value_or(fallback);;
+			TextureOrFallback normal = loadTex(cpuMat.normalPath, false).value_or(fallback);
 
-			VkDescriptorSet set = descriptorPool.Allocate(layout);
-
+			DescriptorSet set = descriptorPool.Allocate(layout);
 			{
 				TIME_BLOCK("Write Descriptor");
-				VkDescriptorWriter w;
-				w.WriteImage(0, albedo.fallbackImage,  nullptr,           DescriptorType::SampledImage); // t0
-				w.WriteImage(1, std::nullopt,  albedo.fallbackSampler,     DescriptorType::Sampler);      // s0
-				w.UpdateSet(device->device, set);
+				w.Clear();
+				w.WriteImage(0, albedo.fallbackImage, nullptr, DescriptorType::SampledImage); // t0
+				w.WriteImage(1, std::nullopt, albedo.fallbackSampler, DescriptorType::Sampler); // s0
+				w.WriteImage(2, normal.fallbackImage, nullptr, DescriptorType::SampledImage); // t1
+				w.UpdateSet(device->device, set.vk);
 			}
 
 			VulkanMaterial mat{};
 			mat.colorImage    = albedo.fallbackImage;
 			mat.sampler       = albedo.fallbackSampler;
-			mat.materialIndex = static_cast<u32>(materials.size());
+			mat.normalImage   = normal.fallbackImage;
 			mat.descriptorSet = set;
 
-			materials.push_back(std::move(mat));
+			materials.emplace_back(mat);
 		}
 	}
 
-	// Build mesh parts
+	// Build mesh parts - BATCHED GPU UPLOAD
 	{
 		TIME_BLOCK("Create Mesh Parts");
-		for (const auto& mesh : loadedModel.meshes)
+		
+		// Count total parts and calculate sizes
+		size_t totalParts = 0;
+		size_t totalVertexBytes = 0;
+		size_t totalIndexBytes = 0;
+		
+		for (auto& mesh : loadedModel.meshes)
 		{
 			for (const auto& part : mesh.parts)
 			{
-				VulkanMeshPart gpuPart;
-				gpuPart.materialIndex = part.materialIndex;
-
-				{
-					TIME_BLOCK("Create VulkanMeshPart");
-					gpuPart.Create(device, part);
-				}
-
-				parts.push_back(std::move(gpuPart));
+				totalParts++;
+				totalVertexBytes += part.vertices.size() * sizeof(Vertex);
+				totalIndexBytes += part.indices.size() * sizeof(u32);
 			}
 		}
+		
+		parts.reserve(totalParts);
+		
+		const size_t totalStagingSize = totalVertexBytes + totalIndexBytes;
+		VulkanBuffer stagingBuffer(device, BufferPreset::StagingUpload, totalStagingSize);
+		
+		// Temporary structure to track offsets during batching
+		struct PartUploadInfo {
+			size_t stagingOffset;
+			size_t vertexSize;
+			size_t indexSize;
+		};
+		Vector<PartUploadInfo> uploadInfos;
+		uploadInfos.reserve(totalParts);
+		
+		size_t stagingOffset = 0;
+		
+		// First pass: Create buffers and copy to staging
+		{
+			TIME_BLOCK("Prepare Buffers & Copy to Staging");
+			for (auto& mesh : loadedModel.meshes)
+			{
+				for (const auto& part : mesh.parts)
+				{
+					VulkanMeshPart gpuPart;
+					gpuPart.materialIndex = part.materialIndex;
+					gpuPart.indexCount = static_cast<u32>(part.indices.size());
+					gpuPart.localBounds = part.aabb;  // Keep AABB
+					gpuPart.transform = glm::mat4(1.0f);  // Identity transform
+					
+					const size_t vertexSize = part.vertices.size() * sizeof(Vertex);
+					const size_t indexSize = part.indices.size() * sizeof(u32);
+					
+					// Create GPU buffers
+					gpuPart.vertexBuffer.Init(device, BufferPreset::VertexStorageGPU, vertexSize);
+					gpuPart.vertexAddress = gpuPart.vertexBuffer.GetDeviceAddress();
+					gpuPart.indexBuffer.Init(device, BufferPreset::IndexGPU, indexSize);
+					
+					// Copy to staging buffer at current offset
+					vmaCopyMemoryToAllocation(device->allocator, part.vertices.data(), 
+						stagingBuffer.allocation, stagingOffset, vertexSize);
+					vmaCopyMemoryToAllocation(device->allocator, part.indices.data(), 
+						stagingBuffer.allocation, stagingOffset + vertexSize, indexSize);
+					
+					// Store upload info separately
+					uploadInfos.push_back({stagingOffset, vertexSize, indexSize});
+					stagingOffset += vertexSize + indexSize;
+					
+					parts.emplace_back(std::move(gpuPart));
+				}
+			}
+		}
+		
+		// Second pass: SINGLE batched GPU upload
+		{
+			TIME_BLOCK("Batched GPU Upload");
+			device->ImmediateSubmit([&](VkCommandBuffer cmd)
+			{
+				for (size_t i = 0; i < parts.size(); ++i)
+				{
+					auto& part = parts[i];
+					const auto& info = uploadInfos[i];
+					
+					// Copy from staging to GPU buffers
+					part.vertexBuffer.CopyFrom(cmd, &stagingBuffer, info.vertexSize, info.stagingOffset, 0);
+					part.indexBuffer.CopyFrom(cmd, &stagingBuffer, info.indexSize, info.stagingOffset + info.vertexSize, 0);
+				}
+			});
+		}
+		
+		// Clean up staging buffer
+		stagingBuffer.Destroy();
 	}
+	
+	std::ranges::sort(parts,
+	                  [](const VulkanMeshPart& a, const VulkanMeshPart& b)
+	                  { return a.materialIndex < b.materialIndex; });
+
+
 }
 
 void VulkanModel::Destroy(const VulkanDevice* device)
@@ -183,15 +260,16 @@ void VulkanMeshPart::Destroy()
 bool VulkanMeshPart::Create(VulkanDevice* device, const MeshPart& mesh)
 {
 	materialIndex = mesh.materialIndex;
-	indexCount    = static_cast<u32>(mesh.indices.size());
+	indexCount = static_cast<u32>(mesh.indices.size());
 
 	const size_t vertexSize = mesh.vertices.size() * sizeof(Vertex);
-	const size_t indexSize  = mesh.indices.size() * sizeof(u32);
-	const size_t totalSize  = vertexSize + indexSize;
-
+	const size_t indexSize = mesh.indices.size() * sizeof(u32);
+	const size_t totalSize = vertexSize + indexSize;
 
 	vertexBuffer.Init(device, BufferPreset::VertexStorageGPU, vertexSize);
-	indexBuffer.Init(device, BufferPreset::IndexGPU,         indexSize);
+	vertexAddress = vertexBuffer.GetDeviceAddress();
+
+	indexBuffer.Init(device, BufferPreset::IndexGPU, indexSize);
 
 	VulkanBuffer stagingBuffer(device, BufferPreset::StagingUpload, totalSize);
 
@@ -204,22 +282,21 @@ bool VulkanMeshPart::Create(VulkanDevice* device, const MeshPart& mesh)
 		indexBuffer.CopyFrom(cmd, &stagingBuffer, indexSize, vertexSize, 0);
 	});
 
-	stagingBuffer.Destroy();
+	localBounds = mesh.aabb;
 
-	// Cache device address
-	vertexAddress = vertexBuffer.GetDeviceAddress();
+	stagingBuffer.Destroy();
 
 	return true;
 }
 
 
-void VulkanMeshPart::Draw(VkCommandBuffer cmd, VkPipelineLayout pipelineLayout, VkDescriptorSet materialSet) const
+void VulkanMeshPart::Draw(VkCommandBuffer cmd, VkPipelineLayout pipelineLayout, DescriptorSet materialSet) const
 {
 	assert(indexCount > 0);
 	assert(indexBuffer.IsValid() && "indexBuffer is invalid");
 	assert(vertexBuffer.IsValid() && "vertexBuffer is invalid");
 
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &materialSet, 0, nullptr);
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &materialSet.vk, 0, nullptr);
 	vkCmdBindIndexBuffer(cmd, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 	vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
 }

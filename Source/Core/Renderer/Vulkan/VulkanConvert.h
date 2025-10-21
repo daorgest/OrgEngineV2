@@ -12,41 +12,31 @@
 
 namespace Renderer
 {
-	// Enum Utils
-	template <typename E>
-	constexpr bool HasAndFlag(E value, E flag)
-	{
-		using UT = std::underlying_type_t<E>;
-		return (static_cast<UT>(value) & static_cast<UT>(flag)) != 0;
-	}
-
-	template <typename E>
-	constexpr bool HasOrFlag(E value, E flag)
-	{
-		using UT = std::underlying_type_t<E>;
-		return (static_cast<UT>(value) | static_cast<UT>(flag)) != 0;
-	}
-
 	// Shader Stage conversions
-	inline VkShaderStageFlags ToVk(ShaderStageFlags flags)
+	[[nodiscard]] constexpr VkShaderStageFlags ToVk(ShaderStageFlags flags)
 	{
 		VkShaderStageFlags vkFlags = 0;
-
-		if (flags & ShaderStage::VERTEX)         vkFlags |= VK_SHADER_STAGE_VERTEX_BIT;
-		if (flags & ShaderStage::FRAGMENT)       vkFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
-		if (flags & ShaderStage::COMPUTE)        vkFlags |= VK_SHADER_STAGE_COMPUTE_BIT;
-		if (flags & ShaderStage::RAYGEN)         vkFlags |= VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-		if (flags & ShaderStage::ANY_HIT)        vkFlags |= VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
-		if (flags & ShaderStage::CLOSEST_HIT)    vkFlags |= VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-		if (flags & ShaderStage::MISS)           vkFlags |= VK_SHADER_STAGE_MISS_BIT_KHR;
-		if (flags & ShaderStage::CALLABLE)       vkFlags |= VK_SHADER_STAGE_CALLABLE_BIT_KHR;
-
+		if (HasAny(flags, ShaderStage::Vertex))       vkFlags |= VK_SHADER_STAGE_VERTEX_BIT;
+		if (HasAny(flags, ShaderStage::Fragment))     vkFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
+		if (HasAny(flags, ShaderStage::Compute))      vkFlags |= VK_SHADER_STAGE_COMPUTE_BIT;
+		if (HasAny(flags, ShaderStage::RayGen))       vkFlags |= VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+		if (HasAny(flags, ShaderStage::AnyHit))      vkFlags |= VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+		if (HasAny(flags, ShaderStage::ClosestHit))  vkFlags |= VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+		if (HasAny(flags, ShaderStage::Miss))         vkFlags |= VK_SHADER_STAGE_MISS_BIT_KHR;
+		if (HasAny(flags, ShaderStage::Callable))     vkFlags |= VK_SHADER_STAGE_CALLABLE_BIT_KHR;
 		return vkFlags;
 	}
 
+	inline BufferPreset ToPreset(DescriptorType type) {
+		switch (type) {
+		case DescriptorType::UniformBuffer: return BufferPreset::UniformHost;
+		case DescriptorType::StorageBuffer: return BufferPreset::StorageHostPersistent;
+		default: assert(false && "Unsupported descriptor type"); return BufferPreset::UniformHost;
+		}
+	}
 
 	// Present mode conversions
-	inline VkPresentModeKHR ToVkPresentMode(PresentMode mode, std::span<const VkPresentModeKHR> available)
+	constexpr VkPresentModeKHR ToVkPresentMode(PresentMode mode, std::span<const VkPresentModeKHR> available)
 	{
 
 		auto has = [&](VkPresentModeKHR m) {
@@ -76,16 +66,18 @@ namespace Renderer
 		}
 	}
 	// Images
-	inline VkImageType ToImgType(TextureDimension dimension)
+	inline VkImageType ToVkImageType(TextureDimension dimension)
 	{
 		switch (dimension)
 		{
-		case TextureDimension::TEXTURE_1D:
+		case TextureDimension::Texture1D:
 			return VK_IMAGE_TYPE_1D;
-		case TextureDimension::TEXTURE_2D:
+		case TextureDimension::Texture2D:
 			return VK_IMAGE_TYPE_2D;
-		case TextureDimension::TEXTURE_3D:
+		case TextureDimension::Texture3D:
 			return VK_IMAGE_TYPE_3D;
+		case TextureDimension::CubeMap:
+			return VK_IMAGE_TYPE_2D; // cubemaps are always 2D images unless im insane
 		default:
 			assert(false && "Unknown Texture dimension.");
 			return VK_IMAGE_TYPE_MAX_ENUM;
@@ -96,51 +88,37 @@ namespace Renderer
 	{
 		switch (dimension)
 		{
-		case TextureDimension::TEXTURE_1D:
+		case TextureDimension::Texture1D:
 			return VK_IMAGE_VIEW_TYPE_1D;
-		case TextureDimension::TEXTURE_2D:
+		case TextureDimension::Texture2D:
 			return VK_IMAGE_VIEW_TYPE_2D;
-		case TextureDimension::TEXTURE_3D:
+		case TextureDimension::Texture3D:
 			return VK_IMAGE_VIEW_TYPE_3D;
+		case TextureDimension::CubeMap:
+			return VK_IMAGE_VIEW_TYPE_CUBE;
 		default:
 			assert(false && "Unknown Texture view dimension.");
 			return VK_IMAGE_VIEW_TYPE_MAX_ENUM;
 		}
 	}
 
-	inline VkImageUsageFlags ToVkImageUsage(ImageUsageFlags usage)
+	inline VkImageUsageFlags ToVkImageUsage(ImageUsageFlags usage) noexcept
 	{
 		VkImageUsageFlags flags = 0;
 
-		if (usage & ImageUsage::TRANSFER_SRC)
-			flags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-
-		if (usage & ImageUsage::TRANSFER_DST)
-			flags |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
-		if (usage & ImageUsage::SAMPLED)
-			flags |= VK_IMAGE_USAGE_SAMPLED_BIT;
-
-		if (usage & ImageUsage::COLOR_ATTACHMENT)
-			flags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-		if (usage & ImageUsage::DEPTH_STENCIL_ATTACHMENT)
-			flags |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-
-		if (usage & ImageUsage::STORAGE)
-			flags |= VK_IMAGE_USAGE_STORAGE_BIT;
-
-		if (usage & ImageUsage::INPUT_ATTACHMENT)
-			flags |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
-
-		if (usage & ImageUsage::RESOLVE_DST)
-			flags |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
-		if (usage & ImageUsage::RESOLVE_SRC)
-			flags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		if (usage & ImageUsage::TransferSrc)     flags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		if (usage & ImageUsage::TransferDst)     flags |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+		if (usage & ImageUsage::Sampled)         flags |= VK_IMAGE_USAGE_SAMPLED_BIT;
+		if (usage & ImageUsage::ColorAttachment) flags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		if (usage & ImageUsage::DepthStencil)    flags |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+		if (usage & ImageUsage::Storage)         flags |= VK_IMAGE_USAGE_STORAGE_BIT;
+		if (usage & ImageUsage::InputAttachment) flags |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+		if (usage & ImageUsage::ResolveDst)      flags |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+		if (usage & ImageUsage::ResolveSrc)      flags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
 		return flags;
 	}
+
 
 	inline VkFormat ToVkFormat(TextureFormat format)
 	{
@@ -199,6 +177,21 @@ namespace Renderer
 		case TextureLayout::ResolveDestination:   return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 		case TextureLayout::Present:              return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 		default: case TextureLayout::Unknown:     return VK_IMAGE_LAYOUT_UNDEFINED;
+		}
+	}
+
+	inline VkSampleCountFlagBits ToVk(SampleCount count)
+	{
+		switch (count)
+		{
+		case SampleCount::X1:  return VK_SAMPLE_COUNT_1_BIT;
+		case SampleCount::X2:  return VK_SAMPLE_COUNT_2_BIT;
+		case SampleCount::X4:  return VK_SAMPLE_COUNT_4_BIT;
+		case SampleCount::X8:  return VK_SAMPLE_COUNT_8_BIT;
+		case SampleCount::X16: return VK_SAMPLE_COUNT_16_BIT;
+		case SampleCount::X32: return VK_SAMPLE_COUNT_32_BIT;
+		case SampleCount::X64: return VK_SAMPLE_COUNT_64_BIT;
+		default:               return VK_SAMPLE_COUNT_1_BIT;
 		}
 	}
 

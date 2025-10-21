@@ -4,14 +4,12 @@
 
 #include "VulkanCommands.h"
 
-#include <set>
-
-#include "DeletionQueue.h"
-#include "Logger.h"
 #include "Platform.h"
 #include "VulkanCheck.h"
 #include "VulkanInit.h"
 #include "VulkanSwapchain.h"
+#include "../Core/Tools/Logger.h"
+#include "Tools/DeletionQueue.h"
 
 using namespace Renderer;
 
@@ -67,14 +65,14 @@ bool VulkanFrameData::Init(VulkanDevice* device, TracyVkCtx tracyCtx)
 	command.tracyCtx = tracyCtx;
 
 
-	queryPool.Init(device, 2);
+	queryPool.Init(device, 4);
 
 	// init descriptor allocs
 	Vector<DescriptorAllocatorGrowable::PoolSizeRatio> frameSizes = {
-		{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3  },
-		{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
-		{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
-		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4},
+		{DescriptorType::StorageImage, 3},
+		{DescriptorType::StorageBuffer, 3},
+		{DescriptorType::UniformBuffer, 3},
+		{DescriptorType::Sampler, 4},
 	};
 
 	descriptors.Init(device, 1000, frameSizes);
@@ -107,22 +105,22 @@ bool VulkanRenderer::Init(VulkanDevice* dev, VulkanSwapchain* sc)
 	swapchain = sc;
 
 	frames.resize(MAX_FRAME_OVERLAP);
-	frames.reserve(MAX_FRAME_OVERLAP);
 	for (auto& frame : frames)
 	{
 		frame.Init(device);
 	}
 
-	tracyCtx = TracyVkContext(device->physicalDevice, device->device, device->graphicsQueue, frames[0].command.commandBuffer);
+	tracyCtx = TracyVkContext(device->physicalDevice, device->device, device->graphicsQueue, frames.at(0).command.commandBuffer);
+	TracyVkContextName(tracyCtx, "Graphics", 8);
 
 	for (auto& frame : frames)
 	{
 		frame.command.tracyCtx = tracyCtx;
 	}
 
-	presentWaitSemaphores.resize(swapchain->imageCount);
+	presentSemaphores.resize(swapchain->imageCount); // One semaphore per swapchain image
 	constexpr VkSemaphoreCreateInfo semInfo{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-	for (auto& sem : presentWaitSemaphores)
+	for (auto& sem : presentSemaphores)
 	{
 		VK_CHECK(vkCreateSemaphore(device->device, &semInfo, nullptr, &sem));
 	}
@@ -142,7 +140,7 @@ void VulkanRenderer::Destroy()
 	{
 		frame.Destroy(device);
 	}
-	for (auto& sem : presentWaitSemaphores)
+	for (auto& sem : presentSemaphores)
 	{
 		if (sem != VK_NULL_HANDLE)
 		{
@@ -150,7 +148,7 @@ void VulkanRenderer::Destroy()
 			sem = VK_NULL_HANDLE;
 		}
 	}
-	presentWaitSemaphores.clear();
+	presentSemaphores.clear();
 }
 
 bool VulkanRenderer::ResizeIfNeeded() const
@@ -198,11 +196,9 @@ bool VulkanRenderer::ResizeIfNeeded() const
 FrameContext VulkanRenderer::BeginFrame()
 {
 	VulkanFrameData& frame = GetCurrentFrame();
-
 	vkWaitForFences(device->device, 1, &frame.renderFence, VK_TRUE, UINT64_MAX);
 	vkResetFences(device->device, 1, &frame.renderFence);
 
-	// reset descriptors for this frame
 	frame.descriptors.ResetPools();
 
 	u32 imageIndex = 0;
@@ -216,6 +212,7 @@ FrameContext VulkanRenderer::BeginFrame()
 
 	frame.command.Begin();
 	frame.queryPool.Reset(frame.command.commandBuffer);
+
 	return FrameContext{
 		.commandContext = &frame.command,
 		.frameData = &frame,
@@ -224,23 +221,15 @@ FrameContext VulkanRenderer::BeginFrame()
 	};
 }
 
-void VulkanRenderer::SetViewportAndScissor(VkCommandBuffer cmd, const Extent2D& extent)
-{
-	VkViewport viewport = {0.f, 0.f, (f32)extent.width, (f32)extent.height, 1.f, 0.f};
-	VkRect2D scissor = {{0, 0}, {extent.width, extent.height}};
-
-	vkCmdSetViewport(cmd, 0, 1, &viewport);
-	vkCmdSetScissor(cmd, 0, 1, &scissor);
-}
-
 void VulkanRenderer::EndFrame(const FrameContext& frame)
 {
 	u32 imageIndex = frame.imageIndex;
 
-	frame.commandContext->End();
-
 	VkCommandBuffer cmd = frame.commandContext->commandBuffer;
 
+	TracyVkCollect(frame.commandContext->tracyCtx, cmd);
+
+	frame.commandContext->End();
 
 	VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
@@ -252,23 +241,31 @@ void VulkanRenderer::EndFrame(const FrameContext& frame)
 		.commandBufferCount = 1,
 		.pCommandBuffers = &cmd,
 		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &presentWaitSemaphores[imageIndex]
+		.pSignalSemaphores = &presentSemaphores[imageIndex] // Use semaphore for THIS swapchain image
 	};
 
 	VK_CHECK(vkQueueSubmit(device->graphicsQueue, 1, &submitInfo, frame.frameData->renderFence));
-	frame.frameData->queryPool.FetchResults();
 
-	TracyVkCollect(frame.commandContext->tracyCtx , cmd);
 
 	VkPresentInfoKHR presentInfo{
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &presentWaitSemaphores[imageIndex],
+		.pWaitSemaphores = &presentSemaphores[imageIndex], // Wait on the same semaphore
 		.swapchainCount = 1,
 		.pSwapchains = &swapchain->swapchain,
 		.pImageIndices = &imageIndex
 	};
 
 	VK_CHECK(vkQueuePresentKHR(device->graphicsQueue, &presentInfo));
-	frameNumber = (frameNumber + 1) % framesActive;
+	
+	frameNumber++; // Increment unconditionally, will wrap in GetCurrentFrame()
+}
+
+void VulkanRenderer::SetViewportAndScissor(VkCommandBuffer cmd, const Extent2D& extent)
+{
+	VkViewport viewport = {0.f, 0.f, (f32)extent.width, (f32)extent.height, 1.f, 0.f};
+	VkRect2D scissor = {{0, 0}, {extent.width, extent.height}};
+
+	vkCmdSetViewport(cmd, 0, 1, &viewport);
+	vkCmdSetScissor(cmd, 0, 1, &scissor);
 }

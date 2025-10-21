@@ -4,7 +4,7 @@
 #include <utility>
 
 
-#ifdef _DEBUG
+#ifndef _DEBUG
     #include <vector>
     template <typename T>
     using Vector = std::vector<T>;

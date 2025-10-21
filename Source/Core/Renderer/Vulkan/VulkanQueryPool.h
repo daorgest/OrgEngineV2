@@ -4,15 +4,15 @@
 
 #pragma once
 #include <volk.h>
-#include "Vector.h"
+#include "Tools/Vector.h"
 
 namespace Renderer
 {
 	struct VulkanDevice;
 	struct VulkanQueryPool
 	{
-
-		struct TimestampResult {
+		struct TimestampResult
+		{
 			u64 time;
 			u64 available;
 		};
@@ -20,8 +20,9 @@ namespace Renderer
 		bool Init(VulkanDevice* device, u32 queryCount);
 		void Destroy();
 		void Reset(VkCommandBuffer cmd) const;
-		void WriteTimestamp(VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage, uint32_t queryIndex) const;
-		void FetchResults();
+		void WriteTimestamp(VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage, u32 queryIndex) const;
+		bool FetchResults();
+		[[nodiscard]] f32 DeltaMs(u32 beginIdx, u32 endIdx) const;
 
 		VulkanDevice* device = nullptr;
 		VkQueryPool queryPool = VK_NULL_HANDLE;
@@ -29,5 +30,4 @@ namespace Renderer
 		u32 queryCount = 0;
 		Vector<TimestampResult> queryResults;
 	};
-
 }
