@@ -3,7 +3,7 @@
 //
 #include <mikktspace.h>
 
-#include "MeshData.h"
+#include "../../Engine/MeshData.h"
 
 // User data passed to mikktspace
 struct MikkUserData
@@ -13,7 +13,6 @@ struct MikkUserData
 	uint32_t indexCount; // triangle indices
 };
 
-// --------- mikktspace callbacks ----------
 static int mikkGetNumFaces(const SMikkTSpaceContext* ctx)
 {
 	auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
@@ -63,11 +62,11 @@ static void mikkSetTSpaceBasic(const SMikkTSpaceContext* ctx,
 	v.tangent.w = sign; // handedness (+1 / -1)
 }
 
-// --------- public entry ---------
 void GenerateMikkTangents(Vertex* verts, uint32_t vertCount,
                           const uint32_t* indices, uint32_t indexCount)
 {
 	(void)vertCount; // not required by mikktspace, but we keep it for sanity checks
+
 	// Preconditions: indexCount % 3 == 0, verts have valid normals & UVs
 	SMikkTSpaceInterface iface{};
 	iface.m_getNumFaces = mikkGetNumFaces;

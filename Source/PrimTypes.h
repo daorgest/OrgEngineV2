@@ -5,25 +5,48 @@ enum OrgErrCode
 {
 	None = 0,
 
+	InitFailed,
+	NotInitialized,
+	AlreadyInitialized,
+	MissingDependency,
+
 	// File / I/O
 	FileNotFound,
+	FileAccessDenied,
 	FileReadFailed,
 	FileWriteFailed,
+	FileOpenFailed,
 	InvalidFileFormat,
+	UnsupportedFileFormat,
+	DirectoryNotFound,
+	PathTooLong,
+	IOError,
+
 
 	// Assets
 	AssetNotFound,
 	AssetLoadFailed,
 	AssetUnsupported,
+	AssetCorrupted,
+	AssetVersionMismatch,
 	ShaderCompileFailed,
+	MaterialLoadFailed,
+	TextureLoadFailed,
+	MeshLoadFailed,
 
 	// Graphics / Vulkan
 	VulkanInitFailed,
 	VulkanDeviceLost,
 	VulkanSwapchainOutOfDate,
 	VulkanNoMemory,
-	PipelineCreationFailed,
-	DescriptorAllocationFailed,
+	VulkanInvalidState,
+	VulkanTimeout,
+	VulkanPipelineCreationFailed,
+	VulkanDescriptorAllocationFailed,
+	VulkanShaderModuleFailed,
+	VulkanImageCreationFailed,
+	VulkanBufferCreationFailed,
+	VulkanCommandBufferFailed,
 
 	// Audio
 	AudioInitFailed,
@@ -46,7 +69,7 @@ enum OrgErrCode
 };
 
 
-template<typename T>
+template <typename T>
 using Result = std::expected<T, OrgErrCode>;
 
 #ifdef ORGAPI_DLL_EXPORT
@@ -59,13 +82,12 @@ using Result = std::expected<T, OrgErrCode>;
 
 #include <cstdint>
 #include <string_view>
-#include <type_traits>
 
 // Unsigned
-using u8  = uint8_t;
-using u16 = uint16_t;
-using u32 = uint32_t;
-using u64 = uint64_t;
+using u8    = uint8_t;
+using u16   = uint16_t;
+using u32   = uint32_t;
+using u64   = uint64_t;
 using uChar = unsigned char;
 
 // Signed
@@ -93,12 +115,12 @@ constexpr float BytesToMB(u64 bytes) { return (float)bytes / (float)Megabyte; }
 constexpr float BytesToGB(u64 bytes) { return (float)bytes / (float)Gigabyte; }
 
 // Frame overlap
-static constexpr u32 MAX_FRAME_OVERLAP = 3; // Triple buffering for better GPU utilization
+static constexpr u32 MAX_FRAME_OVERLAP    = 2;
 static constexpr u32 SWAPCHAIN_IMAGECOUNT = std::max(MAX_FRAME_OVERLAP + 1, 3u);
 
 
 // Engine Information
-constexpr auto ENGINE_NAME = "OrgEngine";
+constexpr auto ENGINE_NAME    = "OrgEngine";
 constexpr auto ENGINE_VERSION = "0.1";
 
 constexpr auto ENGINE_BUILD_DATE = __DATE__;

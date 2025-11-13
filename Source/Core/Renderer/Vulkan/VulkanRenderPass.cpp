@@ -42,7 +42,7 @@ void VulkanRenderPass::Begin(VkCommandBuffer cmd, const Extent2D& size, const Re
 			.resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 			.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD,
 			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-			.clearValue = {.depthStencil = {0.0f, 0}}
+			.clearValue = {.depthStencil = {1.0f, 0}} // Standard depth: clear to 1.0 (far plane)
 		};
 	}
 

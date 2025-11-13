@@ -3,13 +3,13 @@
 //
 
 #pragma once
-#include <memory>
 
 #include "Camera.h"
-#include "EditorUi.h"
+#include "DebugRenderer.h"
 #include "FPSCamera.h"
-#include "MeshData.h"
-#include "MeshStats.h"
+#include "SceneRenderer.h"
+#include "ShaderParams.h"
+#include "SkyboxManager.h"
 #include "VulkanCommands.h"
 #include "VulkanInit.h"
 #include "VulkanMesh.h"
@@ -19,17 +19,17 @@
 #include "VulkanShaderBuffer.h"
 #include "VulkanSwapchain.h"
 #include "../Core/Tools/Arena.h"
+#include "../Engine/MeshStats.h"
 
-constexpr double fixedStepFps = 1.0 / 60.0;
+// Forward declaration to break circular dependency with EditorUi.h
+struct EditorUI;
 
+
+// I had fun with arenas but long term im going to remove it as I realized....its annoying
 struct Application
 {
 	void DrawLoadingSplash(const char* text) const;
-	bool CreateAabbPipeline(bool depthTest, bool alwaysOnTop);
-	inline void QueueBBoxWS(const glm::mat4& model, const glm::vec3& mn, const glm::vec3& mx, const glm::vec4& color, float depthBias,
-	                        u32 flags);
-	void FlushBBoxWS(VkCommandBuffer cmd, u32 frameIndex);
-	bool CreateSkybox();
+	void CreatePBRSphereGrid();
 	bool Init();
 	void UpdateCamera();
 	void UpdateSceneUBO(const Renderer::FrameContext& frame);
@@ -37,13 +37,13 @@ struct Application
 	void ComputeStaticSceneStats();
 	void RenderImGui(const Renderer::FrameContext& frame);
 	void Run();
-	void Cleanup();
+	void Cleanup() const;
 
 	// Core components
-	ArenaAllocator coreArena{Megabyte};
-	ArenaAllocator renderArena{Megabyte};
+	ArenaAllocator coreArena{Megabyte};    // Entire app lifetime
+	ArenaAllocator renderArena{Megabyte};  // Per-scene (resettable)(ew)(idk why im so scared of smart pointers)
 
-	Platform::WindowContext* wc = nullptr;
+	Platform::WindowContext* windowContext = nullptr;
 	Renderer::VulkanInstance* instance = nullptr;
 	Renderer::VulkanDevice* device = nullptr;
 	Renderer::VulkanSwapchain* swapchain = nullptr;
@@ -52,36 +52,37 @@ struct Application
 	Renderer::DescriptorAllocatorGrowable* globalDescriptorAlloc = nullptr;
 	EditorUI* editorUI = nullptr;
 
-	// bounding box debug
-	std::unique_ptr<Renderer::VulkanShaderBuffer> aabbSB;
-	Renderer::VulkanShader* aabbShader = nullptr;
-	Renderer::VulkanPipeline aabbPipeline;
-	glm::vec4 aabbColor = {1,1,0,1};
-	float     aabbBias  = 0.0f;
-	u32		  aabbFlags = 0;
-	bool drawAABBs = false;
+	Renderer::VulkanPipeline scenePipeline;
+
+	// Rendering subsystems
+	SkyboxManager skybox;
+	DebugRenderer debugRenderer;
+	SceneRenderer sceneRenderer;
+
+	// Editor mode state
 	bool showGPUInfo = true;
-	Vector<BBoxPush> bboxQueue;
+	bool showMenuBar = true;
+	bool showLightMenu = true;
+	bool shaderHotReloadEnabled = true;
+	bool showPerformanceGraphs = true;
 
-	// skybox
-	Renderer::VulkanImage skyCubeMap;
-	Renderer::VulkanSampler skySampler;
-	std::unique_ptr<Renderer::VulkanModel> skyModel;
-	Renderer::VulkanShader* skyShader = nullptr;
-	Renderer::VulkanPipeline skyPipeline;
 
-	std::unique_ptr<Renderer::VulkanModel> modelInst;
-	std::unique_ptr<Renderer::VulkanModel> cubeMesh;
+	// model and cube
+	Renderer::VulkanModel* modelInst = nullptr;      // renderArena
+	Renderer::VulkanModel* cubeMesh = nullptr;       // renderArena
+	Renderer::VulkanModel* sphereMesh = nullptr;     // renderArena for PBR showcase
 
 	Renderer::VulkanShaderBuffer* sceneUBO = nullptr;
-	Renderer::VulkanShader* shader = nullptr;
+	Renderer::VulkanShader sceneShader;
 	Vector<Renderer::ModelComponent> models;
 
 
-	// defaults, app will hold the generated fallback images
+	// defaults
+	Renderer::VulkanImage whiteImage;  // Pure white texture for PBR spheres
 	Renderer::VulkanImage checkerboardImage;
 	Renderer::VulkanSampler* checkerboardSampler = nullptr;
 	Renderer::VulkanImage normalFallbackImage;
+	Renderer::VulkanSampler* normalFallbackSampler = nullptr;
 
 	SceneStats sceneStats;
 	Camera camera;
@@ -92,11 +93,10 @@ struct Application
 	Vector<LightUBO> lights;
 	DebugUBO debugData;
 	CameraUBO camUBO;
-	LightMeta lightMeta;
-
-	Renderer::VulkanPipeline scenePipeline;
+	LightUBOCount lightMeta;
 
 	float aspectRatio;
 	f32 cameraSpeed = 5;
 	f32 cameraSpeedPopupTime = 0.0;
+	f32 lastFrameMs = 0.0f;    // CPU frame time of the last completed frame
 };

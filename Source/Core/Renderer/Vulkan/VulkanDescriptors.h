@@ -22,22 +22,25 @@ namespace Renderer
 	{
 		VkDescriptorSetLayout vk = VK_NULL_HANDLE;
 		operator VkDescriptorSetLayout() const noexcept { return vk; }
+
+		void Destroy(const VulkanDevice* device);
 	};
 
 	struct DescriptorSet
 	{
 		VkDescriptorSet vk = VK_NULL_HANDLE;
-		explicit operator VkDescriptorSet() const noexcept { return vk; }
+		operator VkDescriptorSet() const noexcept { return vk; }
 	};
 
 	// Descriptor Layout Builder
 	struct DescriptorLayoutBuilder
 	{
 		Vector<VkDescriptorSetLayoutBinding> bindings;
+		Vector<VkDescriptorBindingFlags> bindingFlags;
 
 		DescriptorLayoutBuilder& AddBinding(u32 binding, DescriptorType type);
 		DescriptorLayout Build(VkDevice device, ShaderStageFlags shaderStages, void* pNext = nullptr, VkDescriptorSetLayoutCreateFlags flags = 0);
-		void Clear() { bindings.clear(); };
+		void Clear() { bindings.clear(); bindingFlags.clear(); };
 	};
 
 	// Descriptor Writer
@@ -47,6 +50,7 @@ namespace Renderer
 		std::deque<VkDescriptorBufferInfo> bufferInfos;
 		Vector<VkWriteDescriptorSet> writes;
 
+		DescriptorWriter& WriteCombinedImage(u32 binding, std::optional<VulkanImage*> image, const VulkanSampler* sampler);
 		DescriptorWriter& WriteImage(u32 binding, std::optional<VulkanImage*> image, const VulkanSampler* sampler, DescriptorType type);
 		DescriptorWriter& WriteImageArray(u32 binding, std::span<const VulkanImage*> images, DescriptorType type);
 		DescriptorWriter& WriteBuffer(u32 binding, const VulkanBuffer* buffer, DescriptorType type);

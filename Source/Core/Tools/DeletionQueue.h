@@ -4,37 +4,49 @@
 
 #pragma once
 #include <functional>
-#include <iostream>
 #include <ranges>
-#include <string>
 
+#include "Logger.h"
+#include "Vector.h"
+
+
+// Will prob use this, was from the last attempt on making a engine...but ehhh....
 struct DeletionQueue
 {
 	using Task = std::pair<std::string, std::function<void()>>;
-
-	std::vector<Task> tasks;
+	Vector<Task> tasks;
 
 	template <typename F>
-	void Push(F&& f, std::string_view name = {})
+	void Push(F&& f, const std::string_view name = {})
 	{
 		tasks.emplace_back(std::string{name}, std::forward<F>(f));
 	}
 
-	void FlushLIFO() noexcept {
-		for (auto & [fst, snd] : std::ranges::reverse_view(tasks))
-			snd();  // call the function
+	void FlushLIFO() noexcept
+	{
+		LOG(Debug, "DeletionQueue: Flushing {} tasks (LIFO)", tasks.size());
+
+		for (auto& [name, fn] : std::ranges::reverse_view(tasks))
+		{
+			LOG(Debug, "   - Destroying {}", name);
+			fn();
+		}
+
 		tasks.clear();
 	}
 
-	void FlushFIFO() noexcept {
-		for (auto& val : tasks | std::views::values)
-			val();
+	void FlushFIFO() noexcept
+	{
+		LOG(Debug, "DeletionQueue: Flushing {} tasks (FIFO)", tasks.size());
+
+		for (auto& [name, fn] : tasks)
+		{
+			LOG(Debug, "   - Destroying {}", name);
+			fn();
+		}
+
 		tasks.clear();
 	}
-
-	// sum utils
-	[[nodiscard]] bool empty() const noexcept { return tasks.empty(); }
-	[[nodiscard]] std::size_t size() const noexcept { return tasks.size(); }
 };
 
 inline DeletionQueue gDeletionQueue;

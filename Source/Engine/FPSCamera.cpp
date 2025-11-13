@@ -35,13 +35,14 @@ glm::vec3 FPSCamera::ProjectXZ(glm::vec3 v)
 	return (len2 > 1e-12f) ? p / std::sqrt(len2) : glm::vec3(0, 0, 1);
 }
 
-void FPSCamera::Update(f32 dt)
+void FPSCamera::Update(f32 dt, bool allowMouseLook)
 {
-	// look
-	if (!ImGui::GetIO().WantCaptureMouse)
+	// Look - only process mouse input if allowed (Application handles ImGui/Alt checks)
+	if (allowMouseLook)
 	{
 		yaw -= input.xrel * tune.mouseSens;
 		pitch -= input.yrel * tune.mouseSens;
+		pitch = std::clamp(pitch, -89.9f, 89.9f);  // Prevent gimbal lock flip
 		UpdateDirectionVectors();
 	}
 
@@ -49,7 +50,7 @@ void FPSCamera::Update(f32 dt)
 	IntegrateFPS(dt);
 }
 
-void FPSCamera::IntegrateFPS(float dt)
+void FPSCamera::IntegrateFPS(f32 dt)
 {
     // ----- Gravity (air only) -----
     if (!body_.grounded) body_.vel.y -= tune.gravity * dt;
@@ -63,48 +64,49 @@ void FPSCamera::IntegrateFPS(float dt)
     // ----- Input (A/D, W/S) -----
 	const int side = int(input.keyboard[Keyboard::D].held) - int(input.keyboard[Keyboard::A].held);
 	const int fwd  = int(input.keyboard[Keyboard::W].held) - int(input.keyboard[Keyboard::S].held);
-    const bool crouching = input.keyboard[Keyboard::Ctrl].held;
+	const bool crouching = input.keyboard[Keyboard::Ctrl].held;
+	const bool sprinting = input.keyboard[Keyboard::Shift].held && !crouching;
 
-	// ----- Basis EXACT like raylib sample -----
-	// front = { sin(rot), 0,  cos(rot) }
-	// right = { cos(rot), 0, -sin(rot) }
-	const float rot = yaw;
-	const glm::vec3 front = { std::sin(rot), 0.f, std::cos(rot) };
-	const glm::vec3 right = { std::cos(rot), 0.f, -std::sin(rot) };
-
-
-
-    glm::vec2 in{ (float)side, (float)(fwd) };
+	// ----- Use camera's actual direction vectors (projected to XZ plane) -----
+	// Project forward and right onto XZ plane (ignore pitch for movement)
+	const glm::vec3 front = ProjectXZ(forward);  // Camera's forward, flattened
+	const glm::vec3 right_vec = ProjectXZ(right);   // Camera's right, flattened
 
 #if NORMALIZE_INPUT
     // Slow down diagonal movement (optional)
+
+	glm::vec2 in{ (f32)side, (f32)(fwd) };
     if (in.x != 0.f || in.y != 0.f) {
-        const float len = std::sqrt(in.x*in.x + in.y*in.y);
+        const f32 len = std::sqrt(in.x*in.x + in.y*in.y);
         in /= len;
     }
 #endif
-	glm::vec3 desired = (float)side * right + (float)fwd * front;
-
+	glm::vec3 desired = (f32)side * right_vec + (f32)fwd * front;
 
     // ----- Intent smoothing EXACT style: lerp with CONTROL*dt (not exponential) -----
-    const float k = std::clamp(CONTROL * dt, 0.f, 1.f);
+    const f32 k = std::clamp(CONTROL * dt, 0.f, 1.f);
     body_.desireDir = glm::mix(body_.desireDir, desired, k);
     // keep horizontal intent only
     body_.desireDir.y = 0.f;
 
-    // ----- Horizontal velocity with multiplicative damping (raylib uses multipliers) -----
-    // NOTE: tune.friction and tune.airDrag are MULTIPLIERS here (e.g., 0.86f, 0.98f)
+    // ----- Horizontal velocity with frame-rate independent damping -----
     glm::vec3 hvel{ body_.vel.x, 0.f, body_.vel.z };
-    const float decel = body_.grounded ? tune.friction : tune.airDrag;
-    hvel *= decel;
+    const f32 decel = body_.grounded ? tune.friction : tune.airDrag;
+    const float dampingFactor = 1.0f - ((1.0f - decel) * (dt * 60.0f));
+    hvel *= std::max(0.0f, dampingFactor);
 
-    // tiny cutoff (same idea as sample)
     if (glm::length(hvel) < (tune.maxSpeed * 0.01f)) hvel = glm::vec3(0);
 
     // ----- Acceleration toward intent (raylib style) -----
-    float maxSpeed = crouching ? tune.crouchSpeed : tune.maxSpeed;
-    const float speedAlong = glm::dot(hvel, body_.desireDir);
-    const float accel      = std::clamp(maxSpeed - speedAlong, 0.f, tune.maxAccel * dt);
+	float maxSpeed = crouching ? tune.crouchSpeed
+				 : sprinting ? tune.maxSpeed * tune.sprintSpeed
+				 : tune.maxSpeed;
+
+
+	float accelScale = sprinting ? 1.5f : 1.0f;
+	const float speedAlong = glm::dot(hvel, body_.desireDir);
+	const float accel = std::clamp(maxSpeed - speedAlong, 0.f, tune.maxAccel * accelScale * dt);
+
     hvel += body_.desireDir * accel;
 
     // Commit horizontal
@@ -121,38 +123,56 @@ void FPSCamera::IntegrateFPS(float dt)
         body_.grounded = true;
     }
 
-    // ----- Eye height (keep your existing smoothing) -----
+    // ----- Eye height -----
     {
         const float targetEye = crouching ? tune.crouchEye : tune.standEye;
         const float kEye = std::clamp(CONTROL * dt, 0.f, 1.f);
         body_.eyeHeight = std::lerp(body_.eyeHeight, targetEye, kEye);
     }
 
-    // ----- Head-bob & FOV kick (you already have this; leaving as-is) -----
-    const bool moving = (fwd || side) && body_.grounded;
-    {
-        const float bobK = std::clamp(CONTROL * dt, 0.f, 1.f);
-        const float fovK = std::clamp(tune.fovLerp * dt, 0.f, 1.f);
 
-        if (moving) {
-            body_.headTimer += dt * tune.bobFreq;
-            body_.walkLerp   = std::lerp(body_.walkLerp, 1.0f, bobK);
-            fov              = std::lerp(fov, body_.fovBase - 5.0f, fovK); // raylib sample pulls FOV from 60 -> 55
-        } else {
-            body_.walkLerp   = std::lerp(body_.walkLerp, 0.0f, bobK);
-            fov              = std::lerp(fov, body_.fovBase, fovK);        // back to base (60)
-        }
-    }
+	// ----- Head-bob & FOV kick -----
+	{
+    	const bool moving = (fwd || side) && body_.grounded;
+    	const float fovK = std::clamp(tune.fovLerp * dt, 0.f, 1.f);
+    	const float bobK = std::clamp(CONTROL * dt, 0.f, 1.f);
 
-    // ----- Head bob offset (mirrors sample’s sine/cos use & lean feel) -----
-    {
-        const float s = std::sin(body_.headTimer * glm::pi<float>());
-        const float c = std::cos(body_.headTimer * glm::pi<float>());
-        glm::vec3 bob = right * (s * tune.bobHorizAmp * 2.0f); // sample uses ~0.1 side; your default is 0.05 -> *2
-        bob.y = std::abs(c * tune.bobVertAmp * 1.5f);          // sample ~0.15 up; your default is 0.1 -> *1.5
-        bob  *= body_.walkLerp;
+    	// --- FOV logic ---
+    	float targetFov = body_.fovBase;
+    	if (sprinting)
+    		targetFov = body_.fovBase * tune.sprintFOV;     // widen FOV while sprinting
+    	else if (moving)
+    		targetFov = body_.fovBase - tune.fovKick;       // slight inward FOV when walking
+    	fov = std::lerp(fov, targetFov, fovK);
 
-        position = body_.pos + glm::vec3(0, body_.eyeHeight, 0) + bob;
-    }
+    	// --- Head-bob timing & amplitude ---
+    	if (moving)
+    	{
+    		// accelerate bob when sprinting
+    		float bobSpeed = tune.bobFreq * (sprinting ? 1.6f : 1.0f);
+    		body_.headTimer += dt * bobSpeed;
+    		if (body_.headTimer > 1.0f)
+    			body_.headTimer -= 1.0f; // wrap nicely
+
+    		body_.walkLerp = std::lerp(body_.walkLerp, 1.0f, bobK);
+    	}
+    	else
+    	{
+    		body_.walkLerp = std::lerp(body_.walkLerp, 0.0f, bobK);
+    	}
+
+    	// --- Compute bob offset ---
+    	const float s = std::sin(body_.headTimer * glm::pi<float>() * 2.0f);
+    	const float c = std::cos(body_.headTimer * glm::pi<float>() * 2.0f);
+
+    	float horizAmp = tune.bobHorizAmp * (sprinting ? 1.5f : 1.0f);
+    	float vertAmp  = tune.bobVertAmp  * (sprinting ? 1.5f : 1.0f);
+
+    	glm::vec3 bob = ProjectXZ(right) * (s * horizAmp * 2.0f);
+    	bob.y = std::abs(c * vertAmp * 1.5f);
+    	bob *= body_.walkLerp;
+
+    	position = body_.pos + glm::vec3(0, body_.eyeHeight, 0) + bob;
+	}
 }
 

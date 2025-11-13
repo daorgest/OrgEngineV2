@@ -4,8 +4,7 @@
 
 #pragma once
 #include <span>
-#include <volk.h>
-
+#include <string>
 #include "RendererTypes.h"
 #include "RenderInterface.h"
 #include "VulkanInit.h"
@@ -34,6 +33,11 @@ namespace Renderer
 		Vector<VkVertexInputAttributeDescription> attributes;
 		VkPushConstantRange pushConstantRange = {};
 		bool hasPushConstant = false;
+
+		// Hot reload support
+		bool enableHotReload = false;
+		std::string shaderSourcePath;  // Path to .slang file
+		bool isComputeShader = false;
 	};
 
 	struct PipelineData
@@ -50,27 +54,39 @@ namespace Renderer
 		PipelineData data;
 
 		VulkanPipelineBuilder();
-
-		VulkanPipeline BuildPipeline(VulkanDevice* device);
 		VulkanPipelineBuilder& SetFragVerShaders(VkShaderModule vertexShader, VkShaderModule fragmentShader);
 		VulkanPipelineBuilder& SetComputeShader(VkShaderModule computeShader);
 		VulkanPipelineBuilder& SetInputTopology(VkPrimitiveTopology topology);
 		VulkanPipelineBuilder& SetVertexInput(std::span<const VkVertexInputBindingDescription> bindings,
 			std::span<const VkVertexInputAttributeDescription> attributes);
+		VulkanPipelineBuilder& SetVertexInput(const VertexInputLayout& layout); // RHI
 		VulkanPipelineBuilder& SetPushConstantRange(u32 size, VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT, u32 offset = 0);
 		VulkanPipelineBuilder& SetPolygonMode(VkPolygonMode mode);
 		VulkanPipelineBuilder& SetCullMode(VkCullModeFlags cullMode, VkFrontFace frontFace);
 		VulkanPipelineBuilder& EnableMultisampling(VkSampleCountFlagBits sampleCount);
 		VulkanPipelineBuilder& SetMultisamplingNone();
 		VulkanPipelineBuilder& DisableBlending();
-		VulkanPipelineBuilder& SetColorAttachmentFormat(VkFormat format);
-		VulkanPipelineBuilder& SetDepthAttachmentFormat(VkFormat format);
-		VulkanPipelineBuilder& SetDepthFormat(VkFormat format);
+		VulkanPipelineBuilder& SetColorAttachmentFormat(TextureFormat format);
+		VulkanPipelineBuilder& SetDepthAttachmentFormat(TextureFormat format);
+		VulkanPipelineBuilder& SetDepthFormat(TextureFormat format);
 		VulkanPipelineBuilder& DisableDepthTest();
 		VulkanPipelineBuilder& EnableDepthTest(bool depthWriteEnable, VkCompareOp op);
 		VulkanPipelineBuilder& EnableBlendingAdditive();
 		VulkanPipelineBuilder& EnableBlendingAlphaBlend();
 		VulkanPipelineBuilder& Layout(const VkPipelineLayout& layout);
+
+		// Hot reload support (soon)
+		VulkanPipelineBuilder& EnableHotReload(const char* shaderSourcePath, bool isCompute = false);
+
+
+		// Static helpers
+		static VkPipelineDynamicStateCreateInfo MakeDynamicStateInfo();
+		static VkPipelineViewportStateCreateInfo MakeViewportInfo();
+		static VkPipelineColorBlendStateCreateInfo MakeBlendInfo(const VkPipelineColorBlendAttachmentState& src);
+		static VkPipelineVertexInputStateCreateInfo MakeVertexInputInfo(const PipelineConfig& cfg);
+		static void LogPipelineStages(const Vector<VkPipelineShaderStageCreateInfo>& stages);
+		static Result<VkPipeline> BuildGraphicsPipeline(const VulkanDevice* device, const VulkanPipelineBuilder& b, VkPipelineLayout layout);
+
 
 	};
 
@@ -80,21 +96,38 @@ namespace Renderer
 		std::span<const VkPushConstantRange>   pushRanges;
 	};
 
-	struct VulkanPipeline
+	/// Vulkan implementation of GPUPipeline
+	struct VulkanPipeline final : GPUPipeline
 	{
-		VkPipeline vk = VK_NULL_HANDLE;
-		VkPipelineLayout vkLayout = VK_NULL_HANDLE;
-		const VulkanDevice* device = nullptr;
+		// RHI interface implementation
+		void Destroy() override;
+		[[nodiscard]] bool IsValid() const override { return vk != VK_NULL_HANDLE; }
+		void Rebuild(GPUDevice* device) override;
+
+		// Vulkan-specific
+		[[nodiscard]] Result<bool> Create(VulkanDevice* device, const PipelineLayoutDesc& layoutDesc,
+		                                   const VulkanPipelineBuilder& builder);
+
+		[[nodiscard]] VkPipeline GetVkPipeline() const noexcept { return vk; }
+		[[nodiscard]] VkPipelineLayout GetVkLayout() const noexcept { return vkLayout; }
+		explicit operator VkPipeline() const noexcept { return vk; }
+
 
 		VulkanPipeline() = default;
-		explicit VulkanPipeline(VulkanDevice* device) : device(device) {};
+		explicit VulkanPipeline(VulkanDevice* device) : device(device) {}
+		VulkanPipeline(const VulkanPipeline&) = delete;
+		VulkanPipeline& operator=(const VulkanPipeline&) = delete;
 
-		operator VkPipeline() const noexcept { return vk; }
+		~VulkanPipeline() override { Destroy(); }
 
-		~VulkanPipeline() { Destroy();}
+		VkPipeline vk = VK_NULL_HANDLE;
+		VkPipelineLayout vkLayout = VK_NULL_HANDLE;
 
-		void Destroy() const;
-		[[nodiscard]] Result<bool> Create(const VulkanDevice * device, const PipelineLayoutDesc & layoutDesc, const VulkanPipelineBuilder & builder);
+	private:
+		VulkanDevice* device = nullptr; // Non-const for shader creation during rebuild
+		bool ownsLayout = true;
+		PipelineLayoutDesc layoutDesc;
+		VulkanPipelineBuilder builder;
 	};
 
-};
+} // namespace Renderer

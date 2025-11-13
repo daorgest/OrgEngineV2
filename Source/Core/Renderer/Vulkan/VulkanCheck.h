@@ -115,11 +115,10 @@ static const char* VkResultToString(VkResult input) {
     do {                                                                        \
         VkResult __result = (expr);                                             \
         if (__result != VK_SUCCESS) {                                           \
-            fmt::print(                                                         \
-                "[VK_CHECK] '{}' failed at line {} with {} ({})\n",             \
-                #expr, __LINE__, static_cast<int>(__result),                    \
-                VkResultToString(__result));                                    \
-            std::fflush(stderr);                                                \
+            LOG(Error, "[VK_CHECK] '{}' failed in {}:{} with {} ({})",          \
+                #expr, __FILE__, __LINE__,                                      \
+                VkResultToString(__result), static_cast<int>(__result));        \
+            assert(false && "Vulkan API call failed");                          \
         }                                                                       \
     } while (0)
 #else

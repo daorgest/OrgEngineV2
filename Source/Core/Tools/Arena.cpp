@@ -3,8 +3,8 @@
 //
 
 #include "Arena.h"
-
 #include "Logger.h"
+#include "Platform.h"
 
 ArenaAllocator::ArenaAllocator(size_t capacity)
 	: base(static_cast<u8*>(Platform::Allocate(capacity))), capacity(capacity)
@@ -24,7 +24,7 @@ void* ArenaAllocator::Alloc(size_t allocSize, size_t alignment)
 		return nullptr;
 	}
 
-	auto result = reinterpret_cast<void*>(alignedPtr);
+	auto *result = reinterpret_cast<void*>(alignedPtr);
 	size = newSize;
 
 	LOG(Debug, "ArenaAllocator alloc: {} bytes (aligned to {}) -> Pointer: {}", allocSize, alignment, result);

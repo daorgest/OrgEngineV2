@@ -1,6 +1,6 @@
-#!/bin/bash
+!/bin/bash
 
-# Converts SPIR-V binary to a C++ header with a constexpr  array
+# Converts SPIR-V binary to a C++ header with a constexpr array
 # Usage: ./spv_to_header.sh shader.spv [SYMBOL_NAME]
 
 set -e

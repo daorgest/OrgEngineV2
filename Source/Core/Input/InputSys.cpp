@@ -6,64 +6,68 @@
 
 void Input::ProcessEventButton(ButtonState& state, const bool isPressed)
 {
-	state.seenThisFrame = true;
-	if (isPressed)
-	{
-		if (!state.held)
-			state.pressed = true;
+    if (isPressed)
+    {
+        if (!state.held)
+        {
+            state.pressed = true;
+        }
 
-		state.held = true;
-		state.released = false;
-	}
-	else
-	{
-		state.pressed = false;
-		state.held = false;
-		state.released = true;
-	}
+        state.held = true;
+        state.released = false;
+    }
+    else
+    {
+        state.pressed = false;
+        state.held = false;
+        state.released = true;
+    }
 }
 
 // Resetting
 void Input::EndFrameInputUpdate()
 {
-	for (auto& key : input.keyboard)
-	{
-		key.pressed = false;
-		key.released = false;
-		key.seenThisFrame = false;
-	}
+    for (auto& key : input.keyboard)
+    {
+        key.pressed = false;
+        key.released = false;
+    }
 
-	for (auto& btn : input.mouseButtons)
-	{
-		btn.pressed = false;
-		btn.released = false;
-	}
+    for (auto& btn : input.mouseButtons)
+    {
+        btn.pressed = false;
+        btn.released = false;
+    }
 
-	for (auto& btn : input.gamepadButtons)
-	{
-		btn.pressed = false;
-		btn.released = false;
-	}
-
+    for (auto& controller : input.controllers)
+    {
+        for (auto& btn : controller.buttons)
+        {
+            btn.pressed = false;
+            btn.released = false;
+        }
+    }
 }
 
 // Reset all input state (used when focus is lost)
 void Input::ResetInputOnFocusLoss()
 {
-	Input temp{};
+    Input temp{}; // clears EVERYTHING
 
+    // Preserve absolute cursor positions so the engine doesn't jump
+    temp.cursorX = input.cursorX;
+    temp.cursorY = input.cursorY;
+    temp.lastX = input.lastX;
+    temp.lastY = input.lastY;
 
-	temp.cursorX = input.cursorX;
-	temp.cursorY = input.cursorY;
-	temp.lastX   = input.lastX;
-	temp.lastY   = input.lastY;
+    // Preserve raw input mode
+    temp.useRawInput = input.useRawInput;
 
-	temp.leftMotorVibration  = input.leftMotorVibration;
-	temp.rightMotorVibration = input.rightMotorVibration;
+    // Deltas must be zeroed explicitly to avoid ghost movement on refocus
+    temp.xrel = 0.0f;
+    temp.yrel = 0.0f;
+    temp.scrollX = 0;
+    temp.scrollY = 0;
 
-	// temp.focused         = input.focused;
-	// temp.mouseLookActive = input.mouseLookActive;
-	temp.useRawInput     = input.useRawInput;
-
-	input = temp;
+    std::swap(input, temp);
 }

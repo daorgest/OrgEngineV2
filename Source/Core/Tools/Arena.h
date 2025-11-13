@@ -3,43 +3,36 @@
 //
 
 #pragma once
-#include <utility>
 
-#include "Vector.h"
-
-struct ORGAPI ArenaAllocator
+struct ArenaAllocator
 {
 	u8* base = nullptr;
 	size_t size = 0;
 	size_t capacity = 0;
 
-	explicit ArenaAllocator(size_t size);
-	~ArenaAllocator() { Destroy(); }
+	ArenaAllocator() = default;
+	explicit ArenaAllocator(size_t capacity);
 
-	[[nodiscard]] void* Alloc(size_t allocSize, size_t alignment = 8);
-
-	void Destroy() const;
-	void Reset();
+	void* Alloc(size_t allocSize, size_t alignment = 8);
 
 	template<typename T>
-	[[nodiscard]]
-	T* PushStruct()
-	{
-		return static_cast<T*>(Alloc(sizeof(T), alignof(T)));
-	}
-
-	template <typename T>
-	[[nodiscard]]
-	T* PushArray(size_t count)
+	T* Alloc(size_t count = 1)
 	{
 		return static_cast<T*>(Alloc(sizeof(T) * count, alignof(T)));
 	}
 
-	template <typename T, typename... Args>
-	[[nodiscard]]
+	template<typename T, typename... Args>
 	T* Emplace(Args&&... args)
 	{
 		void* memory = Alloc(sizeof(T), alignof(T));
-		return ::new(memory) T(std::forward<Args>(args)...);
+		if (memory)
+		{
+			return new (memory) T(std::forward<Args>(args)...);
+		}
+		return nullptr;
 	}
+
+	void Reset();
+	void Destroy() const;
 };
+

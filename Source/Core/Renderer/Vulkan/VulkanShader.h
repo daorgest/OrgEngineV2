@@ -15,16 +15,25 @@ namespace Renderer
 {
 	struct VulkanDevice;
 
-	struct VulkanShader : GPUShader
+	/// Vulkan implementation of GPUShader
+	struct VulkanShader final : GPUShader
 	{
+		// RHI interface implementation
+		Result<void> Init(GPUDevice* device, std::span<const u32> code, ShaderFormat format = ShaderFormat::SPIRV) override;
+		void Destroy() override;
+
+		// Vulkan-specific constructor (backward compatibility)
+		VulkanShader() = default;
+		VulkanShader(VulkanDevice* device, std::span<const u32> code, ShaderFormat format = ShaderFormat::SPIRV);
+
+		// Static utility
+		static Result<Vector<u32>> ReadShaderFile(const char* filePath);
+
+		// Public Vulkan handles for compatibility
 		VkShaderModule shader = VK_NULL_HANDLE;
 		VulkanDevice* device = nullptr;
 		ShaderFormat format = ShaderFormat::SPIRV;
-
-		VulkanShader() = default;
-
-		static Vector<u32> ReadShaderFile(const char* filePath);
-		VulkanShader(VulkanDevice* device, std::span<const u32> code, ShaderFormat format = ShaderFormat::SPIRV);
-		void Destroy() const;
 	};
-}
+
+} // namespace Renderer
+

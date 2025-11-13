@@ -12,7 +12,7 @@ T Remap(T value, T inMin, T inMax, T outMin, T outMax)
 }
 
 template<typename T>
-T Clamp(const T& v, float min, float max)
+T Clamp(const T& v, f32 min, f32 max)
 {
 	T result;
 	result.x = std::max(min, std::min(max, v.x));

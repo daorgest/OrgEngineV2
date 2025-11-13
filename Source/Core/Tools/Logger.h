@@ -2,8 +2,10 @@
 
 #include <cstdio>
 #include <ctime>
+#include <source_location>
 #include <fmt/format.h>
 
+#include "FileManager.h"
 #include "Platform.h"
 
 enum class LogType
@@ -30,18 +32,22 @@ namespace Log
 
 	inline void InitLogFile()
 	{
-		FILE* file = fopen("engine_log.txt", "w");
-		if (file)
-		{
-			fclose(file);
-		}
+		auto fileResult = FileManager::Open("engine_log.txt", "w");
 	}
 
 	template<typename... Args>
 	void Write(LogType type, fmt::format_string<Args...> format, Args&&... args)
 	{
-		// if (type != LogType::Info)
-		// 	return;
+#ifndef NDEBUG
+		// Log everything
+		bool shouldLog = true;
+#else
+		// --- RELEASE BUILD ---
+		// Only log errors (and optionally warnings)
+		const bool shouldLog = (type == LogType::Error);
+#endif
+		if (!shouldLog)
+			return;
 
 		// Timestamp
 		const std::time_t now = std::time(nullptr);
@@ -63,7 +69,7 @@ namespace Log
 
 		// Append to log file
 		FILE* file = nullptr;
-#if defined(_MSC_VER)
+#ifdef _MSC_VER
 		if (fopen_s(&file, "engine_log.txt", "a") == 0 && file)
 		{
 			std::fprintf(file, "%s%s\n", header, message.c_str());
@@ -79,13 +85,10 @@ namespace Log
 #endif
 
 #ifdef NDEBUG
-		if (type == LogType::Error)
-		{
-			Platform::ShowMessageBox(message, logTypeString, Platform::MessageBoxType::Error);
-		}
+		Platform::ShowMessageBox(message, logTypeString, Platform::MessageBoxType::Error);
 #endif
 	}
-}
+}  // namespace Log
 
 
 // Usage: LOG(Info, "Window size: {} x {}", width, height);
@@ -99,6 +102,28 @@ namespace Log
                 Log::Write(LogType::TYPE, FORMAT, ##__VA_ARGS__); \
         } while(0)
 #endif
+
+// to reduce boilerplate for std::expected result errors
+inline void LogResultError(std::string_view expr, const OrgErrCode err, const std::source_location& loc = std::source_location::current())
+{
+	LOG(Error,
+	    "[Result Error]\n"
+	    "  Expr:   {}\n"
+	    "  Func:   {}\n"
+	    "  File:   {}\n"
+	    "  Line:   {}\n"
+	    "  Error:  {}",
+	    expr,
+	    loc.function_name(),
+	    loc.file_name(),
+	    loc.line(),
+	    static_cast<int>(err)
+	);
+}
+
+#define CHECK_RESULT(expr)                                                        \
+    if (auto _r = (expr); !_r)                                                    \
+        LogResultError(#expr, _r.error(), std::source_location::current());
 
 
 #define RETURN_LOG(TYPE, FORMAT, ...)                          \

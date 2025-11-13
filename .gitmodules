@@ -8,18 +8,21 @@
 	path = 3rdParty/vma
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
 [submodule "3rdParty/imgui"]
-    branch = docking
 	path = 3rdParty/imgui
 	url = https://github.com/ocornut/imgui.git
+	branch = docking
 [submodule "3rdParty/tracy"]
 	path = 3rdParty/tracy
 	url = https://github.com/wolfpld/tracy.git
-[submodule "3rdparty/meshoptimizer"]
-	path = 3rdparty/meshoptimizer
+[submodule "3rdParty/meshoptimizer"]
+	path = 3rdParty/meshoptimizer
 	url = https://github.com/zeux/meshoptimizer.git
-[submodule "3rdparty/fastgltf"]
-	path = 3rdparty/fastgltf
+[submodule "3rdParty/fastgltf"]
+	path = 3rdParty/fastgltf
 	url = https://github.com/spnda/fastgltf.git
 [submodule "3rdParty/glm"]
 	path = 3rdParty/glm
 	url = https://github.com/g-truc/glm.git
+[submodule "3rdParty/sdl"]
+	path = 3rdParty/sdl
+	url = https://github.com/libsdl-org/SDL

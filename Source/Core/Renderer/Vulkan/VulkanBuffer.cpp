@@ -12,9 +12,9 @@
 
 using namespace Renderer;
 
-void VulkanBuffer::Init(VulkanDevice* inputDevice, const GPUBufferInfo& inputInfo)
+void VulkanBuffer::Init(GPUDevice* inputDevice, const GPUBufferInfo& inputInfo)
 {
-	this->device = inputDevice;
+	this->device = static_cast<VulkanDevice*>(inputDevice);
 	this->info = inputInfo;
 	assert(device && "VulkanDevice must not be null");
 	assert(info.size > 0 && "Buffer size must be greater than 0");
@@ -69,7 +69,6 @@ void VulkanBuffer::Init(VulkanDevice* inputDevice, const GPUBufferInfo& inputInf
 		allocInfo.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 	}
 
-	// --- Nsight capture guard: avoid dedicated when host-visible (Upload/Readback) ---
 #ifdef NSIGHT_CAPTURE
 	if (inputInfo.heapType == GPUHeapType::Upload ||
 		inputInfo.heapType == GPUHeapType::Readback)
@@ -79,9 +78,26 @@ void VulkanBuffer::Init(VulkanDevice* inputDevice, const GPUBufferInfo& inputInf
 #endif
 	// LOG(Debug, "Creating buffer: size={}, usage=0x{:X}, heapType={}, flags=0x{:X}", inputInfo.size, usage, static_cast<i32>(inputInfo.heapType),
 	//     allocInfo.flags);
-	VK_CHECK(vmaCreateBuffer(inputDevice->allocator, &bufferInfo, &allocInfo, &buffer, &allocation, &allocationInfo));
-	std::string debugName = " Buffer[" + GPUBufferFlagsToString(inputInfo.usage) + "][" + GPUHeapTypeToString(inputInfo.heapType) + "]";
-	NameObject(inputDevice->device, VK_OBJECT_TYPE_BUFFER, reinterpret_cast<u64>(buffer), debugName.c_str());
+	VK_CHECK(vmaCreateBuffer(device->allocator, &bufferInfo, &allocInfo, &buffer, &allocation, &allocationInfo));
+	const std::string debugName = " Buffer[" + GPUBufferFlagsToString(inputInfo.usage) + "][" + GPUHeapTypeToString(inputInfo.heapType) + "]";
+	NameObject(device->device, VK_OBJECT_TYPE_BUFFER, reinterpret_cast<u64>(buffer), debugName.c_str());
+}
+
+// Vulkan-specific Init overload
+void VulkanBuffer::Init(VulkanDevice* devicePtr, BufferPreset preset, u64 size)
+{
+	Init(static_cast<GPUDevice*>(devicePtr), GPUBufferInfo::FromPreset(preset, size));
+}
+
+// Constructors
+VulkanBuffer::VulkanBuffer(VulkanDevice* devicePtr, const GPUBufferInfo& bufferInfo)
+{
+	Init(static_cast<GPUDevice*>(devicePtr), bufferInfo);
+}
+
+VulkanBuffer::VulkanBuffer(VulkanDevice* devicePtr, BufferPreset preset, u64 size)
+{
+	Init(devicePtr, preset, size);
 }
 
 void* VulkanBuffer::Map() const
@@ -102,11 +118,13 @@ void VulkanBuffer::Upload(const void* srcData, u64 size) const
 	assert(size <= info.size && "Upload size exceeds buffer size, where did that come from?");
 	void* dst = Map();
 	if ((dst != nullptr) && (srcData != nullptr) && size > 0)
+	{
 		std::memcpy(dst, srcData, size);
+	}
 	Unmap();
 }
 
-void VulkanBuffer::CopyFrom(VkCommandBuffer cmd, VulkanBuffer* src, u64 size, u64 srcOffset, u64 dstOffset) const
+void VulkanBuffer::CopyFrom(const VkCommandBuffer cmd, const VulkanBuffer* src, u64 size, u64 srcOffset, u64 dstOffset) const
 {
 	VkBufferCopy copyRegion = {
 		.srcOffset = srcOffset,
@@ -129,9 +147,6 @@ void VulkanBuffer::Destroy()
 {
 	if (buffer != VK_NULL_HANDLE)
 	{
-		LOG(Info, "Destroying Buffer with Handle: {}", static_cast<void*>(buffer));
 		vmaDestroyBuffer(device->allocator, buffer, this->allocation);
-		buffer = VK_NULL_HANDLE;
-		allocation = VK_NULL_HANDLE;
 	}
 }

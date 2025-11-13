@@ -1,120 +1,104 @@
 cmake_minimum_required(VERSION 3.31)
-project(OrgEngineV2)
 
-# --- Dev toggles / quality-of-life -------------------------------------------------
-option(ORGENGINE_WARN_AS_ERROR "Treat warnings as errors in CI" OFF)
+project(OrgEngineV2 LANGUAGES C CXX)
 
-# VSCode IntelliSense / clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CORE_DIR      ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core)
-set(ENGINE_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Engine)
-set(GAME_DIR      ${CMAKE_CURRENT_SOURCE_DIR}/Source/Game)
-set(TOOLS_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Tools)
-set(RENDERER_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Renderer)
 set(3RDPARTY_DIR  ${CMAKE_SOURCE_DIR}/3rdParty)
+set(CORE_DIR ${CMAKE_SOURCE_DIR}/Source/Core)
+set(ENGINE_DIR ${CMAKE_SOURCE_DIR}/Source/Engine)
+set(GAME_DIR ${CMAKE_SOURCE_DIR}/Source/Game)
+set(TOOLS_DIR ${CMAKE_SOURCE_DIR}/Source/Core/Tools)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
 add_compile_definitions(
-        UNICODE VK_NO_PROTOTYPES VOLK_STATIC_DEFINES VK_USE_PLATFORM_WIN32_KHR NOMINMAX EDITORUI
-        IMGUI_IMPL_VULKAN_USE_VOLK _CRT_SECURE_NO_WARNINGS
-#        VULKAN_DEBUG_MODE
-#        ENABLE_TIMING
+        UNICODE
+        VK_NO_PROTOTYPES
+        VOLK_STATIC_DEFINES
+        VK_USE_PLATFORM_WIN32_KHR
+        NOMINMAX
+        EDITORUI
+        IMGUI_IMPL_VULKAN_USE_VOLK
+        _CRT_SECURE_NO_WARNINGS
+        VULKAN_DEBUG_MODE
+        ENGINE_PLATFORM_WIN32
+        ENGINE_COMMIT_HASH="${GIT_HASH}"
 )
 
-# --- Git Version Hash --------------------------------------------------------------
-execute_process(
-        COMMAND git rev-parse --short HEAD
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE GIT_HASH
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-add_compile_definitions(ENGINE_COMMIT_HASH="${GIT_HASH}")
+set(ENGINE_PLATFORM "WIN32" CACHE STRING "Platform backend")
+set_property(CACHE ENGINE_PLATFORM PROPERTY STRINGS WIN32 SDL)
 
-# Set output folder for the executable
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/App)
 
-# --- Per-config output (helps VS pick the right working dir) -----------------------
-foreach(_cfg IN ITEMS Debug RelWithDebInfo Release MinSizeRel)
-    string(TOUPPER "${_cfg}" _CFG)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_CFG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+foreach (cfg Debug RelWithDebInfo Release MinSizeRel)
+    string(TOUPPER "${cfg}" CFGU)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${CFGU} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 endforeach()
 
-# --- Collect all Slang shaders recursively ----------------------------------------
-file(GLOB_RECURSE SLANG_ALL
-        CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/Source/Game/Shaders/*.slang")
+file(GLOB_RECURSE SLANG_ALL CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/Source/Game/Shaders/*.slang"
+)
 
-# Graphics = exclude files whose basename ends with _comp.slang or .comp.slang
 set(SLANG_GRAPHICS "${SLANG_ALL}")
 list(FILTER SLANG_GRAPHICS EXCLUDE REGEX "(_comp|\\.comp)\\.slang$")
 
-# Compute = include only files whose basename ends with _comp.slang or .comp.slang
 set(SLANG_COMP "${SLANG_ALL}")
 list(FILTER SLANG_COMP INCLUDE REGEX "(_comp|\\.comp)\\.slang$")
 
-set(COMPILED_SHADERS "")
 
-# --- Graphics shaders: vertex+fragment --------------------------------------------
 foreach(shader ${SLANG_GRAPHICS})
-    get_filename_component(shader_name "${shader}" NAME_WE)
-    set(output_spv "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/${shader_name}.spv")
+    get_filename_component(name "${shader}" NAME_WE)
+    set(out "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/${name}.spv")
 
     add_custom_command(
-            OUTPUT "${output_spv}"
+            OUTPUT "${out}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders"
             COMMAND "${CMAKE_SOURCE_DIR}/3rdParty/slang/bin/slangc.exe"
-            -o "${output_spv}"
-            -target spirv -profile glsl_460
+            -o "${out}"
+            -target spirv -profile sm_6_6
             -entry vertexMain -entry fragmentMain
             -emit-spirv-directly -fvk-use-scalar-layout
             "${shader}"
             DEPENDS "${shader}" "${CMAKE_SOURCE_DIR}/3rdParty/slang/bin/slangc.exe"
-            COMMENT "Compiling graphics shader ${shader_name}.slang -> SPIR-V"
             VERBATIM
     )
-    list(APPEND COMPILED_SHADERS "${output_spv}")
+    list(APPEND COMPILED_SHADERS "${out}")
 endforeach()
 
-# --- Compute shaders: compMain -----------------------------------------------------
-foreach(cshader ${SLANG_COMP})
-    get_filename_component(cshader_name "${cshader}" NAME_WE)
-    set(cout_spv "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/${cshader_name}.spv")
+foreach (shader ${SLANG_COMP})
+    get_filename_component(name "${shader}" NAME_WE)
+    set(out "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/${name}.spv")
 
     add_custom_command(
-            OUTPUT "${cout_spv}"
+            OUTPUT "${out}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders"
             COMMAND "${CMAKE_SOURCE_DIR}/3rdParty/slang/bin/slangc.exe"
-            -o "${cout_spv}"
-            -target spirv -profile glsl_460
-            -entry compMain -emit-spirv-directly
-            "${cshader}"
-            DEPENDS "${cshader}" "${CMAKE_SOURCE_DIR}/3rdParty/slang/bin/slangc.exe"
-            COMMENT "Compiling compute shader ${cshader_name}.slang -> SPIR-V"
+            -o "${out}"
+            -target spirv -profile sm_6_6
+            -entry compMain
+            -emit-spirv-directly -fvk-use-scalar-layout
+            "${shader}"
+            DEPENDS "${shader}" "${CMAKE_SOURCE_DIR}/3rdParty/slang/bin/slangc.exe"
             VERBATIM
     )
-    list(APPEND COMPILED_SHADERS "${cout_spv}")
+    list(APPEND COMPILED_SHADERS "${out}")
 endforeach()
 
 find_package(Vulkan REQUIRED)
 
-# --- Shader build targets ----------------------------------------------------------
 add_custom_target(Shaders ALL DEPENDS ${COMPILED_SHADERS})
 
-# --- C/C++ sources ----------------------------------------------------------------
 set(SRC_FILES
-        Source/main.cpp
-
+        ${CMAKE_SOURCE_DIR}/Source/main.cpp
         ${TOOLS_DIR}/Arena.cpp
-        ${CORE_DIR}/Platform/PlatformWindows.cpp
-
         ${CORE_DIR}/Renderer/Vulkan/VulkanInit.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanSwapchain.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanTexture.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanCommands.cpp
+        ${CORE_DIR}/Renderer/Vulkan/VulkanCommandBuffer.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanPipeline.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanShader.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanBuffer.cpp
@@ -122,20 +106,40 @@ set(SRC_FILES
         ${CORE_DIR}/Renderer/Vulkan/VulkanRenderPass.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanShaderBuffer.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanQueryPool.cpp
-        ${CORE_DIR}/Renderer/TextureManager.cpp
-        ${CORE_DIR}/Renderer/MeshLoader.cpp
+        ${CORE_DIR}/Renderer/Vulkan/VulkanMesh.cpp
+        ${ENGINE_DIR}/TextureManager.cpp
+        ${ENGINE_DIR}/MeshLoader.cpp
+        ${CORE_DIR}/Math/MikkWrapper.cpp
+        ${CORE_DIR}/Input/InputSys.cpp
+        ${CORE_DIR}/Input/InputSysGameInput.cpp
         ${ENGINE_DIR}/Camera.cpp
+        ${ENGINE_DIR}/EditorUi.cpp
+        ${ENGINE_DIR}/FPSCamera.cpp
+        ${GAME_DIR}/Application.cpp
+        ${GAME_DIR}/DebugRenderer.cpp
+        ${GAME_DIR}/SceneRenderer.cpp
+        ${GAME_DIR}/SkyboxManager.cpp
+        ${TOOLS_DIR}/MemStuff.cpp
 )
+
+if (ENGINE_PLATFORM STREQUAL "SDL")
+    list(APPEND SRC_FILES ${CORE_DIR}/Platform/PlatformSDL.cpp Source/Core/Input/InputSysSDL.cpp)
+else ()
+    list(APPEND SRC_FILES ${CORE_DIR}/Platform/PlatformWindows.cpp)
+endif ()
 
 set(HDR_FILES
         ${CORE_DIR}/Renderer/RendererTypes.h
-        ${CORE_DIR}/Renderer/MeshData.h
-        #   ${CORE_DIR}/Math/Mat4x4.h
-
+        ${ENGINE_DIR}/MeshData.h
+        ${ENGINE_DIR}/MeshStats.h
+        ${ENGINE_DIR}/TextureManager.h
+        ${ENGINE_DIR}/MeshLoader.h
+        ${ENGINE_DIR}/AABB.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanSwapchain.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanTexture.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanConvert.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanCommands.h
+        ${CORE_DIR}/Renderer/Vulkan/VulkanCommandBuffer.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanPipeline.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanShader.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanBuffer.h
@@ -144,34 +148,23 @@ set(HDR_FILES
         ${CORE_DIR}/Renderer/Vulkan/VulkanRenderPass.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanDebugUtils.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanShaderBuffer.h
-        ${CORE_DIR}/Renderer/Vulkan/scene.h
-
-        ${CORE_DIR}/Renderer/TextureManager.h
-        ${CORE_DIR}/Renderer/MeshLoader.h
+        ${CORE_DIR}/Renderer/Vulkan/VulkanQueryPool.h
+        ${CORE_DIR}/Renderer/Vulkan/VulkanMesh.h
+        ${CORE_DIR}/Math/MikkWrapper.h
+        ${CORE_DIR}/Input/InputSys.h
+        ${CORE_DIR}/Input/InputSysGameInput.h
         ${ENGINE_DIR}/Camera.h
-        Source/Engine/EditorUi.cpp
-        Source/Engine/EditorUi.h
-        Source/Core/Renderer/MeshStats.h
-        Source/Game/Application.cpp
-        Source/Game/Application.h
-        #   Source/Core/Renderer/ShaderCompiler.cpp
-        #   Source/Core/Renderer/ShaderCompiler.h
-        ${TOOLS_DIR}/MemStuff.cpp
-        Source/Core/Input/InputSys.cpp
-        Source/Core/Input/InputSys.h
-        Source/Core/Renderer/Vulkan/VulkanQueryPool.h
-        Source/Core/Renderer/Vulkan/VulkanMesh.cpp
-        Source/Core/Renderer/Vulkan/VulkanMesh.h
-#        ${TOOLS_DIR}/DeletionQueue.h
+        ${ENGINE_DIR}/EditorUi.h
+        ${ENGINE_DIR}/FPSCamera.h
+        ${GAME_DIR}/Application.h
+        ${GAME_DIR}/DebugRenderer.h
+        ${GAME_DIR}/SceneRenderer.h
+        ${GAME_DIR}/SkyboxManager.h
+        Source/Core/Tools/FileManager.h
+        Source/Engine/FollowTarget.h
+        Source/Engine/ShaderParams.h
         ${TOOLS_DIR}/Timer.h
-        Source/Core/Math/MikkWrapper.cpp
-        Source/Core/Math/MikkWrapper.h
-        Source/Core/Renderer/AABB.h
-        Source/Core/Renderer/AABB.h
-        Source/Engine/FPSCamera.cpp
-        Source/Engine/FPSCamera.h
-        Source/Core/Input/InputSysGameInput.cpp
-        Source/Core/Input/InputSysGameInput.h
+        ${TOOLS_DIR}/UUID.h
 )
 
 set(IMGUI_FILES
@@ -181,12 +174,22 @@ set(IMGUI_FILES
         ${3RDPARTY_DIR}/imgui/imgui_tables.cpp
         ${3RDPARTY_DIR}/imgui/imgui_widgets.cpp
         ${3RDPARTY_DIR}/imgui/backends/imgui_impl_vulkan.cpp
-        ${3RDPARTY_DIR}/imgui/backends/imgui_impl_win32.cpp
         ${3RDPARTY_DIR}/imgui/imgui.h
         ${3RDPARTY_DIR}/imgui/imgui_internal.h
         ${3RDPARTY_DIR}/imgui/backends/imgui_impl_vulkan.h
-        ${3RDPARTY_DIR}/imgui/backends/imgui_impl_win32.h
 )
+
+if (ENGINE_PLATFORM STREQUAL "SDL")
+    list(APPEND IMGUI_FILES
+            ${3RDPARTY_DIR}/imgui/backends/imgui_impl_sdl3.cpp
+            ${3RDPARTY_DIR}/imgui/backends/imgui_impl_sdl3.h
+    )
+else ()
+    list(APPEND IMGUI_FILES
+            ${3RDPARTY_DIR}/imgui/backends/imgui_impl_win32.cpp
+            ${3RDPARTY_DIR}/imgui/backends/imgui_impl_win32.h
+    )
+endif ()
 
 set(3RDPARTY_HEADERS
         ${3RDPARTY_DIR}/stb/stb_image.h
@@ -197,9 +200,11 @@ set(3RDPARTY_HEADERS
 list(APPEND SRC_FILES ${IMGUI_FILES})
 list(APPEND HDR_FILES ${3RDPARTY_HEADERS})
 
-add_executable(OrgEngineV2 ${SRC_FILES} ${HDR_FILES})
+# NATVIS for Visual Studio debugger / OR ANY DEBUGGER THAT SUPPORTS IT
+set(NATVIS_FILES ${CMAKE_SOURCE_DIR}/OrgEngineV2.natvis)
 
-# Make VS/IDE filters mirror the tree (nice for navigation)
+add_executable(OrgEngineV2 ${SRC_FILES} ${HDR_FILES} ${NATVIS_FILES})
+
 source_group(TREE ${CMAKE_SOURCE_DIR} FILES ${SRC_FILES} ${HDR_FILES})
 
 target_include_directories(OrgEngineV2 PRIVATE
@@ -218,7 +223,6 @@ target_include_directories(OrgEngineV2 PRIVATE
         ${3RDPARTY_DIR}/fmt/include
         ${3RDPARTY_DIR}/volk
         ${3RDPARTY_DIR}/vma/include
-        ${3RDPARTY_DIR}/fastgltf/include
         ${3RDPARTY_DIR}/meshoptimizer/src
         ${3RDPARTY_DIR}/mikktspace
         ${3RDPARTY_DIR}/glm
@@ -232,7 +236,6 @@ target_include_directories(OrgEngineV2 PRIVATE
 add_subdirectory(3rdParty/fmt)
 add_subdirectory(3rdParty/volk)
 add_subdirectory(3rdParty/vma)
-add_subdirectory(3rdParty/fastgltf)
 add_subdirectory(3rdParty/meshoptimizer)
 add_subdirectory(3rdParty/mikktspace)
 add_subdirectory(3rdParty/glm)
@@ -240,43 +243,46 @@ add_subdirectory(3rdParty/ufbx)
 
 option(TRACY_ENABLE "" OFF)
 option(TRACY_ON_DEMAND "" OFF)
+option(TRACY_CALLSTACK "" 10)
 add_subdirectory(3rdParty/tracy)
 
-# Link directories for external libs
-target_link_directories(OrgEngineV2 PRIVATE 
+target_link_directories(OrgEngineV2 PRIVATE
         ${3RDPARTY_DIR}/slang/lib
         ${3RDPARTY_DIR}/gameinput/lib
 )
 
-target_precompile_headers(OrgEngineV2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source/PrimTypes.h)
-target_link_libraries(OrgEngineV2 PRIVATE 
-        fmt::fmt 
-        volk 
-        GPUOpen::VulkanMemoryAllocator 
-        slang 
-        meshoptimizer 
-        mikktspace 
-        fastgltf 
-        glm 
-        GameInput.lib 
+if (ENGINE_PLATFORM STREQUAL "SDL")
+    add_subdirectory(3rdParty/sdl EXCLUDE_FROM_ALL)
+    target_link_libraries(OrgEngineV2 PRIVATE SDL3::SDL3)
+endif ()
+
+target_precompile_headers(OrgEngineV2 PRIVATE
+        ${CMAKE_SOURCE_DIR}/Source/PrimTypes.h
+)
+
+target_link_libraries(OrgEngineV2 PRIVATE
+        fmt::fmt
+        volk
+        GPUOpen::VulkanMemoryAllocator
+        slang
+        meshoptimizer
+        mikktspace
+        glm
+        GameInput.lib
         ufbx
         Tracy::TracyClient
 )
 
-# Set output folder for the executable
 set_target_properties(OrgEngineV2 PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
 )
 
-# --- Visual Studio & fast-iteration tuning ---------------------------------------
-# Start this project in VS and use App/ as working folder (assets next to EXE)
 set_directory_properties(PROPERTIES VS_STARTUP_PROJECT OrgEngineV2)
 set_target_properties(OrgEngineV2 PROPERTIES
         VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
 )
 
 if (MSVC)
-    # Multi-proc compile & Edit-and-Continue for Debug, fast PDB linking
     target_compile_options(OrgEngineV2 PRIVATE
             $<$<CONFIG:Debug>:/Zi /permissive->
             $<$<CONFIG:RelWithDebInfo>:/Zi>
@@ -294,20 +300,21 @@ else()
     )
 endif()
 
-if (ORGENGINE_WARN_AS_ERROR)
-    if (MSVC)
-        target_compile_options(OrgEngineV2 PRIVATE /W4 /WX)
-    else()
-        target_compile_options(OrgEngineV2 PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    endif()
+if (MSVC)
+    target_compile_options(OrgEngineV2 PRIVATE /W4)
 else()
-    if (MSVC)
-        target_compile_options(OrgEngineV2 PRIVATE /W4)
-    else()
-        target_compile_options(OrgEngineV2 PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
+    target_compile_options(OrgEngineV2 PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-# --- Final dependencies between app and shader compilation ------------------------
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /RTC1 /MDd")
+
+if (ENGINE_PLATFORM STREQUAL "WIN32")
+    set_target_properties(OrgEngineV2 PROPERTIES
+            WIN32_EXECUTABLE $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:TRUE>
+    )
+else ()
+    set_target_properties(OrgEngineV2 PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
+
 add_custom_target(CompileShaders ALL DEPENDS ${COMPILED_SHADERS})
 add_dependencies(OrgEngineV2 CompileShaders)

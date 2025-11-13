@@ -44,7 +44,8 @@ public:
 	}
 
 	// capacity
-	[[nodiscard]] static constexpr size_type size() noexcept { return N; }
+	[[nodiscard]] constexpr size_type size() noexcept { return N; }
+	[[nodiscard]] constexpr size_type size() const noexcept { return N; }
 
 	// data access
 	[[nodiscard]] constexpr pointer data() noexcept { return a; }
@@ -91,6 +92,37 @@ public:
 	constexpr void fill(const T& v) noexcept
 	{
 		for (size_type i = 0; i < N; ++i) a[i] = v;
+	}
+
+	// assign variants
+	constexpr void assign(const T& value) noexcept
+	{
+		for (size_type i = 0; i < N; ++i)
+			a[i] = value;
+	}
+
+	constexpr void assign(std::initializer_list<T> init) noexcept
+	{
+		assert(init.size() <= N && "Initializer list too large for Array::assign");
+		size_type i = 0;
+		for (const T& v : init) a[i++] = v;
+		for (; i < N; ++i) a[i] = T();
+	}
+
+	constexpr void assign(const Array& other) noexcept
+	{
+		for (size_type i = 0; i < N; ++i)
+			a[i] = other.a[i];
+	}
+
+	template <typename InputIt>
+	constexpr void assign(InputIt first, InputIt last) noexcept
+	{
+		size_type i = 0;
+		for (; first != last && i < N; ++first, ++i)
+			a[i] = *first;
+		for (; i < N; ++i)
+			a[i] = T();
 	}
 
 	constexpr void reset() noexcept

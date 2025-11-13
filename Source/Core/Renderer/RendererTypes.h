@@ -6,34 +6,34 @@
 #include <cassert>
 #include <cmath>
 #include <optional>
-#include <span>
 #include <string>
 #include <type_traits>
+#include <variant>
 
 #include "RendererTypes.h"
 #include "Tools/Vector.h"
 
-#define ENUM_CLASS_BITOPS(Enum)                                                        \
-[[nodiscard]] constexpr Enum operator|(Enum a, Enum b) noexcept {                    \
-return static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); }         \
-[[nodiscard]] constexpr Enum operator&(Enum a, Enum b) noexcept {                    \
-return static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); }         \
-[[nodiscard]] constexpr Enum operator^(Enum a, Enum b) noexcept {                    \
-return static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); }         \
-[[nodiscard]] constexpr Enum operator~(Enum a) noexcept {                            \
-return static_cast<Enum>(~std::to_underlying(a)); }                                 \
-constexpr Enum& operator|=(Enum& a, Enum b) noexcept { return a = (a | b); }         \
-constexpr Enum& operator&=(Enum& a, Enum b) noexcept { return a = (a & b); }         \
-constexpr Enum& operator^=(Enum& a, Enum b) noexcept { return a = (a ^ b); }         \
-/* == / != against underlying integer type */                                        \
-[[nodiscard]] constexpr bool operator==(Enum a, std::underlying_type_t<Enum> u) noexcept { \
-return std::to_underlying(a) == u; }                                               \
-[[nodiscard]] constexpr bool operator==(std::underlying_type_t<Enum> u, Enum a) noexcept { \
-return u == std::to_underlying(a); }                                               \
-[[nodiscard]] constexpr bool operator!=(Enum a, std::underlying_type_t<Enum> u) noexcept { \
-return std::to_underlying(a) != u; }                                               \
-[[nodiscard]] constexpr bool operator!=(std::underlying_type_t<Enum> u, Enum a) noexcept { \
-return u != std::to_underlying(a); }
+#define ENUM_CLASS_BITOPS(Enum) \
+[[nodiscard]] constexpr Enum operator|(Enum a, Enum b) noexcept { return static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); } \
+[[nodiscard]] constexpr Enum operator&(Enum a, Enum b) noexcept { return static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); } \
+[[nodiscard]] constexpr Enum operator^(Enum a, Enum b) noexcept { return static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); } \
+[[nodiscard]] constexpr Enum operator~(Enum a) noexcept { return static_cast<Enum>(~std::to_underlying(a)); } \
+constexpr Enum& operator|=(Enum& a, Enum b) noexcept { return a = (a | b); } \
+constexpr Enum& operator&=(Enum& a, Enum b) noexcept { return a = (a & b); } \
+constexpr Enum& operator^=(Enum& a, Enum b) noexcept { return a = (a ^ b); } \
+[[nodiscard]] constexpr Enum operator<<(Enum a, int shift) noexcept { return static_cast<Enum>(std::to_underlying(a) << shift); } \
+[[nodiscard]] constexpr Enum operator>>(Enum a, int shift) noexcept { return static_cast<Enum>(std::to_underlying(a) >> shift); } \
+constexpr Enum& operator<<=(Enum& a, int shift) noexcept { return a = static_cast<Enum>(std::to_underlying(a) << shift); } \
+constexpr Enum& operator>>=(Enum& a, int shift) noexcept { return a = static_cast<Enum>(std::to_underlying(a) >> shift); } \
+[[nodiscard]] constexpr bool operator==(Enum a, std::underlying_type_t<Enum> u) noexcept { return std::to_underlying(a) == u; } \
+[[nodiscard]] constexpr bool operator==(std::underlying_type_t<Enum> u, Enum a) noexcept { return u == std::to_underlying(a); } \
+[[nodiscard]] constexpr bool operator!=(Enum a, std::underlying_type_t<Enum> u) noexcept { return std::to_underlying(a) != u; } \
+[[nodiscard]] constexpr bool operator!=(std::underlying_type_t<Enum> u, Enum a) noexcept { return u != std::to_underlying(a); } \
+[[nodiscard]] constexpr bool HasFlag(Enum value, Enum flag) noexcept { return (std::to_underlying(value) & std::to_underlying(flag)) != 0; } \
+constexpr void SetFlag(Enum& value, Enum flag) noexcept { value |= flag; } \
+constexpr void ClearFlag(Enum& value, Enum flag) noexcept { value &= ~flag; } \
+constexpr void ToggleFlag(Enum& value, Enum flag) noexcept { value ^= flag; } \
+[[nodiscard]] constexpr auto ToUnderlying(Enum e) noexcept { return std::to_underlying(e); }
 
 template <typename E>
 [[nodiscard]] constexpr bool HasAny(E value, E mask)
@@ -74,17 +74,23 @@ struct Viewport
 
 enum class PresentMode
 {
-	VSyncOn, // Synchronized to vertical blank (tearing-free)
-	VSyncOff, // Present as fast as possible (tearing allowed)
-	LowLatency, // Lower latency, minimizes tearing if supported
-	RelaxedVSync // VSync with more tolerance (optional, rare)
+	VSyncOn,      // Synchronized to vertical blank (tearing-free)
+	VSyncOff,     // Present as fast as possible (tearing allowed)
+	LowLatency,   // Lower latency, minimizes tearing if supported
+	RelaxedVSync  // VSync with more tolerance (optional, rare)
 };
 
-static constexpr std::pair<PresentMode, const char*> kVsyncModes[] = {
-	{ PresentMode::VSyncOn,  "VSync On"  },
-	{ PresentMode::VSyncOff, "VSync Off" },
-	{ PresentMode::RelaxedVSync,  "Adaptive"  },
-	{ PresentMode::LowLatency,  "Mailbox"  }
+struct PresentModeInfo
+{
+	PresentMode mode;
+	const char* label;
+};
+
+static constexpr PresentModeInfo kVsyncModes[] = {
+	{ PresentMode::VSyncOn,      "VSync On"  },
+	{ PresentMode::VSyncOff,     "VSync Off" },
+	{ PresentMode::RelaxedVSync, "Adaptive"  },
+	{ PresentMode::LowLatency,   "Mailbox"   }
 };
 
 
@@ -154,46 +160,76 @@ enum class MeshSourceType
 // Images
 enum class TextureFormat
 {
-	R8_UNORM, // 8-bit Red channel, normalized [0,1]
-	RG8_UNORM, // 8-bit Red and Green channels, normalized
-	RGB8_UNORM, // 8-bit Red, Green, Blue channels, normalized
-	RGBA8_UNORM, // 8-bit Red, Green, Blue, Alpha channels, normalized
-	BGRA8_UNORM, // 8-bit Blue, Green, Red, Alpha channels, normalized
+	R8_UNORM,           // 8-bit Red channel, normalized [0,1]
+	RG8_UNORM,          // 8-bit Red and Green channels, normalized
+	RGB8_UNORM,         // 8-bit Red, Green, Blue channels, normalized
+	RGBA8_UNORM,        // 8-bit Red, Green, Blue, Alpha channels, normalized
+	BGRA8_UNORM,        // 8-bit Blue, Green, Red, Alpha channels, normalized
 
-	R8_SRGB, // 8-bit Red channel, sRGB
-	RG8_SRGB, // 8-bit Red and Green channels, sRGB
-	RGB8_SRGB, // 8-bit Red, Green, Blue channels, sRGB
-	RGBA8_SRGB, // 8-bit Red, Green, Blue, Alpha channels, sRGB
-	BGRA8_SRGB, // 8-bit Blue, Green, Red, Alpha channels, sRGB
+	R8_SRGB,            // 8-bit Red channel, sRGB
+	RG8_SRGB,           // 8-bit Red and Green channels, sRGB
+	RGB8_SRGB,          // 8-bit Red, Green, Blue channels, sRGB
+	RGBA8_SRGB,         // 8-bit Red, Green, Blue, Alpha channels, sRGB
+	BGRA8_SRGB,         // 8-bit Blue, Green, Red, Alpha channels, sRGB
 
-	R16_SFLOAT, // 16-bit floating-point Red channel A
-	RG16_SFLOAT, // 16-bit floating-point Red and Green channels
-	RGBA16_SFLOAT, // 16-bit floating-point Red, Green, Blue, Alpha channels
-	R32_SFLOAT, // 32-bit floating-point Red channel
-	RG32_SFLOAT, // 32-bit floating-point Red and Green channels
-	RGB32_SFLOAT, // 32-bit floating-point Red, Green, Blue channels
-	RGBA32_SFLOAT, // 32-bit floating-point Red, Green, Blue, Alpha channels
+	R8_UINT,            // 8-bit unsigned integer Red channel
+	RG8_UINT,           // 8-bit unsigned integer Red and Green channels
+	RGBA8_UINT,         // 8-bit unsigned integer Red, Green, Blue, Alpha channels
+	R16_UINT,           // 16-bit unsigned integer Red channel
+	RG16_UINT,          // 16-bit unsigned integer Red and Green channels
+	RGB16_SFLOAT,		// 16-bit unsigned integer Red, Green and Blue channels
+	RGBA16_UINT,        // 16-bit unsigned integer Red, Green, Blue, Alpha channels
+	R32_UINT,           // 32-bit unsigned integer Red channel
+	RG32_UINT,          // 32-bit unsigned integer Red and Green channels
+	RGBA32_UINT,        // 32-bit unsigned integer Red, Green, Blue, Alpha channels
 
-	R10G10B10A2_UNORM, // 10-bit color per channel + 2-bit alpha
-	R11G11B10_UFLOAT, // HDR color (good for skyboxes, light buffers)
+	R8_SINT,            // 8-bit signed integer Red channel
+	RG8_SINT,           // 8-bit signed integer Red and Green channels
+	RGBA8_SINT,         // 8-bit signed integer Red, Green, Blue, Alpha channels
+	R16_SINT,           // 16-bit signed integer Red channel
+	RG16_SINT,          // 16-bit signed integer Red and Green channels
+	RGBA16_SINT,        // 16-bit signed integer Red, Green, Blue, Alpha channels
+	R32_SINT,           // 32-bit signed integer Red channel
+	RG32_SINT,          // 32-bit signed integer Red and Green channels
+	RGBA32_SINT,        // 32-bit signed integer Red, Green, Blue, Alpha channels
 
-	BC1_RGB_UNORM_BLOCK, // BC1 compression for RGB textures
-	BC1_RGBA_UNORM_BLOCK, // BC1 compression for RGBA textures
-	BC2_UNORM_BLOCK, // BC2 compression supporting RGBA with explicit alpha (more control)
-	BC3_UNORM_BLOCK, // BC3 compression (similar to BC2)
-	BC4_UNORM_BLOCK, // BC4 compression for single-channel textures
-	BC5_UNORM_BLOCK, // BC5 compression for two-channel textures (e.g., normal maps)
-	BC6H_SFLOAT_BLOCK, // BC6H compression for high dynamic range (HDR) images
-	BC7_UNORM_BLOCK, // BC7 compression for high-quality RGBA textures
+	R16_SFLOAT,         // 16-bit floating-point Red channel
+	RG16_SFLOAT,        // 16-bit floating-point Red and Green channels
+	RGBA16_SFLOAT,      // 16-bit floating-point Red, Green, Blue, Alpha channels
+	R32_SFLOAT,         // 32-bit floating-point Red channel
+	RG32_SFLOAT,        // 32-bit floating-point Red and Green channels
+	RGB32_SFLOAT,       // 32-bit floating-point Red, Green, Blue channels
+	RGBA32_SFLOAT,      // 32-bit floating-point Red, Green, Blue, Alpha channels
 
-	D16_UNORM, // 16-bit depth
-	D32_SFLOAT, // 32-bit floating-point depth
-	D24_UNORM_S8_UINT, // 24-bit depth, 8-bit stencil
+	R10G10B10A2_UNORM,  // 10-bit color per channel + 2-bit alpha
+	R11G11B10_UFLOAT,   // HDR color (good for skyboxes, light buffers)
+	R9G9B9E5_UFLOAT,    // HDR RGB with shared exponent, common for light probes
+
+	// Compressed formats (BC / ETC / ASTC)
+	BC1_RGB_UNORM_BLOCK,    // BC1 compression for RGB textures
+	BC1_RGBA_UNORM_BLOCK,   // BC1 compression for RGBA textures
+	BC2_UNORM_BLOCK,        // BC2 compression supporting RGBA with explicit alpha
+	BC3_UNORM_BLOCK,        // BC3 compression (similar to BC2)
+	BC4_UNORM_BLOCK,        // BC4 compression for single-channel textures
+	BC5_UNORM_BLOCK,        // BC5 compression for two-channel textures (e.g., normal maps)
+	BC6H_SFLOAT_BLOCK,      // BC6H compression for HDR images
+	BC7_UNORM_BLOCK,        // BC7 compression for high-quality RGBA textures
+
+	ETC2_RGB8_UNORM_BLOCK,  // ETC2 compression for RGB (mobile)
+	ETC2_RGBA8_UNORM_BLOCK, // ETC2 compression for RGBA (mobile)
+	ASTC_4x4_UNORM_BLOCK,   // ASTC compression, 4x4 block (desktop/mobile)
+	ASTC_8x8_UNORM_BLOCK,   // ASTC compression, 8x8 block (high compression)
+
+	// Depth / Stencil formats
+	D16_UNORM,          // 16-bit depth
+	D24_UNORM_S8_UINT,  // 24-bit depth, 8-bit stencil
+	D32_SFLOAT,         // 32-bit floating-point depth
 	D32_SFLOAT_S8_UINT, // 32-bit floating-point depth, 8-bit stencil
 
-	IMAGE_FORMAT_UNKNOWN,
+	UNKNOWN,
 	IMAGE_FORMAT_COUNT
 };
+
 
 
 enum class TextureLayout
@@ -228,6 +264,28 @@ enum class TextureDimension
 	None
 };
 
+
+enum class TextureViewDimension
+{
+	Auto,
+	Texture2D,
+	Texture2DArray,
+	Cube,
+	CubeFace,   // a single layer for a cubemap
+	Texture3D
+};
+
+enum class TextureSwizzle : u8
+{
+	Identity = 0,
+	Zero,
+	One,
+	R,
+	G,
+	B,
+	A
+};
+
 enum class ImageType : u32
 {
 	Image2D,
@@ -235,24 +293,22 @@ enum class ImageType : u32
 };
 
 
-namespace ImageUsage
+enum class ImageUsage : u32
 {
-	enum Flags : u32
-	{
-		None            = 0,
-		TransferSrc     = 1 << 0,
-		TransferDst     = 1 << 1,
-		Sampled         = 1 << 2,
-		ColorAttachment = 1 << 3,
-		DepthStencil    = 1 << 4,
-		Storage         = 1 << 5,
-		InputAttachment = 1 << 6,
-		ResolveDst      = 1 << 7,
-		ResolveSrc      = 1 << 8,
-	};
-}
+	None            = 0,
+	TransferSrc     = 1 << 0,
+	TransferDst     = 1 << 1,
+	Sampled         = 1 << 2,
+	ColorAttachment = 1 << 3,
+	DepthStencil    = 1 << 4,
+	Storage         = 1 << 5,
+	InputAttachment = 1 << 6,
+	ResolveDst      = 1 << 7,
+	ResolveSrc      = 1 << 8,
+};
 
-using ImageUsageFlags = u32;
+ENUM_CLASS_BITOPS(ImageUsage)
+using ImageUsageFlags = ImageUsage;
 
 
 // Samplers
@@ -485,6 +541,8 @@ struct GPUDeviceDesc
 	GPUVendor vendor = GPUVendor::UNKNOWN;
 	u64 driverVersion = 0;
 	u64 dedicatedVideoMemory = 0;
+	std::string driverVersionString;
+	std::string apiName;
 };
 
 // NOTE: ImageType is 2D by default
@@ -494,9 +552,10 @@ struct TextureInfo
 	u16 mipLevels = 1;
 	u16 arrayLayers = 1;
 	ImageType type = ImageType::Image2D;
-	TextureFormat format = TextureFormat::IMAGE_FORMAT_UNKNOWN;
+	TextureFormat format = TextureFormat::UNKNOWN;
 	TextureDimension dimension = TextureDimension::Texture2D;
 	ImageUsageFlags usage = ImageUsage::None;
+	SampleCount sampleCount = SampleCount::X1;
 
 	void EnableMipmaps()
 	{
@@ -505,17 +564,36 @@ struct TextureInfo
 	}
 };
 
+struct TextureSwizzleMask
+{
+	TextureSwizzle r = TextureSwizzle::Identity;
+	TextureSwizzle g = TextureSwizzle::Identity;
+	TextureSwizzle b = TextureSwizzle::Identity;
+	TextureSwizzle a = TextureSwizzle::Identity;
+};
+
+struct TextureViewInfo
+{
+	TextureFormat format  = TextureFormat::UNKNOWN;
+	TextureViewDimension dimension = TextureViewDimension::Auto;
+	u32 mipSlice   = 0;   // which mip to start at
+	u32 mipCount   = 1;   // how many mips
+
+	u32 arraySlice = 0;   // which layer to start at
+	u32 arrayCount = 1;   // how many layers
+
+	TextureSwizzleMask swizzle = {};
+};
+
 struct TextureData
 {
 	i32 width = 0;
 	i32 height = 0;
 	i32 depth = 1;
 	i32 channels = 4;
-	TextureFormat format = TextureFormat::IMAGE_FORMAT_UNKNOWN;
-	Vector<u8> data;
+	TextureFormat format = TextureFormat::UNKNOWN;
+	std::variant<Vector<u8>, Vector<f32>> data; // Raw pixel data for basic textures or float data for HDR
 };
-
-// Scene BS
 
 // Descriptor Binding
 struct Binding
@@ -527,8 +605,46 @@ struct Binding
 
 struct UniformBufferDesc
 {
+	u32 setIndex = 0;
 	ShaderStageFlags stageFlags; // shader stages
 	Vector<Binding> bindings; // resource bindings
+};
+
+
+// Vertex input
+
+enum class VertexInputRate
+{
+	Vertex,
+	Instance
+};
+
+struct VertexBindingDescription
+{
+	u32 binding = 0;
+	u32 stride = 0;
+	VertexInputRate inputRate = VertexInputRate::Vertex;
+};
+
+struct VertexAttributeDescription
+{
+	// Vulkan-centric
+	u32 location = 0;
+
+	// DX12/HLSL-centric
+	const char* semanticName = nullptr; // e.g., "POSITION"
+	u32 semanticIndex = 0;          // e.g., 0 for "TEXCOORD0"
+
+	// Common
+	u32 binding = 0;
+	TextureFormat format = TextureFormat::UNKNOWN;
+	u32 offset = 0;
+};
+
+struct VertexInputLayout
+{
+	Vector<VertexBindingDescription> bindings;
+	Vector<VertexAttributeDescription> attributes;
 };
 
 enum class DebugView : i32
@@ -542,13 +658,13 @@ enum class DebugView : i32
 	UVs      = 6,
 };
 
-struct DebugViewItem
+struct DebugViewMode
 {
 	DebugView value;
 	const char* label;
 };
 
-inline constexpr DebugViewItem kDebugViews[] = {
+inline constexpr DebugViewMode kDebugViews[] = {
 	{DebugView::Material, "Material"},
 	{DebugView::Albedo, "Albedo"},
 	{DebugView::Normal, "Normals (mapped)"},

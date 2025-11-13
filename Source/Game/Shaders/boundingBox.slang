@@ -18,7 +18,9 @@ struct BBoxPush
     float3   aabbMax;   uint  flags;
     float4   color;
 };
-[[vk::push_constant]] ConstantBuffer<BBoxPush> pc;
+
+[[vk::binding(0, 1)]]
+StructuredBuffer<BBoxPush> instances;
 
 static const uint2 kEdgeCorners[12] = {
     uint2(0,1), uint2(1,3), uint2(3,2), uint2(2,0),
@@ -43,10 +45,13 @@ float4 applyDepthBiasCS(float4 posCS, float biasAmount)
 }
 
 [shader("vertex")]
-VSOut vertexMain(uint vertexID : SV_VertexID)
+VSOut vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
 {
     VSOut o;
 
+    BBoxPush pc = instances[instanceID];
+
+    // --- Determine line edge ---
     const uint edge   = (vertexID >> 1);
     const bool endSel = (vertexID & 1u) != 0u;
     const uint2 ec    = kEdgeCorners[edge];

@@ -1,5 +1,6 @@
 //
 // Created by Orgest on 6/12/2025.
+// Updated by Orgest on 11/4/2025 - Refactored to use RHI abstraction
 //
 
 #include "VulkanCommands.h"
@@ -8,124 +9,117 @@
 #include "VulkanCheck.h"
 #include "VulkanInit.h"
 #include "VulkanSwapchain.h"
-#include "../Core/Tools/Logger.h"
-#include "Tools/DeletionQueue.h"
+#include "VulkanCommandBuffer.h"
+#include "Tools/Logger.h"
 
 using namespace Renderer;
 
-void VulkanCommands::Init(const VulkanDevice* device)
+// VulkanFrameData Implementation
+
+bool VulkanFrameData::Init(GPUDevice* dev)
 {
-	VkCommandPoolCreateInfo commandPoolInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-		.queueFamilyIndex = device->graphicsQueueIndex
-	};
-
-	VK_CHECK(vkCreateCommandPool(device->device, &commandPoolInfo, nullptr, &commandPool));
-
-	VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool = commandPool,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1
-	};
-	VK_CHECK(vkAllocateCommandBuffers(device->device, &commandBufferAllocateInfo, &commandBuffer));
+	return Init(static_cast<VulkanDevice*>(dev), nullptr);
 }
 
-void VulkanCommands::Destroy(const VulkanDevice* device)
+bool VulkanFrameData::Init(VulkanDevice* dev, TracyVkCtx ctx)
 {
-	if (commandPool != VK_NULL_HANDLE)
-	{
-		vkDestroyCommandPool(device->device, commandPool, nullptr);
-		commandPool = VK_NULL_HANDLE;
-		commandBuffer = VK_NULL_HANDLE;
-	}
-}
+	device = dev;
+	tracyCtx = ctx;
 
-void VulkanCommands::Begin() const
-{
-	VkCommandBufferBeginInfo beginInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-	};
+	// Initialize command pool
+	commandPool.Init(device, device->graphicsQueueIndex, false);
 
-	vkBeginCommandBuffer(commandBuffer, &beginInfo);
-	CmdBeginLabel(commandBuffer, "Frame CommandBuffer", 0.0f, 0.7f, 1.0f);
-}
-
-void VulkanCommands::End() const
-{
-	CmdEndLabel(commandBuffer);
-	vkEndCommandBuffer(commandBuffer);
-}
-
-bool VulkanFrameData::Init(VulkanDevice* device, TracyVkCtx tracyCtx)
-{
-	command.Init(device);
-	command.tracyCtx = tracyCtx;
+	// Allocate primary command buffer directly
+	commandBuffer.InitInternal(device, commandPool.GetVkHandle(), false);
+	commandBuffer.tracyCtx = tracyCtx;
 
 
 	queryPool.Init(device, 4);
 
-	// init descriptor allocs
+	// Init descriptor allocators
 	Vector<DescriptorAllocatorGrowable::PoolSizeRatio> frameSizes = {
 		{DescriptorType::StorageImage, 3},
 		{DescriptorType::StorageBuffer, 3},
 		{DescriptorType::UniformBuffer, 3},
 		{DescriptorType::Sampler, 4},
 	};
-
 	descriptors.Init(device, 1000, frameSizes);
 
+	// Create synchronization objects
 	VkFenceCreateInfo fenceInfo{
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 		.flags = VK_FENCE_CREATE_SIGNALED_BIT
 	};
 	VK_CHECK(vkCreateFence(device->device, &fenceInfo, nullptr, &renderFence));
+
 	VkSemaphoreCreateInfo semInfo{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
 	VK_CHECK(vkCreateSemaphore(device->device, &semInfo, nullptr, &acquireSemaphore));
 
 	return true;
 }
 
-void VulkanFrameData::Destroy(const VulkanDevice* device)
+void VulkanFrameData::Destroy()
 {
+	if (!device) return;
+
 	descriptors.DestroyPools();
 
-	vkDestroyFence(device->device, renderFence, nullptr);
-	vkDestroySemaphore(device->device, acquireSemaphore, nullptr);
+	if (renderFence != VK_NULL_HANDLE)
+	{
+		vkDestroyFence(device->device, renderFence, nullptr);
+		renderFence = VK_NULL_HANDLE;
+	}
 
-	command.Destroy(device);
+	if (acquireSemaphore != VK_NULL_HANDLE)
+	{
+		vkDestroySemaphore(device->device, acquireSemaphore, nullptr);
+		acquireSemaphore = VK_NULL_HANDLE;
+	}
+
+	commandBuffer.DestroyInternal();
+	commandPool.Destroy();
 	queryPool.Destroy();
 }
 
-bool VulkanRenderer::Init(VulkanDevice* dev, VulkanSwapchain* sc)
+void VulkanFrameData::Reset()
 {
-	device = dev;
-	swapchain = sc;
+	descriptors.ResetPools();
+	commandPool.Reset();
+}
 
-	frames.resize(MAX_FRAME_OVERLAP);
+// VulkanRenderer Implementation
+
+bool VulkanRenderer::Init(GPUDevice* dev, GPUSwapchain* sc, u32 frameOverlap)
+{
+	device = static_cast<VulkanDevice*>(dev);
+	swapchain = reinterpret_cast<VulkanSwapchain*>(sc); // TODO: Make VulkanSwapchain inherit from GPUSwapchain
+	framesActive = frameOverlap;
+
+	frames.resize(framesActive);
 	for (auto& frame : frames)
 	{
 		frame.Init(device);
 	}
 
-	tracyCtx = TracyVkContext(device->physicalDevice, device->device, device->graphicsQueue, frames.at(0).command.commandBuffer);
+	// Initialize Tracy profiling context
+	tracyCtx = TracyVkContext(device->physicalDevice, device->device, device->graphicsQueue,
+	                          frames.at(0).commandBuffer.GetVkHandle());
 	TracyVkContextName(tracyCtx, "Graphics", 8);
 
 	for (auto& frame : frames)
 	{
-		frame.command.tracyCtx = tracyCtx;
+		frame.commandBuffer.tracyCtx = tracyCtx;
 	}
 
-	presentSemaphores.resize(swapchain->imageCount); // One semaphore per swapchain image
+	// Create present semaphores (one per swapchain image)
+	presentSemaphores.resize(swapchain->imageCount);
 	constexpr VkSemaphoreCreateInfo semInfo{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
 	for (auto& sem : presentSemaphores)
 	{
 		VK_CHECK(vkCreateSemaphore(device->device, &semInfo, nullptr, &sem));
 	}
 
-	frameNumber  = 0;
+	frameNumber = 0;
 	return true;
 }
 
@@ -133,13 +127,16 @@ void VulkanRenderer::Destroy()
 {
 	vkDeviceWaitIdle(device->device);
 
-	if (tracyCtx != nullptr)
+	if (tracyCtx)
+	{
 		TracyVkDestroy(tracyCtx);
+	}
 
 	for (auto& frame : frames)
 	{
-		frame.Destroy(device);
+		frame.Destroy();
 	}
+
 	for (auto& sem : presentSemaphores)
 	{
 		if (sem != VK_NULL_HANDLE)
@@ -149,9 +146,10 @@ void VulkanRenderer::Destroy()
 		}
 	}
 	presentSemaphores.clear();
+	frames.clear();
 }
 
-bool VulkanRenderer::ResizeIfNeeded() const
+bool VulkanRenderer::ResizeIfNeeded()
 {
 	static bool wasMinimized = false;
 
@@ -167,7 +165,7 @@ bool VulkanRenderer::ResizeIfNeeded() const
 			LOG(Warning, "Window minimized, skipping resize");
 			wasMinimized = true;
 		}
-		return true;
+		return true; // Skip frame
 	}
 
 	// Window restored
@@ -191,81 +189,106 @@ bool VulkanRenderer::ResizeIfNeeded() const
 
 	return false; // No resize or minimize → proceed to render
 }
-
-
-FrameContext VulkanRenderer::BeginFrame()
+bool VulkanRenderer::BeginFrame(u32& frameIndex, u32& imageIndex)
 {
 	VulkanFrameData& frame = GetCurrentFrame();
+
+	// Wait for this frame's fence
 	vkWaitForFences(device->device, 1, &frame.renderFence, VK_TRUE, UINT64_MAX);
 	vkResetFences(device->device, 1, &frame.renderFence);
 
-	frame.descriptors.ResetPools();
+	// Reset per-frame resources
+	frame.Reset();
 
-	u32 imageIndex = 0;
-	VkResult res = vkAcquireNextImageKHR(device->device, swapchain->swapchain, UINT64_MAX, frame.acquireSemaphore, VK_NULL_HANDLE,
-	                                     &imageIndex);
+	// Acquire next swapchain image
+	imageIndex = 0;
+	VkResult res = vkAcquireNextImageKHR(device->device, swapchain->swapchain, UINT64_MAX,
+	                                     frame.acquireSemaphore, VK_NULL_HANDLE, &imageIndex);
 	if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR)
 	{
 		swapchain->Resize();
-		return {};
+		return false; // Skip frame
 	}
 
-	frame.command.Begin();
-	frame.queryPool.Reset(frame.command.commandBuffer);
+	// Begin command recording
+	frame.commandBuffer.Begin(nullptr);
+	frame.queryPool.Reset(frame.commandBuffer.GetVkHandle());
 
+	frameIndex = frameNumber % framesActive;
+	return true;
+}
+
+// Old API for compatibility - returns FrameContext
+FrameContext VulkanRenderer::BeginFrame()
+{
+	u32 fIndex, iIndex;
+	if (!BeginFrame(fIndex, iIndex)) {
+		return {}; // Failed
+}
+
+	VulkanFrameData& frame = GetCurrentFrame();
 	return FrameContext{
-		.commandContext = &frame.command,
+		.commandBuffer = &frame.commandBuffer,
 		.frameData = &frame,
-		.frameIndex = frameNumber % framesActive,
-		.imageIndex = imageIndex,
+		.frameIndex = fIndex,
+		.imageIndex = iIndex,
 	};
 }
 
-void VulkanRenderer::EndFrame(const FrameContext& frame)
+void VulkanRenderer::EndFrame(u32 frameIndex, u32 imageIndex)
 {
-	u32 imageIndex = frame.imageIndex;
+	VulkanFrameData& frame = frames[frameIndex];
+	VkCommandBuffer cmd = frame.commandBuffer.GetVkHandle();
 
-	VkCommandBuffer cmd = frame.commandContext->commandBuffer;
+	// Collect Tracy profiling data
+	TracyVkCollect(frame.tracyCtx, cmd);
 
-	TracyVkCollect(frame.commandContext->tracyCtx, cmd);
+	// End command recording
+	frame.commandBuffer.End();
 
-	frame.commandContext->End();
-
+	// Submit to GPU
 	VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 
 	VkSubmitInfo submitInfo{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &frame.frameData->acquireSemaphore,
+		.pWaitSemaphores = &frame.acquireSemaphore,
 		.pWaitDstStageMask = waitStages,
 		.commandBufferCount = 1,
 		.pCommandBuffers = &cmd,
 		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &presentSemaphores[imageIndex] // Use semaphore for THIS swapchain image
+		.pSignalSemaphores = &presentSemaphores[imageIndex]
 	};
 
-	VK_CHECK(vkQueueSubmit(device->graphicsQueue, 1, &submitInfo, frame.frameData->renderFence));
+	VK_CHECK(vkQueueSubmit(device->graphicsQueue, 1, &submitInfo, frame.renderFence));
 
-
+	// Present to screen
 	VkPresentInfoKHR presentInfo{
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &presentSemaphores[imageIndex], // Wait on the same semaphore
+		.pWaitSemaphores = &presentSemaphores[imageIndex],
 		.swapchainCount = 1,
 		.pSwapchains = &swapchain->swapchain,
 		.pImageIndices = &imageIndex
 	};
 
 	VK_CHECK(vkQueuePresentKHR(device->graphicsQueue, &presentInfo));
-	
-	frameNumber++; // Increment unconditionally, will wrap in GetCurrentFrame()
+
+	frameNumber++; // Increment frame counter
+}
+
+// Compatibility method for old API
+void VulkanRenderer::EndFrame(const FrameContext& frame)
+{
+	EndFrame(frame.frameIndex, frame.imageIndex);
 }
 
 void VulkanRenderer::SetViewportAndScissor(VkCommandBuffer cmd, const Extent2D& extent)
 {
-	VkViewport viewport = {0.f, 0.f, (f32)extent.width, (f32)extent.height, 1.f, 0.f};
+	VkViewport viewport = {0.f, 0.f, static_cast<f32>(extent.width), static_cast<f32>(extent.height), 0.f, 1.f};
 	VkRect2D scissor = {{0, 0}, {extent.width, extent.height}};
 
 	vkCmdSetViewport(cmd, 0, 1, &viewport);
 	vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
+

@@ -25,15 +25,22 @@ namespace Renderer
 		Array<DescriptorSet, MAX_FRAME_OVERLAP> descriptorSets;
 		DescriptorLayout layout;
 		UniformBufferDesc desc;
-		u32 bindingCount = 0;
+		Vector<u32> bindingToSlot;       // binding -> slot index
+		u32 slotCount = 0;               // number of actual UBOs/SSBOs
 
-		[[nodiscard]] u32 index(u32 frame, u32 binding) const { return (frame * bindingCount) + binding; }
+		[[nodiscard]] auto index(const u32 frame, const u32 binding) const noexcept -> u32
+		{
+			const u32 slot = bindingToSlot[binding];
+			return (frame * slotCount) + slot;
+		}
 
-		VulkanShaderBuffer(VulkanDevice* dev,  DescriptorAllocatorGrowable* alloc, const UniformBufferDesc& desc);
+		VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc, const UniformBufferDesc& desc);
+
+		// Raw update with manual size
 		void UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size) const;
 
 		void Update(u32 frameIndex, const void* data, size_t size) const;
-		void Bind(VkCommandBuffer cmd, const VulkanPipeline& pipeline, u32 frameIndex, u32 setIndex) const;
+		void Bind(VkCommandBuffer cmd, const VulkanPipeline& pipeline, u32 frameIndex) const;
 		void AllocateDescriptorSets();
 		void Destroy();
 	};

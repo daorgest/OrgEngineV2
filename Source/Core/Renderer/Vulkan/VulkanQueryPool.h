@@ -18,7 +18,7 @@ namespace Renderer
 		};
 
 		bool Init(VulkanDevice* device, u32 queryCount);
-		void Destroy();
+		void Destroy() const;
 		void Reset(VkCommandBuffer cmd) const;
 		void WriteTimestamp(VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage, u32 queryIndex) const;
 		bool FetchResults();

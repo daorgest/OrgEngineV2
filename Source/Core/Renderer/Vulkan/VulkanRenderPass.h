@@ -13,7 +13,6 @@ struct Extent2D;
 
 namespace Renderer
 {
-
 	struct RenderPassDesc
 	{
 		std::span<const VulkanImage> renderPasses;

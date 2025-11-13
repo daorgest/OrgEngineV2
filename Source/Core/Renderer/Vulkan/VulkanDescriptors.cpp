@@ -15,6 +15,15 @@
 
 using namespace Renderer;
 
+void DescriptorLayout::Destroy(const VulkanDevice* device)
+{
+	if (vk)
+	{
+		vkDestroyDescriptorSetLayout(device->device, vk, nullptr);
+		vk = VK_NULL_HANDLE;
+	}
+}
+
 // Layout Builder
 DescriptorLayoutBuilder& DescriptorLayoutBuilder::AddBinding(u32 binding, DescriptorType type)
 {
@@ -32,8 +41,20 @@ DescriptorLayoutBuilder& DescriptorLayoutBuilder::AddBinding(u32 binding, Descri
 DescriptorLayout DescriptorLayoutBuilder::Build(VkDevice device, ShaderStageFlags stageFlags, void* pNext, VkDescriptorSetLayoutCreateFlags flags)
 {
 	const VkShaderStageFlags vkStages = ToVk(stageFlags);
-	for (auto& b : bindings) {
+	for (auto& b : bindings)
+	{
 		b.stageFlags = vkStages; // assign, don't accumulate
+	}
+
+	// If we have binding flags, chain them into the creation info
+	VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{};
+	if (!bindingFlags.empty())
+	{
+		bindingFlagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+		bindingFlagsInfo.pNext = pNext;
+		bindingFlagsInfo.bindingCount = static_cast<u32>(bindingFlags.size());
+		bindingFlagsInfo.pBindingFlags = bindingFlags.data();
+		pNext = &bindingFlagsInfo;
 	}
 
 	VkDescriptorSetLayoutCreateInfo info
@@ -45,10 +66,42 @@ DescriptorLayout DescriptorLayoutBuilder::Build(VkDevice device, ShaderStageFlag
 		.pBindings = bindings.data()
 	};
 
-	VkDescriptorSetLayout set;
-	VK_CHECK(vkCreateDescriptorSetLayout(device, &info, nullptr, &set));
+	DescriptorLayout layout;
+	VK_CHECK(vkCreateDescriptorSetLayout(device, &info, nullptr, &layout.vk));
 
-	return DescriptorLayout{ .vk = set };
+	return layout;
+}
+
+// Descriptor Writer - Combined Image + Sampler
+DescriptorWriter& DescriptorWriter::WriteCombinedImage(u32 binding, const std::optional<VulkanImage*> image, const VulkanSampler* sampler)
+{
+	if (!image.has_value() || image.value() == nullptr || sampler == nullptr)
+	{
+		return *this;
+	}
+
+	const VulkanImage* img = image.value();
+	const VkImageLayout layout = IsDepthFormat(img->imageFormat)
+		? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+		: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+	// Push VkDescriptorImageInfo
+	imageInfos.emplace_back(VkDescriptorImageInfo{
+		.sampler = sampler->sampler,
+		.imageView = img->imageView,
+		.imageLayout = layout
+	});
+
+	// Push VkWriteDescriptorSet
+	writes.emplace_back(VkWriteDescriptorSet{
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstBinding = binding,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = &imageInfos.back()
+	});
+
+	return *this;
 }
 
 
@@ -57,19 +110,22 @@ DescriptorWriter& DescriptorWriter::WriteImage(u32 binding, const std::optional<
 {
 	VkDescriptorType vkType = ToVk(type);
 
-	if (vkType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) {
+	if (vkType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
+	{
 		if (!image.has_value() || image.value() == nullptr)
+		{
 			return *this;
+		}
 
 		const VulkanImage* img = image.value();
 		const VkImageLayout layout = IsDepthFormat(img->imageFormat)
-		? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-		: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			                             ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+			                             : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 
 		imageInfos.emplace_back(VkDescriptorImageInfo{
-			.sampler     = VK_NULL_HANDLE,
-			.imageView   = img->imageView,
+			.sampler = VK_NULL_HANDLE,
+			.imageView = img->imageView,
 			.imageLayout = layout,
 		});
 	}
@@ -121,7 +177,7 @@ DescriptorWriter& DescriptorWriter::WriteImageArray(u32 binding, std::span<const
 		.dstBinding = binding,
 		.descriptorCount = static_cast<u32>(images.size()),
 		.descriptorType = ToVk(type),
-		.pImageInfo = &imageInfos[start]
+		.pImageInfo = &imageInfos.at(start)
 	});
 
 	return *this;

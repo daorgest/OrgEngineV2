@@ -10,86 +10,85 @@
 #include "VulkanInit.h"
 #include "Tools/Logger.h"
 #include "Tools/Vector.h"
+#include "Tools/FileManager.h" // new: allocation-free file io
 
 using namespace Renderer;
 
-Vector<u32> VulkanShader::ReadShaderFile(const char* filePath)
+
+Result<Vector<u32>> LoadSPV(const char* path)
 {
-	FILE* file = std::fopen(filePath, "rb");
-	if (file == nullptr)
+	auto fileSizeResult = FileManager::GetFileSize(path);
+	if (!fileSizeResult)
 	{
-		LOG(Error, "Failed to open file: {}", filePath);
-		return {};
+		LOG(Error, "Failed to get shader file size: {}", path);
+		return std::unexpected(fileSizeResult.error());
 	}
 
-	// Seek to end to get file size
-	std::fseek(file, 0, SEEK_END);
-
-	i32 fileSize = std::ftell(file);
-	if (fileSize < 0)
+	const i32 fileSize = *fileSizeResult;
+	if (fileSize <= 0 || fileSize % sizeof(u32) != 0)
 	{
-		LOG(Error, "Failed to get file size: {}", filePath);
-		std::fclose(file);
-		return {};
+		LOG(Error, "Invalid SPIR-V file (bad size or alignment): {}", path);
+		return std::unexpected(InvalidFileFormat);
 	}
 
-	// Seek back to beginning instead of rewind()
-	if (std::fseek(file, 0, SEEK_SET) != 0)
+	Vector<u8> raw(static_cast<size_t>(fileSize));
+	auto readResult = FileManager::ReadBinary(path, raw);
+	if (!readResult)
 	{
-		LOG(Error, "Failed to rewind file: {}", filePath);
-		std::fclose(file);
-		return {};
-	}
-
-	if (fileSize <= 0)
-	{
-		LOG(Error, "File size is invalid: {}", filePath);
-		std::fclose(file);
-		return {};
-	}
-
-	if (fileSize % sizeof(u32) != 0)
-	{
-		LOG(Error, "File size is not aligned to u32 / not a binary file: {}", filePath);
-		std::fclose(file);
-		return {};
+		LOG(Error, "Failed to read SPIR-V file: {}", path);
+		return std::unexpected(readResult.error());
 	}
 
 	Vector<u32> buffer(fileSize / sizeof(u32));
-	const size_t readSize = std::fread(buffer.data(), sizeof(u32), buffer.size(), file);
-	std::fclose(file);
-
-	if (readSize != buffer.size())
-	{
-		LOG(Error, "Failed to read entire file: {}", filePath);
-		return {};
-	}
-
+	std::memcpy(buffer.data(), raw.data(), fileSize);
 	return buffer;
 }
 
-VulkanShader::VulkanShader(VulkanDevice* device, std::span<const u32> code, const ShaderFormat format)
+Result<Vector<u32>> VulkanShader::ReadShaderFile(const char* filePath)
 {
-	this->device = device;
-	this->format = format;
+	auto result = LoadSPV(filePath);
+	if (!result)
+	{
+		LOG(Error, "Failed to load shader file: {}", filePath);
+		return std::unexpected(result.error());
+	}
+	return result;
+}
 
-	const VkShaderModuleCreateInfo createInfo = {
+// VulkanShader RHI Interface Implementation
+Result<void> VulkanShader::Init(GPUDevice* gpuDevice, std::span<const u32> code, ShaderFormat shaderFormat)
+{
+	device = static_cast<VulkanDevice*>(gpuDevice);
+	format = shaderFormat;
+
+	const VkShaderModuleCreateInfo createInfo{
 		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0,
 		.codeSize = code.size_bytes(),
 		.pCode = code.data(),
 	};
 
-	if (vkCreateShaderModule(device->device, &createInfo, nullptr, &shader) != VK_SUCCESS)
+	const VkResult vkRes = vkCreateShaderModule(device->device, &createInfo, nullptr, &shader);
+	if (vkRes != VK_SUCCESS)
 	{
-		LOG(Error, "Failed to create shader module.");
+		shader = VK_NULL_HANDLE;
+		return std::unexpected(ShaderCompileFailed);
+	}
+
+	return {};
+}
+
+void VulkanShader::Destroy()
+{
+	if (shader != VK_NULL_HANDLE && device)
+	{
+		vkDestroyShaderModule(device->device, shader, nullptr);
 		shader = VK_NULL_HANDLE;
 	}
 }
 
-void VulkanShader::Destroy() const
+VulkanShader::VulkanShader(VulkanDevice* dev, std::span<const u32> code, ShaderFormat fmt)
 {
-	if (shader != VK_NULL_HANDLE)
-	{
-		vkDestroyShaderModule(device->device, shader, nullptr);
-	}
+	Init(dev, code, fmt);
 }

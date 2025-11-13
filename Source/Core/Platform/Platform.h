@@ -2,7 +2,8 @@
 // Created by Orgest on 6/8/2025.
 //
 #pragma once
-
+#include <string>
+#include "../PrimTypes.h"
 namespace Platform
 {
 	enum class DisplayMode : u8
@@ -20,7 +21,7 @@ namespace Platform
 		u8 isResized : 1;
 		u8 isMinimized : 1;
 		u8 isAudioPlaying : 1;
-		u8 padding : 2;
+		u8 isResizing : 1;
 	};
 
 	struct OSVersion
@@ -37,13 +38,11 @@ namespace Platform
 		WindowHandle handle = nullptr; // Can be HWND or SDL_Window who knows
 		OSVersion version = {};
 
-		// Timing and perf counters
-		u32 frameCount = 0;
-		i64 perfCountFrequency = 0;
-		f64 deltaTime = 0.0;
-		f64 lastFrameTime = 0.0;
+		// Timing and perf counters (QueryPerformanceCounter-based)
+		i64 perfCountFrequency = 0;  // Ticks per second from QueryPerformanceFrequency
+		f64 deltaTime = 0.0;          // Time since last frame in seconds (clamped to max 0.1s)
+		f64 lastFrameTime = 0.0;      // Last frame's QueryPerformanceCounter tick value
 		f64 elapsedTime = 0.0;
-		f64 accumulatedTime = 0.0;
 
 		// FPS and frametime
 		f32 fps = 0;
@@ -70,6 +69,19 @@ namespace Platform
 
 		template <typename T = f32>
 		[[nodiscard]] T GetElapsedTime() const { return static_cast<T>(elapsedTime); }
+
+		// we are prob not going to use reinterpret_cast here since the platform will be set on compile time
+		template <typename T>
+		T GetHandle()
+		{
+			return static_cast<T>(handle);
+		}
+
+		template <typename T>
+		T GetHandle() const
+		{
+			return static_cast<const T>(handle);
+		}
 	};
 
 	enum class MessageBoxType : u32
@@ -93,7 +105,7 @@ namespace Platform
 	ORGAPI void InitKeyMappings();
 	ORGAPI void InitRawInput();
 	ORGAPI std::string GetCPUName();
-	ORGAPI bool GetWindowSize(const WindowHandle& handle, u32& width, u32& height);
+	ORGAPI bool GetWindowSize(const WindowHandle& window, u32& width, u32& height);
 	ORGAPI void SetDisplayMode(WindowContext& window, DisplayMode mode);
 	ORGAPI void UpdateScreenDimensions(WindowContext& window);
 	ORGAPI std::wstring ConvertToWideString(const std::string_view& str);
@@ -116,6 +128,7 @@ namespace Platform
 	ORGAPI void HideCursor(bool show);
 	ORGAPI void LockCursor(WindowContext& wc, bool enable);
 	ORGAPI bool SetMouseVisibility(bool show);
-};
-
-
+	ORGAPI bool GetCursorClientPos(const WindowContext* window, i32& outX, i32& outY);
+	ORGAPI void SetCursorClientPos(const WindowContext* window, i32 x, i32 y);
+	ORGAPI bool WrapCursorToOppositeEdge(const WindowContext* window, i32 margin = 10);
+}

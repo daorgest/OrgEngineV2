@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+    <!-- ========================================
+         ArenaAllocator Visualization
+         ======================================== -->
+    <Type Name="ArenaAllocator">
+        <DisplayString Condition="base == 0">{{ Empty Arena }}</DisplayString>
+        <DisplayString Condition="base != 0">{{ {size,d}/{capacity,d} bytes ({((double)size / capacity) * 100.0,g}%
+            used) }}
+        </DisplayString>
+        <Expand>
+            <Item Name="[base pointer]" Condition="base != 0">base,x</Item>
+            <Item Name="[bytes used]">size,d</Item>
+            <Item Name="[bytes capacity]">capacity,d</Item>
+            <Item Name="[bytes remaining]">capacity - size,d</Item>
+            <Item Name="[utilization %]">((double)size / capacity) * 100.0,g</Item>
+            <Item Name="[is empty]" Condition="size == 0">true</Item>
+            <Item Name="[is full]" Condition="size == capacity">true</Item>
+            <!-- Memory view (first 64 bytes) -->
+            <Synthetic Name="[memory preview]" Condition="base != 0 &amp;&amp; size &gt; 0">
+                <DisplayString>First {size &lt; 64 ? size : 64} bytes</DisplayString>
+                <Expand>
+                    <ArrayItems>
+                        <Size>size &lt; 64 ? size : 64</Size>
+                        <ValuePointer>base</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+        </Expand>
+    </Type>
+
+    <!-- ========================================
+         Array<T, N>
+         ======================================== -->
+    <Type Name="Array&lt;*,*&gt;">
+        <DisplayString>{{ Array[{$T2}] }}</DisplayString>
+        <Expand>
+            <Item Name="[size]" ExcludeView="simple">$T2</Item>
+            <Item Name="[front]" Condition="$T2 &gt; 0">a[0]</Item>
+            <Item Name="[back]" Condition="$T2 &gt; 0">a[$T2-1]</Item>
+            <ArrayItems>
+                <Size>$T2</Size>
+                <ValuePointer>a</ValuePointer>
+            </ArrayItems>
+        </Expand>
+    </Type>
+
+    <!-- ========================================
+         Vector<T>
+         ======================================== -->
+    <Type Name="Vector&lt;*&gt;" Inheritable="false">
+        <DisplayString Condition="m_size == 0">{{ empty }}</DisplayString>
+        <DisplayString Condition="m_size &gt; 0">{{ size={m_size} cap={m_capacity} }}</DisplayString>
+        <Expand>
+            <Item Name="[size]" ExcludeView="simple">m_size</Item>
+            <Item Name="[capacity]" ExcludeView="simple">m_capacity</Item>
+            <Item Name="[usage %]" ExcludeView="simple" Condition="m_capacity &gt; 0">((double)m_size / m_capacity) *
+                100.0,g
+            </Item>
+            <Item Name="[front]" Condition="m_size &gt; 0">m_data[0]</Item>
+            <Item Name="[back]" Condition="m_size &gt; 0">m_data[m_size-1]</Item>
+            <ArrayItems>
+                <Size>m_size</Size>
+                <ValuePointer>m_data</ValuePointer>
+            </ArrayItems>
+        </Expand>
+    </Type>
+
+</AutoVisualizer>
+

@@ -1,0 +1,84 @@
+//
+// Created by Orgest on 6/28/2025.
+//
+#pragma once
+#include "../Core/Renderer/RendererTypes.h"
+#include "Tools/Vector.h"
+
+#include <string>
+
+#include <type_traits>  // std::underlying_type_t
+#include <utility>      // std::to_underlying (C++23)
+
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/glm.hpp>
+
+#include "AABB.h"
+
+struct Vertex
+{
+	glm::vec3 position;
+	glm::vec3 normal;
+	glm::vec4 tangent;
+	glm::vec3 color;
+	glm::vec2 uv;
+};
+
+struct SkyVertex
+{
+	glm::vec3 position;
+	glm::vec2 uv;
+};
+
+struct Particle2D
+{
+	glm::vec2 position;
+	glm::vec2 velocity;
+	glm::vec4 color;
+};
+
+struct MeshPart
+{
+	AABB aabb;
+	u32 materialIndex = 0;
+	u32 indexCount = 0;
+	u32 firstIndex = 0;     // Offset into the Mesh's global index buffer
+	u32 vertexOffset = 0;   // Offset to add to each index (base vertex)
+};
+
+struct Mesh
+{
+	Vector<MeshPart> parts;
+	std::string name;
+	Vector<Vertex> unifiedVertices;
+	Vector<u32> unifiedIndices;
+};
+
+struct Material
+{
+	std::string name;
+
+	// Texture paths
+	std::string albedoPath;
+	std::string normalPath;
+	std::string specularPath;
+	std::string emissivePath;
+	std::string roughnessPath;  // PBR roughness map
+	std::string metallicPath;   // PBR metallic map
+	std::string aoPath;          // Ambient occlusion map
+
+	// PBR material properties (fallback values if no textures)
+	glm::vec3 baseColor = glm::vec3(1.0f);  // Base albedo color (Kd in MTL)
+	float roughness = 0.5f;      // Surface roughness [0=smooth, 1=rough] (Pr in MTL)
+	float metallic = 0.0f;       // Metallic factor [0=dielectric, 1=metal] (Pm in MTL)
+	float ior = 1.5f;            // Index of refraction (Ni in MTL)
+	float opacity = 1.0f;        // Opacity/transparency (d in MTL)
+	glm::vec3 emissive = glm::vec3(0.0f); // Emissive color (Ke in MTL)
+};
+
+struct LoadedModel
+{
+	Vector<Mesh> meshes;
+	Vector<Material> materials;
+	MeshSourceType sourceType = MeshSourceType::Unknown;
+};
