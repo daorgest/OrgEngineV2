@@ -64,7 +64,7 @@ cmake-*
 *.dylib
 
 
-!Assets/Models/
+# shhhh
 /3rdParty/conf
 
 # For FMOD

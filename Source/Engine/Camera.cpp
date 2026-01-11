@@ -9,36 +9,38 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "MathFuncs.h"
 
-void Camera::Update(f32 deltaTime)
+void Camera::UpdateVecAndMat(const glm::vec3& position, const f32 aspectRatio)
 {
-	position += velocity * deltaTime;
+    const f32 yawRad   = Radians(yaw);
+    const f32 pitchRad = Radians(pitch);
 
-	view = GetViewMatrix();
+    forward = glm::normalize(glm::vec3(
+        std::cos(pitchRad) * std::sin(yawRad), // +X = turn right
+        std::sin(pitchRad),                    // +Y = look up
+        std::cos(pitchRad) * std::cos(yawRad)  // +Z = look forward
+    ));
+
+    right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+    up    = glm::normalize(glm::cross(right, forward));
+
+    view = glm::lookAt(position, position + forward, up);
+
+    projection = GetProjectionMatrix(aspectRatio);
 }
 
-void Camera::UpdateDirectionVectors()
+glm::mat4 Camera::GetViewMatrix(const glm::vec3& position) const
 {
-	const f32 yawRad   = Radians(yaw);
-	const f32 pitchRad = Radians(pitch);
-
-	forward = glm::normalize(glm::vec3(
-		std::cos(pitchRad) * std::sin(yawRad), // +X = turn right
-		std::sin(pitchRad),                    // +Y = look up
-		std::cos(pitchRad) * std::cos(yawRad)  // +Z = look forward
-	));
-
-	right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
-	up    = glm::normalize(glm::cross(right, forward));
+    return glm::lookAt(position, position + forward, up);
 }
 
-glm::mat4 Camera::GetViewMatrix() const
+glm::mat4 Camera::GetProjectionMatrix(const f32 aspectRatio) const
 {
-	return glm::lookAt(position, position + forward, up);
-}
-
-glm::mat4 Camera::GetProjectionMatrix(f32 aspectRatio) const
-{
-	glm::mat4 proj = glm::perspective(Radians(fov), aspectRatio, nearPlane, farPlane);
+	glm::mat4 proj = glm::perspectiveRH_ZO(Radians(fov), aspectRatio, farPlane, nearPlane);
 	proj[1][1] *= -1.0f; // Y-flip for Vulkan
 	return proj;
+}
+
+glm::mat4 Camera::GetViewProjectionMatrix(f32 aspectRatio) const
+{
+    return GetProjectionMatrix(aspectRatio) * view;
 }

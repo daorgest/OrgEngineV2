@@ -4,6 +4,7 @@
 
 #pragma once
 #include "RenderInterface.h"
+
 #include <volk.h>
 #include <tracy/TracyVulkan.hpp>
 
@@ -12,9 +13,30 @@ namespace Renderer
 	struct VulkanDevice;
 	struct VulkanPipeline;
 	struct VulkanBuffer;
-	struct VulkanImage;
-
+	struct VulkanTexture;
 	struct VulkanSwapchain;
+
+	struct VulkanFence final : GPUFence
+	{
+		VkFence fence = VK_NULL_HANDLE;
+		VulkanDevice* device = nullptr;
+
+		explicit VulkanFence(VulkanDevice* device);
+		~VulkanFence() override;
+	};
+
+	struct VulkanSemaphore final : GPUSemaphore
+	{
+		VkSemaphore semaphore = VK_NULL_HANDLE;
+		VulkanDevice* device = nullptr;
+
+		template<typename Self>
+		auto Get(this Self&& self) { return self.semaphore; }
+
+		explicit VulkanSemaphore(VulkanDevice* device);
+		~VulkanSemaphore() override;
+	};
+
 
 	/// Vulkan implementation of GPUCommandBuffer
 	struct VulkanCommandBuffer final : GPUCommandBuffer
@@ -33,6 +55,10 @@ namespace Renderer
 		void BindDescriptorSet(DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline) override;
 		void PushConstants(GPUPipeline* pipeline, ShaderStageFlags stages, u32 offset, u32 size, const void* data) override;
 
+		void TransitionLayout(GPUTexture* texture, TextureLayout newLayout) override;
+		void TransitionLayout(GPUTexture* texture, TextureLayout oldLayout, TextureLayout newLayout) override;
+		void GenerateMipmaps(GPUTexture* texture) override;
+
 		// Vertex/Index Buffers
 		void BindVertexBuffer(GPUBuffer* buffer, u32 binding, u64 offset) override;
 		void BindIndexBuffer(GPUBuffer* buffer, u64 offset) override;
@@ -48,7 +74,7 @@ namespace Renderer
 
 		// Synchronization
 		void PipelineBarrier(const BarrierInfo& info) override;
-		void ExecuteCommands(std::span<GPUCommandBuffer*> secondaryBuffers) override;
+		void ExecuteCommands(std::span<GPUCommandBuffer*> secondaryBuffers);
 
 		// Viewport/Scissor
 		void SetViewport(const Viewport& viewport) override;
@@ -63,13 +89,15 @@ namespace Renderer
 		void EndDebugLabel() override;
 		void InsertDebugLabel(const char* name, f32 r, f32 g, f32 b) override;
 
-		// Query
-		bool IsSecondary() const override { return isSecondary; }
 
 		// Internal Vulkan-specific methods
 		void InitInternal(VulkanDevice* device, VkCommandPool pool, bool secondary = false);
+		void InitFromHandle(VulkanDevice* dev, VkCommandBuffer handle);
 		void DestroyInternal();
+
+
 		[[nodiscard]] VkCommandBuffer GetVkHandle() const { return cmd; }
+		void CopyTexture(GPUTexture* src, GPUTexture* dst) override;
 
 		// Public for VulkanRenderer to set Tracy context
 		TracyVkCtx tracyCtx = nullptr;
@@ -80,25 +108,5 @@ namespace Renderer
 		VulkanDevice* device = nullptr;
 		bool isSecondary = false;
 	};
-
-	/// Command pool for allocating command buffers
-	struct VulkanCommandPool final : GPUCommandPool
-	{
-		void Init(GPUDevice* device, u32 queueFamilyIndex, bool transient) override;
-		void Destroy() override;
-		void Reset() override;
-
-		GPUCommandBuffer* AllocateBuffer(bool secondary) override;
-		void FreeBuffer(GPUCommandBuffer* buffer) override;
-		void FreeBuffers(std::span<GPUCommandBuffer*> buffers) override;
-
-		[[nodiscard]] VkCommandPool GetVkHandle() const { return pool; }
-
-	private:
-		VkCommandPool pool = VK_NULL_HANDLE;
-		VulkanDevice* device = nullptr;
-		Vector<VulkanCommandBuffer*> allocatedBuffers;
-	};
-
 } // namespace Renderer
 

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include "VulkanBuffer.h"
+#include "VulkanCommandBuffer.h"
 #include "VulkanConvert.h"
 #include "VulkanDescriptors.h"
 #include "VulkanInit.h"
@@ -15,7 +16,7 @@
 
 using namespace Renderer;
 
-static void SortBindingsByBinding(Vector<Binding>& bindings)
+static auto SortBindingsByBinding(std::span<Binding> bindings) -> void
 {
 	const u32 n = bindings.size();
 	for (u32 i = 1; i < n; ++i)
@@ -31,71 +32,58 @@ static void SortBindingsByBinding(Vector<Binding>& bindings)
 	}
 }
 
-VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc, const UniformBufferDesc& desc)
+VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc,
+                                       const DescriptorSetLayoutDesc& desc)
 {
-	this->device    = dev;
+	this->device = dev;
 	this->allocator = alloc;
-	this->desc      = desc;
+	this->desc = desc;
 
-	bool needsSort = false;
-	for (u32 i = 1; i < this->desc.bindings.size(); i++)
-	{
-		if (this->desc.bindings[i - 1].binding > this->desc.bindings[i].binding)
-		{
-			needsSort = true;
-			break;
-		}
-	}
-	if (needsSort)
-		SortBindingsByBinding(this->desc.bindings);
+	// 1. Layout Construction
+	SortBindingsByBinding(this->desc.bindings);
 
 	DescriptorLayoutBuilder layoutBuilder;
-	u32                     maxBinding = 0;
+	u32 maxBinding = 0;
+	Vector<Binding> bufferOnlyBindings;
 
 	for (const auto& b : desc.bindings)
 	{
-		assert((b.type == DescriptorType::UniformBuffer || b.type == DescriptorType::StorageBuffer)
-			&& "VulkanShaderBuffer only supports uniform and storage buffers!");
-		layoutBuilder.AddBinding(b.binding, b.type);
+		layoutBuilder.AddBinding(b);
 		maxBinding = std::max(maxBinding, b.binding);
+
+		// ONLY allocate buffers for actual buffer types
+		if (b.type == DescriptorType::UniformBuffer || b.type == DescriptorType::StorageBuffer)
+		{
+			bufferOnlyBindings.push_back(b);
+		}
 	}
 
-	layout = layoutBuilder.Build(device->device, desc.stageFlags);
+	// Builder now handles internal binding flags (bindless, stageFlags, etc.)
+	layout = layoutBuilder.Build(device);
 
-	// Build binding -> slot mapping
-	slotCount = static_cast<u32>(this->desc.bindings.size());
+	// 2. Slot Mapping
+	slotCount = static_cast<u32>(bufferOnlyBindings.size());
 	const u32 bindingTableSize = maxBinding + 1;
-
 	bindingToSlot.resize(bindingTableSize);
-	for (u32 i = 0; i < bindingTableSize; ++i)
-	{
-		bindingToSlot[i] = UINT32_MAX; // mark as "not present"
-	}
+	for (u32 i = 0; i < bindingTableSize; ++i) bindingToSlot[i] = UINT32_MAX;
 
 	for (u32 slot = 0; slot < slotCount; ++slot)
 	{
-		const Binding& b = this->desc.bindings[slot];
-		assert(b.binding < bindingToSlot.size());
-		bindingToSlot[b.binding] = slot;
+		bindingToSlot[bufferOnlyBindings[slot].binding] = slot;
 	}
 
-	// Each binding needs its own buffer for every frame-in-flight.
-	// Example: 5 bindings and 2 frames -> 10 total buffers.
-	// Layout is: [frame0 slots][frame1 slots][...]
-	const u32 total = MAX_FRAME_OVERLAP * slotCount;
-	buffers.resize(total);
+	// 3. Resource Allocation
+	const u32 totalBufferCount = MAX_FRAME_OVERLAP * slotCount;
+	buffers.resize(totalBufferCount);
 
 	for (u32 f = 0; f < MAX_FRAME_OVERLAP; ++f)
 	{
-		for (const auto& [binding, type, size] : desc.bindings)
+		for (u32 slot = 0; slot < slotCount; ++slot)
 		{
-			const u32 i = index(f, binding);
-			buffers[i] = VulkanBuffer(device, ToPreset(type), size);
+			const Binding& b = desc.bindings[slot];
+			const u32 linearIndex = (f * slotCount) + slot;
 
-			if (!buffers[i].IsValid())
-			{
-				LOG(Error, "Failed to create buffer for frame={} binding={}", f, binding);
-			}
+			buffers[linearIndex] = VulkanBuffer(device, ToPreset(b.type), b.size);
 		}
 	}
 }
@@ -171,56 +159,37 @@ void VulkanShaderBuffer::Update(u32 frameIndex, const void* data, size_t size) c
 	UpdateBinding(frameIndex, 0, data, size);
 }
 
-void VulkanShaderBuffer::Bind(VkCommandBuffer cmd, const VulkanPipeline& pipeline, u32 frameIndex) const
+void VulkanShaderBuffer::Bind(GPUCommandBuffer* cmd, const VulkanPipeline& pipeline, u32 frameIndex) const
 {
 	ZoneScopedN("VulkanShaderBuffer::Bind");
 	assert(frameIndex < MAX_FRAME_OVERLAP && "frameIndex out of range");
+
+	const auto* vkCmd = static_cast<VulkanCommandBuffer*>(cmd);
 	const DescriptorSet set = descriptorSets[frameIndex];
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkLayout, desc.setIndex, 1, &set.vk, 0, nullptr);
+	vkCmdBindDescriptorSets(vkCmd->GetVkHandle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkLayout, desc.setIndex, 1, &set.vk, 0, nullptr);
 }
 
-void VulkanShaderBuffer::AllocateDescriptorSets()
+void VulkanShaderBuffer::AllocateDescriptorSets(const bool isBindless, const u32 bindlessCount)
 {
 	ZoneScoped;
 	DescriptorWriter writer;
-	writer.writes.reserve(this->desc.bindings.size());
+	writer.writes.reserve(desc.bindings.size());
 
 	for (u32 frame = 0; frame < MAX_FRAME_OVERLAP; ++frame)
 	{
-		ZoneScopedN("Allocating descriptor sets");
-		const DescriptorSet set = allocator->Allocate(layout);
-		if (set.vk == VK_NULL_HANDLE)
-		{
-			LOG(Error, "Failed to allocate descriptor set for frame {}", frame);
-			continue;
-		}
+		const DescriptorSet set = allocator->Allocate(layout, isBindless, bindlessCount);
 		descriptorSets[frame] = set;
 
 		writer.Clear();
-
-		for (const Binding& b : this->desc.bindings)
+		for (const Binding& b : desc.bindings)
 		{
 			if (b.type == DescriptorType::UniformBuffer || b.type == DescriptorType::StorageBuffer)
 			{
 				const u32 bufferIdx = index(frame, b.binding);
-				if (bufferIdx >= buffers.size())
-				{
-					LOG(Error, "ShaderBuffer: buffer index {} out of range (size: {}) for frame={} binding={}",
-						bufferIdx, buffers.size(), frame, b.binding);
-					continue;
-				}
-
-				const VulkanBuffer& buf = buffers[bufferIdx];
-				if (!buf.IsValid())
-				{
-					LOG(Error, "Invalid buffer at frame={} binding={}", frame, b.binding);
-					continue;
-				}
-				writer.WriteBuffer(b.binding, &buf, b.type);
+				writer.WriteBuffer(b.binding, &buffers[bufferIdx], b.type);
 			}
 		}
-
-		writer.UpdateSet(device->device, set.vk);
+		writer.UpdateSet(device, set);
 	}
 }
 
@@ -243,11 +212,7 @@ void VulkanShaderBuffer::Destroy()
 	}
 
 	// Destroy descriptor set layout
-	if (layout.vk != VK_NULL_HANDLE && device != nullptr && device->device != VK_NULL_HANDLE)
-	{
-		vkDestroyDescriptorSetLayout(device->device, layout.vk, nullptr);
-		layout.vk = VK_NULL_HANDLE;
-	}
+	layout.Destroy(device);
 
 	// Clear pointers
 	device       = nullptr;

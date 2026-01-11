@@ -4,8 +4,13 @@
 
 #pragma once
 #include <volk.h>
+#include <span>
+#include "Tools/Vector.h"
+#include "Tools/Logger.h"
 
 #ifdef VULKAN_DEBUG_MODE
+
+// Ripped from vulkan enum helper :3
 static const char* VkResultToString(VkResult input) {
     switch (input) {
         case VK_SUCCESS:
@@ -124,3 +129,33 @@ static const char* VkResultToString(VkResult input) {
 #else
 #define VK_CHECK(expr) (expr)
 #endif
+
+// Funny code for validation layer checking
+template <typename T>
+bool ValidateVulkanProperties(std::span<const char*> required, const Vector<T>& available,
+                              const char (T::*nameField)[VK_MAX_EXTENSION_NAME_SIZE])
+{
+    bool ok = true;
+
+    for (const char* req : required)
+    {
+        bool found = false;
+
+        for (const auto& prop : available)
+        {
+            if (strcmp(prop.*nameField, req) == 0)
+            {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            LOG(Error, "Missing required Vulkan property: {}", req);
+            ok = false;
+        }
+    }
+
+    return ok;
+}

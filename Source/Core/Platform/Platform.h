@@ -46,8 +46,9 @@ namespace Platform
 
 		// FPS and frametime
 		f32 fps = 0;
-		f32 displayedFPS = 0.0f;
-		f32 frameTime = 0.0f;
+        f32 frameTimeBuffer[60] = {};
+        i32 frameBufferIndex = 0;
+        f32 frameTime = 0.0f;
 		f32 displayUpdateRate = 0.4f;
 
 		// Window dimensions and positioning
@@ -105,7 +106,7 @@ namespace Platform
 	ORGAPI void InitKeyMappings();
 	ORGAPI void InitRawInput();
 	ORGAPI std::string GetCPUName();
-	ORGAPI bool GetWindowSize(const WindowHandle& window, u32& width, u32& height);
+    ORGAPI bool GetWindowSize(const WindowHandle& handle, u32& width, u32& height);
 	ORGAPI void SetDisplayMode(WindowContext& window, DisplayMode mode);
 	ORGAPI void UpdateScreenDimensions(WindowContext& window);
 	ORGAPI std::wstring ConvertToWideString(const std::string_view& str);
@@ -125,8 +126,8 @@ namespace Platform
 	ORGAPI bool IsMusicPlayerPlaying();
 	ORGAPI BatteryState GetBatteryState();
 	ORGAPI void CenterMouse(const WindowContext* window);
-	ORGAPI void HideCursor(bool show);
-	ORGAPI void LockCursor(WindowContext& wc, bool enable);
+    ORGAPI void SetCursorVisible(bool show);
+    ORGAPI void SetCursorLocked(const WindowContext* wc, bool locked);
 	ORGAPI bool SetMouseVisibility(bool show);
 	ORGAPI bool GetCursorClientPos(const WindowContext* window, i32& outX, i32& outY);
 	ORGAPI void SetCursorClientPos(const WindowContext* window, i32 x, i32 y);

@@ -5,6 +5,8 @@
 #include "VulkanShaderBuffer.h"
 #include <glm/glm.hpp>
 
+#include "AABB.h"
+
 struct BBoxPush
 {
 	glm::mat4 model;
@@ -14,15 +16,17 @@ struct BBoxPush
 	u32 flags;
 	glm::vec4 color;
 };
+static_assert(sizeof(BBoxPush) == 112, "Unexpected padding in BBoxPush!");
 
 struct ArenaAllocator;
+
 
 class DebugRenderer
 {
 public:
 	bool Initialize(Renderer::VulkanDevice* dev, ArenaAllocator* arena, Renderer::VulkanShaderBuffer* sceneUBO, Renderer::DescriptorAllocatorGrowable* globalDescriptorAllocator, bool depthTest = true, bool alwaysOnTop = false);
-	void QueueBox(const glm::mat4& model, const glm::vec3& min, const glm::vec3& max);
-	void Flush(VkCommandBuffer cmd, u32 frameIndex);
+	void QueueBox(const glm::mat4& model, const AABB& aabb);
+	void Flush(Renderer::GPUCommandBuffer* cmd, u32 frameIndex);
 	void ClearQueue() { drawQueue.clear(); }
 	void Cleanup();
 
@@ -37,7 +41,7 @@ public:
 	Renderer::VulkanShaderBuffer* sceneUBO = nullptr;          // external
 	Renderer::VulkanPipeline pipeline;
 
-	u32 maxInstances = 1000;
+	u32 maxInstances = 500000;
 	glm::vec4 color = {1.0f, 1.0f, 0.0f, 1.0f};
 	float depthBias = 0.0f;
 	u32 flags = 0;

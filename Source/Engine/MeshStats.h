@@ -4,12 +4,6 @@
 
 #pragma once
 
-struct MeshStats
-{
-	u32 triCount;
-	u32 vertexCount;
-};
-
 struct SceneStats
 {
 	u32 drawCallCount = 0;

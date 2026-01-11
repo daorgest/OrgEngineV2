@@ -26,6 +26,10 @@ static u32 MapButtons(const GI::GameInputGamepadState& s)
     if (s.buttons & GI::GameInputGamepadDPadDown) b |= (1 << Gamepad::Button::DpadDown);
     if (s.buttons & GI::GameInputGamepadDPadLeft) b |= (1 << Gamepad::Button::DpadLeft);
     if (s.buttons & GI::GameInputGamepadDPadRight) b |= (1 << Gamepad::Button::DpadRight);
+
+    // ada
+    if (s.leftTrigger > 0.5f) b |= (1 << Gamepad::Button::L2);
+    if (s.rightTrigger > 0.5f) b |= (1 << Gamepad::Button::R2);
     return b;
 }
 
@@ -269,11 +273,9 @@ void InputSysGameInput::HandleMouse(GI::IGameInputReading* reading)
     // i64 deltas (GameInputMouseState uses INT64)
     const i64 dx = curr.positionX - prev.positionX;
     const i64 dy = curr.positionY - prev.positionY;
-    const i64 dwx = curr.wheelX - prev.wheelX;
-    const i64 dwy = curr.wheelY - prev.wheelY;
 
     // Motion
-    if (dx || dy)
+    if (dx != 0 || dy != 0)
     {
         input.xrel = static_cast<f32>(dx);
         input.yrel = static_cast<f32>(dy);
@@ -296,10 +298,13 @@ void InputSysGameInput::HandleMouse(GI::IGameInputReading* reading)
     }
 
     // Wheel (normalize to ticks)
+    const i64 dwx = curr.wheelX - prev.wheelX;
+    const i64 dwy = curr.wheelY - prev.wheelY;
+
     if (dwx || dwy)
     {
-        input.scrollX = static_cast<i64>(dwx / WHEEL_DELTA);
-        input.scrollY = static_cast<i64>(dwy / WHEEL_DELTA);
+        input.scrollX = dwx / WHEEL_DELTA;
+        input.scrollY = dwy / WHEEL_DELTA;
         input.usingMouse = true;
     }
 
@@ -321,12 +326,20 @@ void InputSysGameInput::HandleController(GI::IGameInputReading* reading)
         Input::ProcessEventButton(controller.buttons[b], (mask & (1 << b)) != 0);
 
     // --- Analog ---
+    auto ApplyDeadzone = [](const f32 value, const f32 deadzone = 0.1f)
+    {
+        if (fabsf(value) < deadzone) return 0.0f;
+        return (value - (value > 0 ? deadzone : -deadzone)) / (1.0f - deadzone);
+    };
+
+    controller.leftX = ApplyDeadzone(gs.leftThumbstickX);
+    controller.leftY = ApplyDeadzone(gs.leftThumbstickY);
+    controller.rightX = ApplyDeadzone(gs.rightThumbstickX);
+    controller.rightY = ApplyDeadzone(gs.rightThumbstickY);
+
     controller.leftTrigger = gs.leftTrigger;
     controller.rightTrigger = gs.rightTrigger;
-    controller.leftX = gs.leftThumbstickX;
-    controller.leftY = gs.leftThumbstickY;
-    controller.rightX = gs.rightThumbstickX;
-    controller.rightY = gs.rightThumbstickY;
+
 
     // --- Activity tracking ---
     const bool moved =
@@ -348,11 +361,14 @@ void InputSysGameInput::Update(const Platform::WindowContext& windowContext)
     if (dispatcher)
         dispatcher->Dispatch(0);
 
+    if (!windowContext.displayState.isFocused)
+    {
+        return;
+    }
+
     input.usingKeyboard = false;
     input.usingMouse = false;
     input.usingController = false;
-
-    const bool focused = windowContext.displayState.isFocused;
 
     input.xrel = 0.0f;
     input.yrel = 0.0f;
@@ -371,13 +387,15 @@ void InputSysGameInput::Update(const Platform::WindowContext& windowContext)
         }
         else
         {
-            // sustain any held keys
-            bool any = false;
+            // Check if any keys are still physically held from previous frames
             for (int i = 0; i < Keyboard::ButtonCount; ++i)
+            {
                 if (input.keyboard[i].held)
-                    any = true;
-
-            input.usingKeyboard = any;
+                {
+                    input.usingKeyboard = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -398,48 +416,28 @@ void InputSysGameInput::Update(const Platform::WindowContext& windowContext)
     }
 
     // ============================================
-    // MOUSE (STATE-ONLY, NO QUEUE)
+    // MOUSE
     // ============================================
-    if (focused)
     {
         GI::IGameInputReading* r = nullptr;
-
         if (SUCCEEDED(gi->GetCurrentReading(GI::GameInputKindMouse, nullptr, &r)) && r)
         {
+            // If we just regained focus, we need a baseline to calculate deltas
             if (!haveMouseBaseline_)
             {
-                // First frame after focus -> baseline only
                 InitialMouseReading(r);
             }
             else
             {
-                // Normal per-frame diff
                 HandleMouse(r);
             }
 
-            // Replace stored reading
+            // Always manage the reference count of the stored reading
             if (lastMouseReading_)
+            {
                 lastMouseReading_->Release();
-
-            lastMouseReading_ = r;
+            }
+            lastMouseReading_ = r; // Keep for next frame delta
         }
-    }
-    else
-    {
-        // Lost focus → freeze input + clear baseline
-        Input::ResetInputOnFocusLoss();
-
-        input.xrel = 0;
-        input.yrel = 0;
-        input.scrollX = 0;
-        input.scrollY = 0;
-
-        if (lastMouseReading_)
-        {
-            lastMouseReading_->Release();
-            lastMouseReading_ = nullptr;
-        }
-
-        haveMouseBaseline_ = false;
     }
 }

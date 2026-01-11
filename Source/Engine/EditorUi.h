@@ -3,8 +3,23 @@
 //
 
 #pragma once
-#include "Application.h"
 #include "VulkanInit.h"
+#include "glm/vec3.hpp"
+
+struct CameraComponent;
+
+namespace Platform
+{
+    struct WindowContext;
+}
+
+class DebugRenderer;
+
+namespace Renderer
+{
+    struct VulkanDevice;
+    struct VulkanSwapchain;
+}
 
 struct DebugUBO;
 struct Extent2D;
@@ -21,19 +36,30 @@ struct State
     DebugUBO* debugData = nullptr;
     SceneStats* sceneStats = nullptr;
     Vector<LightUBO>* lights;
-    Camera* activeCamera = nullptr;
+    std::span<CameraComponent> cameraComponents;
+    u32 activeCameraIdx = 0;
+    u32 selectedCameraIdx = 0;
+    u32 selectedLightIdx = 0;
     // Panels (ImGui toggles)
     bool showMenuBar = true;
     bool showMainOverlay = true;
     bool showGPUInfo = false;
-    bool showInputDebug = false;
-    bool showLightEditor = true;
-    bool showCameraProps = false;
+    bool followCamera = false;
+    bool showEditorTools = true;
+    bool noUI = false;
 
     // Per-frame UI state
     f32 menuBarHeight = 0.f;
-    f32 overlayAlpha = 1.f;
+    f32 overlayAlpha = 0.7f;
+    f32 editorAlpha = 0.7f;
     f32 cameraSpeed = 0.0f;
+
+    bool spinLights = false;
+    f32 spinSpeed = 0.1f;
+    f32 spinRadius = 12.0f;
+    f32 spinHeight = 5.0f;
+    glm::vec3 spinCenter = {0.0f, 0.0f, -10.0f};
+    f32 currentLightTime = 0.0f;
 };
 
 struct EditorUI
@@ -46,22 +72,24 @@ struct EditorUI
     static void Destroy();
     static void BeginFrame();
     static void EndFrame();
-    static void Render(VkCommandBuffer cmd);
+    static void Render(Renderer::GPUCommandBuffer* cmd);
 
     // Draws
-    static void DrawCameraGizmo(const Camera* camera);
-    static void DrawCameraProperties(Camera& camera);
-    static void HoverToolTip(const char* tooltip);
-
-    void DrawCameraSpeedPopup(f32 camSpeedPopupTime);
-
-    // Menu bar with File, View, etc. Returns true if application should exit
+    static void DrawCameraGizmo(CameraComponent& camComp);
+    void DrawCameraEditor();
+    static void DrawCameraProperties(CameraComponent& camComp);
+    void DrawCameraSpeedPopup(f32 camSpeedPopupTime) const;
     bool DrawMainMenuBar();
-
-    // Main overlay window with stats, GPU info, etc.
     void DrawMainOverlay();
-    static void DrawInputDebugPanel();
 
-    // Light editor with gizmos (translate/rotate) using camera view/projection
-    void DrawLightEditor() const;
+    void DrawEditorTools();
+
+    void UpdateLights(float deltaTime);
+    void DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam) const;
+    void DrawLightEditor();
+
+    static void UpdateAlphaLerp(float& currentAlpha, float minAlpha, float maxAlpha, float speed);
+    static void HoverToolTip(const char* tooltip);
+    void ClampWindowToViewport();
+
 };

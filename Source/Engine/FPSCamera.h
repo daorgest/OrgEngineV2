@@ -3,8 +3,10 @@
 //
 
 #pragma once
-#include "Camera.h"
+#include "glm/vec3.hpp"
 
+struct CameraComponent;
+struct Camera;
 struct Input;
 
 #define GRAVITY          28.0f      // feels snappier, not floaty
@@ -47,28 +49,20 @@ struct FPSCameraTuning
 	f32 fovLerp     = 5.0f;
 };
 
-struct FPSCamera final : Camera
+struct FPSCamera
 {
-	FPSCameraTuning tune{};
+    // Physics State
+    glm::vec3 velocity = {0, 0, 0};
+    glm::vec3 desireDir = {0, 0, 1};
+    bool grounded = true;
+    f32 headTimer = 0.0f;
+    f32 eyeHeight = 2.0f;
+    f32 walkLerp = 0.0f;
+    f32 fovBase = 70.0f;
 
-	FPSCamera();
-	void SyncBodyFromCameraStanding();
+	FPSCameraTuning tune = {};
 
-	void Update(f32 dt, bool allowMouseLook); // allowMouseLook = can process mouse input
-
-private:
-	struct Body
-	{
-		glm::vec3 pos{0, 0, 0};
-		glm::vec3 vel{0, 0, 0};
-		glm::vec3 desireDir{0, 0, 1};
-		bool grounded{true};
-		f32 headTimer{0.0f};
-		f32 eyeHeight{1.6f};
-		f32 walkLerp{0.0f};
-		f32 fovBase{70.0f};
-	} body_;
-
-	static glm::vec3 ProjectXZ(glm::vec3 v);
-	void IntegrateFPS(f32 dt);
+	static glm::vec3 ProjectXZ(const glm::vec3& v);
+    glm::vec3 CalculateBob() const;
+	void Update(CameraComponent& comp, f32 deltaTime);
 };

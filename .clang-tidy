@@ -1,0 +1,85 @@
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-*,
+  misc-*,
+  portability-*,
+
+  # Enabled
+  bugprone-branch-clone,
+  bugprone-sizeof-expression,
+  bugprone-too-small-loop-variable,
+  bugprone-suspicious-memset-usage,
+  bugprone-unused-return-value,
+  bugprone-use-after-move,
+  bugprone-not-null-terminated-result,
+
+  performance-avoid-endl,
+  performance-faster-string-find,
+  performance-for-range-copy,
+  performance-implicit-conversion-in-loop,
+  performance-move-const-arg,
+  performance-move-constructor-init,
+  performance-noexcept-move-constructor,
+  performance-unnecessary-value-param,
+
+  modernize-avoid-c-arrays,
+  modernize-avoid-bind,
+  modernize-deprecated-headers,
+  modernize-loop-convert,
+  modernize-make-shared,
+  modernize-make-unique,
+  modernize-redundant-void-arg,
+  modernize-return-braced-init-list,
+  modernize-use-auto,
+  modernize-use-constexpr,
+  modernize-use-nullptr,
+  modernize-use-nodiscard,
+  modernize-use-equals-default,
+  modernize-use-equals-delete,
+  modernize-use-emplace,
+  modernize-use-override,
+
+  readability-identifier-naming,
+  readability-redundant-control-flow,
+  readability-simplify-boolean-expr,
+  readability-container-size-empty,
+  readability-else-after-return,
+
+  misc-unused-using-decls,
+  misc-unused-alias-decls,
+  misc-misplaced-widening-cast
+
+ChecksDisable:
+  - cppcoreguidelines-*
+  - hicpp-*
+  - google-*
+  - llvm-header-guard
+  - modernize-use-trailing-return-type
+  - cppcoreguidelines-pro-type-reinterpret-cast
+  - cppcoreguidelines-pro-type-static-cast-downcast
+  - bugprone-narrowing-conversions
+
+WarningsAsErrors: ''
+
+FormatStyle: none
+
+HeaderFilterRegex: '^(?!.*3rdParty/).*'
+
+AnalyzeTemporaryDtors: true
+CheckOptions:
+  - { key: readability-identifier-naming.ClassCase,           value: CamelCase }
+  - { key: readability-identifier-naming.StructCase,          value: CamelCase }
+  - { key: readability-identifier-naming.FunctionCase,        value: camelBack }
+  - { key: readability-identifier-naming.VariableCase,        value: camelBack }
+  - { key: readability-identifier-naming.PrivateVariableCase, value: camelBack }
+  - { key: readability-identifier-naming.NamespaceCase,       value: CamelCase }
+  - { key: readability-identifier-naming.EnumCase,            value: CamelCase }
+  - { key: readability-identifier-naming.EnumConstantCase,    value: CamelCase }
+  - { key: readability-identifier-naming.MacroDefinitionCase, value: UPPER_CASE }
+
+  - { key: readability-identifier-naming.ConstantCase, value: CamelCase }
+
+  - { key: readability-identifier-naming.AllowedPrefixes, value: "VK_,vk_,HWND_,LP,PFN" }

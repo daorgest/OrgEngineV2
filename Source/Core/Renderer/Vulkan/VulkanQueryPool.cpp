@@ -1,99 +1,85 @@
 //
 // Created by Orgest on 8/1/2025.
 //
-
 #include "VulkanQueryPool.h"
-#include "VulkanInit.h"
 
 #include "VulkanCheck.h"
+#include "VulkanCommandBuffer.h"
+#include "VulkanDevice.h"
 
 using namespace Renderer;
-bool VulkanQueryPool::Init(VulkanDevice* device_, u32 queryCount_)
+
+
+bool VulkanQueryPool::Init(VulkanDevice* inDevice, const u32 inQueryCount)
 {
-	this->device = device_;
-	this->queryCount = queryCount_;
+    device = inDevice;
+    queryCount = inQueryCount;
 
-	VkQueryPoolCreateInfo createInfo = {
-		.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-		.queryType = VK_QUERY_TYPE_TIMESTAMP,
-		.queryCount = queryCount_
-	};
-	VK_CHECK(vkCreateQueryPool(device_->device, &createInfo, nullptr, &queryPool));
 
-	// initialize state so first vkGetQueryPoolResults won't trip validation
-	vkResetQueryPool(device->device, queryPool, 0, queryCount);
-	queryResults.resize(queryCount);
-	return true;
+    const VkQueryPoolCreateInfo createInfo = {
+        .sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .pNext      = nullptr,
+        .flags      = 0,
+        .queryType  = VK_QUERY_TYPE_TIMESTAMP,
+        .queryCount = inQueryCount
+    };
+
+    VK_CHECK(vkCreateQueryPool(inDevice->device, &createInfo, nullptr, &queryPool));
+
+    // Capture the nanosecond period for timing calculations
+    timestampPeriod = device->deviceProperties.limits.timestampPeriod;
+    queryResults.resize(inQueryCount);
+
+    return true;
 }
 
-void VulkanQueryPool::Destroy() const
+void VulkanQueryPool::Destroy()
 {
-	vkDestroyQueryPool(device->device, queryPool, nullptr);
+    if (queryPool) {
+        vkDestroyQueryPool(device->device, queryPool, nullptr);
+        queryPool = VK_NULL_HANDLE;
+    }
 }
 
-void VulkanQueryPool::Reset(VkCommandBuffer cmd) const
+void VulkanQueryPool::Reset(GPUCommandBuffer* cmd)
 {
-	vkCmdResetQueryPool(cmd, queryPool, 0, queryCount);
+    const auto* vkCmd = static_cast<VulkanCommandBuffer*>(cmd);
+    vkCmdResetQueryPool(vkCmd->GetVkHandle(), queryPool, 0, queryCount);
 }
-#ifdef ENABLE_GPU_TIMING
-void VulkanQueryPool::WriteTimestamp(VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage, u32 queryIndex) const {
-	assert(queryIndex < queryCount);
-	vkCmdWriteTimestamp2(cmd, stage, queryPool, queryIndex);
+
+void VulkanQueryPool::WriteTimestamp(GPUCommandBuffer* cmd, const u32 queryIndex)
+{
+    const auto* vkCmd = static_cast<VulkanCommandBuffer*>(cmd);
+    vkCmdWriteTimestamp2(vkCmd->GetVkHandle(), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, queryPool, queryIndex);
 }
-#else
-void VulkanQueryPool::WriteTimestamp(VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage, u32 queryIndex) const {}
-#endif
 
 bool VulkanQueryPool::FetchResults()
 {
-#ifdef ENABLE_GPU_TIMING
-	VkResult res = vkGetQueryPoolResults(
-		device->device,
-		queryPool,
-		0,
-		queryCount,
-		sizeof(TimestampResult) * queryResults.size(),
-		queryResults.data(),
-		sizeof(TimestampResult),
-		VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT
-	);
+    VkResult result = vkGetQueryPoolResults(
+        device->device,
+        queryPool,
+        0,
+        queryCount,
+        queryResults.size() * sizeof(TimestampResult),
+        queryResults.data(),
+        sizeof(TimestampResult),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT
+    );
 
-	if (res == VK_NOT_READY)
-		return false; // GPU not done yet; try next frame (after fence)
-
-	if (res != VK_SUCCESS)
-	{
-		fprintf(stderr, "vkGetQueryPoolResults failed: 0x%X\n", res);
-		return false;
-	}
-	return true;
-#else
-	return false; // No-op when GPU timing is disabled
-#endif
+    return result == VK_SUCCESS;
 }
 
-f32 VulkanQueryPool::DeltaMs(u32 beginIdx, u32 endIdx) const
+f32 VulkanQueryPool::GetDeltaMs(u32 beginIdx, u32 endIdx) const
 {
-#ifdef ENABLE_GPU_TIMING
-	if (beginIdx >= queryResults.size() || endIdx >= queryResults.size())
-		return 0.0f;
+    // Ensure GPU has finished writing both timestamps before calculating
+    if (queryResults[beginIdx].available == 0 || queryResults[endIdx].available == 0)
+    {
+        return 0.0f;
+    }
 
-	const auto& b = queryResults[beginIdx];
-	const auto& e = queryResults[endIdx];
+    const u64 start = queryResults[beginIdx].time;
+    const u64 end   = queryResults[endIdx].time;
 
-	// Must be available (non-zero per spec when WITH_AVAILABILITY_BIT)
-	if (b.available == 0 || e.available == 0 || e.time <= b.time)
-		return 0.0f;
-
-	// timestampPeriod is *nanoseconds per tick*
-	const f32 periodNs = device->deviceProperties.limits.timestampPeriod;
-	const f64 ns = static_cast<f64>(e.time - b.time) * static_cast<f64>(periodNs);
-
-	return static_cast<f32>(ns * 1e-6); // ns -> ms
-#else
-	(void)beginIdx; // Suppress unused parameter warnings
-	(void)endIdx;
-	return 0.0f; // No-op when GPU timing is disabled
-#endif
+    // Logic: (Delta Ticks * NanoSecPerTick) / 1,000,000.0f
+    return static_cast<f32>(end - start) * timestampPeriod * 1e-6f;
 }
-

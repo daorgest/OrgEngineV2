@@ -7,7 +7,7 @@
 #include <span>
 #include <volk.h>
 
-#include "VulkanInit.h"
+#include "VulkanDevice.h"
 #include "Tools/Logger.h"
 #include "Tools/Vector.h"
 #include "Tools/FileManager.h" // new: allocation-free file io

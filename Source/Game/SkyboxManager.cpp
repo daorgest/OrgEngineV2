@@ -1,6 +1,9 @@
 #include "SkyboxManager.h"
-#include "../Engine/TextureManager.h"
+
+#include "../Engine/ShaderConstants.h"
+#include "../Engine/TextureLoader.h"
 #include "VulkanDescriptors.h"
+#include "VulkanDevice.h"
 #include "VulkanShader.h"
 #include "VulkanTexture.h"
 #include "glm/gtc/constants.hpp"
@@ -9,9 +12,9 @@
 
 using namespace Renderer;
 
-VulkanImage SkyboxManager::CreateCubeMapFromSource(CubeSource source)
+VulkanTexture SkyboxManager::CreateCubeMapFromSource(CubeSource source)
 {
-	return std::visit([this]<typename T0>(T0&& arg) -> VulkanImage
+	return std::visit([this]<typename T0>(T0&& arg) -> VulkanTexture
 	{
 		using T = std::decay_t<T0>;
 		if constexpr (std::is_same_v<T, Array<const char*, 6>>)
@@ -27,12 +30,13 @@ VulkanImage SkyboxManager::CreateCubeMapFromSource(CubeSource source)
 
 			return CreateHDRTexture(arg);
 		}
+		return {}; // NOTHINGGGGGGG
 	}, source);
 }
 
-VulkanImage SkyboxManager::CreateHDRTexture(const char* path)
+VulkanTexture SkyboxManager::CreateHDRTexture(const char* path) const
 {
-	const auto tex = TextureManager::LoadHDRTextureFromSTB(path);
+	const auto tex = TextureLoader::LoadHDRTextureFromSTB(path);
 	if (!tex)
 	{
 		LOG(Error, "Failed to load HDR cubemap: {}", path);
@@ -49,30 +53,30 @@ VulkanImage SkyboxManager::CreateHDRTexture(const char* path)
 		.dimension = TextureDimension::CubeMap,
 		.usage = ImageUsage::Sampled | ImageUsage::TransferDst
 	};
-	VulkanImage cube(devicePtr, info);
+	VulkanTexture cube(devicePtr, info);
 
 	cube.UploadTextureToGPU(pixels.data(), info);
 
 	return cube;
 }
 
-VulkanImage SkyboxManager::CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const
+VulkanTexture SkyboxManager::CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const
 {
 	LOG(Debug, "CreateCubeMap: Loading 6 cubemap faces...");
 
 	Array<TextureData, 6> faces;
 	for (int i = 0; i < 6; ++i)
 	{
-		auto tex = TextureManager::LoadTextureFromSTB(paths[i], true);
+		auto tex = TextureLoader::LoadTextureFromSTB(paths[i], true);
 		if (!tex.has_value())
 		{
-			LOG(Error, "CreateCubeMap: Failed to load face {}", i);
+			LOG(Warning, "CreateCubeMap: Failed to load face {}", i);
 			return {};
 		}
 
 		if (!std::holds_alternative<Vector<u8>>(tex->data))
 		{
-			LOG(Error, "CreateCubeMap: Face {} has invalid data type", i);
+			LOG(Warning, "CreateCubeMap: Face {} has invalid data type", i);
 			return {};
 		}
 
@@ -84,7 +88,7 @@ VulkanImage SkyboxManager::CreateCubeMapFromFiles(const Array<const char*, 6>& p
 	const u32 h = faces[0].height;
 	if (w == 0 || h == 0)
 	{
-		LOG(Error, "CreateCubeMap: Invalid dimensions on face 0 ({}x{})", w, h);
+		LOG(Warning, "CreateCubeMap: Invalid dimensions on face 0 ({}x{})", w, h);
 		return {};
 	}
 
@@ -118,7 +122,7 @@ VulkanImage SkyboxManager::CreateCubeMapFromFiles(const Array<const char*, 6>& p
 		.usage = ImageUsage::Sampled | ImageUsage::TransferDst,
 	};
 
-	VulkanImage cube(devicePtr, info);
+	VulkanTexture cube(devicePtr, info);
 
 	// Pack all faces into a single contiguous buffer
 	Vector<u8> packed;
@@ -141,8 +145,7 @@ bool SkyboxManager::Initialize(VulkanDevice* dev, ArenaAllocator* arenaAlloc)
 	arena = arenaAlloc;
 
 	if (!CreateCubemap()) return false;
-	if (!CreateSampler()) return false;
-	if (!CreateDescriptors()) return false;
+	CreateSampler();
 	if (!CreateShaderAndPipeline()) return false;
 
 	return true;
@@ -151,12 +154,12 @@ bool SkyboxManager::Initialize(VulkanDevice* dev, ArenaAllocator* arenaAlloc)
 bool SkyboxManager::CreateCubemap()
 {
 	constexpr Array skyFaces = {
-		"skybox/right.jpg",
-		"skybox/left.jpg",
-		"skybox/top.jpg",
-		"skybox/bottom.jpg",
-		"skybox/front.jpg",
-		"skybox/back.jpg"
+		"Assets/Skybox/right.jpg",
+		"Assets/Skybox/left.jpg",
+		"Assets/Skybox/top.jpg",
+		"Assets/Skybox/bottom.jpg",
+		"Assets/Skybox/front.jpg",
+		"Assets/Skybox/back.jpg"
 	};
 
 	cubemap = CreateCubeMapFromFiles(skyFaces);
@@ -176,7 +179,7 @@ bool SkyboxManager::CreateCubemap()
 			.usage = ImageUsage::Sampled | ImageUsage::TransferDst,
 		};
 
-		cubemap = VulkanImage(devicePtr, cubeInfo);
+		cubemap = VulkanTexture(devicePtr, cubeInfo);
 
 		Array<u32, 6> faceColors = {
 			0xFFFFAA88, // +X right
@@ -203,38 +206,14 @@ bool SkyboxManager::CreateCubemap()
 	return true;
 }
 
-bool SkyboxManager::CreateSampler()
+void SkyboxManager::CreateSampler()
 {
-	SamplerDesc sampDesc = {
+	SamplerInfo sampDesc = {
 		.minFilter = SamplerFilter::Linear,
 		.magFilter = SamplerFilter::Linear,
 		.mipFilter = SamplerMipFilter::Linear,
 	};
 	sampler = VulkanSampler(devicePtr, sampDesc);
-	return true;
-}
-
-bool SkyboxManager::CreateDescriptors()
-{
-	{
-		DescriptorLayoutBuilder b;
-		b.AddBinding(0, DescriptorType::CombinedImageSampler);
-		layout = b.Build(devicePtr->device, ShaderStage::Fragment);
-	}
-
-	Array<DescriptorAllocatorGrowable::PoolSizeRatio, 1> poolSizes = {
-		{DescriptorType::CombinedImageSampler, 1},
-	};
-
-	static DescriptorAllocatorGrowable skyPool;
-	skyPool.Init(devicePtr, 1, poolSizes);
-
-	descriptorSet = skyPool.Allocate(layout);
-
-	DescriptorWriter()
-		.WriteCombinedImage(0, &cubemap, &sampler)
-		.UpdateSet(devicePtr->device, descriptorSet.vk);
-	return true;
 }
 
 bool SkyboxManager::CreateShaderAndPipeline()
@@ -245,62 +224,82 @@ bool SkyboxManager::CreateShaderAndPipeline()
 
 	shader = arena->Emplace<VulkanShader>(devicePtr, codeResult.value());
 
+	// Descriptors
+	{
+		DescriptorLayoutBuilder b;
+		layout = b.AddBindings(Constants::Skybox)
+		          .Build(devicePtr);
+	}
 
-	Array<VkDescriptorSetLayout, 1> setLayouts = { layout };
+	Array<PoolSizes, 1> poolSizes = {
+		{DescriptorType::CombinedImageSampler, 1.0f},
+	};
 
-	VkPushConstantRange pcRange = {
-		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+	static DescriptorAllocatorGrowable skyPool;
+	skyPool.Init(devicePtr, 1, poolSizes);
+	descriptorSet = skyPool.Allocate(layout);
+
+	DescriptorWriter()
+		.WriteCombinedImage(0, &cubemap, &sampler, 0)
+		.UpdateSet(devicePtr, descriptorSet);
+
+	static DescriptorSetLayoutDesc setLayout = {
+		.setIndex = 2,
+		.bindings = Constants::Skybox,
+	};
+
+	static PushConstantDesc pushConstant = {
+		.size   = sizeof(SkyPushConstants),
 		.offset = 0,
-		.size = sizeof(SkyPushConstants)
+		.stages = ShaderStage::Vertex
 	};
 
-	PipelineLayoutDesc layoutDesc = {
-		.setLayouts = setLayouts,
-		.pushRanges = SPAN_ONE(pcRange)
+	const GraphicsPipelineDesc skyboxDesc = {
+		.vertexShader   = shader,
+		.fragmentShader = shader,
+		.raster = {
+			.topology    = PrimitiveTopology::TriangleList,
+			.cull        = CullMode::None,
+			.depthFormat = TextureFormat::D32_SFLOAT,
+			.depthWrite  = false,
+			.depthOp     = CompareOp::GreaterOrEqual,
+			.blend       = { .enabled = false },
+			.colorFormats = { TextureFormat::BGRA8_SRGB }
+		},
+		.layout = {
+			.setLayouts   = SPAN_ONE(setLayout),
+			.pushConstants = SPAN_ONE(pushConstant)
+		}
 	};
 
-	VulkanPipelineBuilder pb;
-	pb.SetFragVerShaders(shader->shader, shader->shader)
-	  .SetInputTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-	  .SetPolygonMode(VK_POLYGON_MODE_FILL)
-	  .SetCullMode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE) // No culling - viewing from inside
-	  .SetMultisamplingNone()
-	  .DisableBlending()
-	  .EnableDepthTest(false, VK_COMPARE_OP_LESS_OR_EQUAL) // Depth writes OFF, draw at far plane (depth=1.0)
-	  .SetColorAttachmentFormat(TextureFormat::BGRA8_SRGB)
-	  .SetDepthAttachmentFormat(TextureFormat::D32_SFLOAT)
-	  .Layout(pipeline.vkLayout);
+	const auto result = pipeline.CreateGraphicsPipeline(devicePtr, skyboxDesc);
+	return result.has_value();
 
-	return pipeline.Create(devicePtr, layoutDesc, pb).value();
+	LOG(Info, "Skybox: Successfully loaded pipeline");
 }
 
-void SkyboxManager::Render(VkCommandBuffer cmd, const Camera& camera, f32 aspectRatio) const
+void SkyboxManager::Render(GPUCommandBuffer* cmd, const Camera& camera, f32 aspectRatio)
 {
-	if (!shader || pipeline.vk == VK_NULL_HANDLE || cubemap.image == nullptr)
+	if (!shader || !pipeline.IsValid() || cubemap.image == nullptr)
 		return;
 
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vk);
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkLayout,
-	                        0, 1, &descriptorSet.vk, 0, nullptr);
+	cmd->BindPipeline(&pipeline);
+	cmd->BindDescriptorSet(&descriptorSet, 0, &pipeline);
 
-	SkyPushConstants skyPC{};
-	skyPC.view = camera.GetProjectionMatrix(aspectRatio) * glm::mat4(glm::mat3(camera.GetViewMatrix()));
+	const SkyPushConstants skyPC = {
+		.view = camera.GetProjectionMatrix(aspectRatio) * glm::mat4(glm::mat3(camera.GetViewMatrix(glm::vec3{0.0f})))
+	};
 
-	vkCmdPushConstants(cmd, pipeline.vkLayout, VK_SHADER_STAGE_VERTEX_BIT,
-	                   0, sizeof(SkyPushConstants), &skyPC);
-	vkCmdDraw(cmd, 36, 1, 0, 0);
+	cmd->PushConstants(&pipeline, ShaderStage::Vertex, 0, sizeof(SkyPushConstants), &skyPC);
+	cmd->Draw(36, 1, 0, 0);
 }
 
 void SkyboxManager::Cleanup()
 {
-	if (pipeline.vk != VK_NULL_HANDLE) pipeline.Destroy();
-	if (shader) { shader->Destroy(); shader = nullptr; }
+	if (pipeline.IsValid()) pipeline.Destroy();
+	if (shader) { shader->Destroy(); }
 	if (cubemap.image) cubemap.Destroy();
 	sampler.Destroy();
-	if (layout.vk != VK_NULL_HANDLE)
-	{
-		vkDestroyDescriptorSetLayout(devicePtr->device, layout.vk, nullptr);
-		layout.vk = VK_NULL_HANDLE;
-	}
+	layout.Destroy(devicePtr);
 }
 

@@ -1,4 +1,4 @@
-//
+  //
 // Created by Orgest on 7/13/2025.
 //
 
@@ -6,11 +6,14 @@
 
 #include "Camera.h"
 #include "DebugRenderer.h"
-#include "FPSCamera.h"
+#include "DefaultTextures.h"
+#include "EditorUi.h"
+#include "Platform.h"
 #include "SceneRenderer.h"
 #include "ShaderParams.h"
 #include "SkyboxManager.h"
 #include "VulkanCommands.h"
+#include "VulkanDevice.h"
 #include "VulkanInit.h"
 #include "VulkanMesh.h"
 #include "VulkanPipeline.h"
@@ -24,79 +27,77 @@
 // Forward declaration to break circular dependency with EditorUi.h
 struct EditorUI;
 
-
-// I had fun with arenas but long term im going to remove it as I realized....its annoying
+// I had fun with arenas but long term im going to remove it as I realized....it's annoying
 struct Application
 {
-	void DrawLoadingSplash(const char* text) const;
-	void CreatePBRSphereGrid();
-	bool Init();
-	void UpdateCamera();
-	void UpdateSceneUBO(const Renderer::FrameContext& frame);
-	void RenderScene(const Renderer::FrameContext& frame);
-	void ComputeStaticSceneStats();
-	void RenderImGui(const Renderer::FrameContext& frame);
-	void Run();
-	void Cleanup() const;
-
 	// Core components
 	ArenaAllocator coreArena{Megabyte};    // Entire app lifetime
-	ArenaAllocator renderArena{Megabyte};  // Per-scene (resettable)(ew)(idk why im so scared of smart pointers)
+	ArenaAllocator renderArena{Megabyte};  // Per-scene (resettable)(ew)(I don't know why im so scared of smart pointers)
 
-	Platform::WindowContext* windowContext = nullptr;
-	Renderer::VulkanInstance* instance = nullptr;
-	Renderer::VulkanDevice* device = nullptr;
-	Renderer::VulkanSwapchain* swapchain = nullptr;
-	Renderer::VulkanRenderer* renderer = nullptr;
-	Renderer::VulkanRenderPass* renderPass = nullptr;
-	Renderer::DescriptorAllocatorGrowable* globalDescriptorAlloc = nullptr;
-	EditorUI* editorUI = nullptr;
+	Renderer::VulkanInstance instance;
+	Renderer::VulkanDevice device;
+	Renderer::VulkanSwapchain swapchain;
+	Renderer::VulkanRenderer renderer;
+	Renderer::VulkanRenderPass renderPass;
+	Renderer::DescriptorAllocatorGrowable globalDescriptorAlloc;
 
-	Renderer::VulkanPipeline scenePipeline;
-
-	// Rendering subsystems
 	SkyboxManager skybox;
 	DebugRenderer debugRenderer;
 	SceneRenderer sceneRenderer;
 
-	// Editor mode state
-	bool showGPUInfo = true;
-	bool showMenuBar = true;
-	bool showLightMenu = true;
-	bool shaderHotReloadEnabled = true;
-	bool showPerformanceGraphs = true;
+	Renderer::VulkanPipeline scenePipeline;
+	Renderer::VulkanShader sceneShader;
 
+	std::unique_ptr<Renderer::VulkanShaderBuffer> sceneUBO;
+
+	Renderer::TextureDefaults texDefaults;
+
+	std::unique_ptr<Renderer::GPUSampler> checkerboardSampler;
+	std::unique_ptr<Renderer::GPUSampler> normalFallbackSampler;
 
 	// model and cube
-	Renderer::VulkanModel* modelInst = nullptr;      // renderArena
-	Renderer::VulkanModel* cubeMesh = nullptr;       // renderArena
-	Renderer::VulkanModel* sphereMesh = nullptr;     // renderArena for PBR showcase
-
-	Renderer::VulkanShaderBuffer* sceneUBO = nullptr;
-	Renderer::VulkanShader sceneShader;
+	std::unique_ptr<Renderer::VulkanModel> modelInst;
+	std::unique_ptr<Renderer::VulkanModel> cubeMesh;
+	std::unique_ptr<Renderer::VulkanModel> sphereMesh;
 	Vector<Renderer::ModelComponent> models;
-
-
-	// defaults
-	Renderer::VulkanImage whiteImage;  // Pure white texture for PBR spheres
-	Renderer::VulkanImage checkerboardImage;
-	Renderer::VulkanSampler* checkerboardSampler = nullptr;
-	Renderer::VulkanImage normalFallbackImage;
-	Renderer::VulkanSampler* normalFallbackSampler = nullptr;
-
-	SceneStats sceneStats;
-	Camera camera;
-	FPSCamera fpsCamera;
-	Camera* activeCamera = nullptr;
-	CameraMode camMode = CameraMode::FreeFly;
-	SceneUBO sceneData;
 	Vector<LightUBO> lights;
+
+	Platform::WindowContext windowContext;
+	EditorUI editorUI;
+
+    CameraMode camMode = CameraMode::FreeFly;
+    Array<CameraComponent, MAX_SCENE_CAMERAS> sceneCameras;
+
+    int activeIdx = 0;
+    u32 selectedCameraIdx = 0;
+    int frustumIdx = 0;
+    bool freezeFrustum = false;
+
+	// Plain Old Data (POD) structs
+	SceneUBO sceneData;
 	DebugUBO debugData;
 	CameraUBO camUBO;
 	LightUBOCount lightMeta;
+	SceneStats sceneStats;
 
 	float aspectRatio;
 	f32 cameraSpeed = 5;
 	f32 cameraSpeedPopupTime = 0.0;
-	f32 lastFrameMs = 0.0f;    // CPU frame time of the last completed frame
+	f32 lastFrameMs = 0.0f;
+	bool showGPUInfo = true;
+	bool showMenuBar = true;
+	bool showEditorTools = true;
+
+	bool Init();
+	void Run();
+	void Cleanup() const;
+	void UpdateCamera();
+    void QueueFrustumVisualizer(u32 camIdx, const glm::vec4& color);
+    void ApplyFreeFlyMovement(u32 idx, f32 dt);
+    void UpdateSceneUBO();
+	void RenderScene(u32 imageIndex);
+	void RenderImGui(u32 imageIndex);
+	void DrawLoadingSplash(const char* text);
+	void CreatePBRSphereGrid();
+	void ComputeStaticSceneStats();
 };

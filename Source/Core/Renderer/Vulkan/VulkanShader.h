@@ -20,9 +20,9 @@ namespace Renderer
 	{
 		// RHI interface implementation
 		Result<void> Init(GPUDevice* device, std::span<const u32> code, ShaderFormat format = ShaderFormat::SPIRV) override;
-		void Destroy() override;
+        void Destroy();
 
-		// Vulkan-specific constructor (backward compatibility)
+        // Vulkan-specific constructor (backward compatibility)
 		VulkanShader() = default;
 		VulkanShader(VulkanDevice* device, std::span<const u32> code, ShaderFormat format = ShaderFormat::SPIRV);
 

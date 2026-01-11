@@ -15,6 +15,28 @@ struct VertexOutput
     float3 worldPosition : WORLDPOS;
     float3 color         : COLOR0;
     float2 texCoord      : TEXCOORD0;
+
+    nointerpolation uint  materialIndex : MAT_INDEX;
+    nointerpolation float instRoughness : ROUGHNESS; // Unique float
+    nointerpolation float instMetallic  : METALLIC;  // Unique float
+};
+
+enum MaterialType : uint { Opaque, AlphaMask, Transparent };
+
+struct MaterialProperties
+{
+	float4 baseColor;
+	float3 emissive;
+	float roughness = 0.5f;
+	float metallic = 0.0f;
+	float ior = 1.5f;
+
+	uint albedoIndex = 0;
+	uint normalIndex = 0;
+
+	MaterialType type = MaterialType::Opaque;
+
+	uint32_t _pad[3];
 };
 
 enum LightTypes { Directional, Point, Spot };
@@ -38,6 +60,14 @@ struct SceneUBO
 {
     float4x4 view;
     float4x4 proj;
+};
+
+struct GPUInstanceData
+{
+	float4x4 worldMatrix;
+	uint materialIndex;
+	float roughness;
+	float metalic;
 };
 
 struct LightMeta
@@ -66,9 +96,10 @@ struct DebugUBO
 [[vk::binding(5, 0)]] ConstantBuffer<LightMeta>  lightMeta;
 [[vk::binding(6, 0)]] ConstantBuffer<SceneUBO>   sceneUBO;
 
-[[vk::binding(0, 1)]] Sampler2D albedoTexture;
-[[vk::binding(1, 1)]] Sampler2D normalTexture;
+[[vk::binding(0, 1)]] StructuredBuffer<MaterialProperties> materialBuffer;
+[[vk::binding(0, 3)]] StructuredBuffer<GPUInstanceData> instanceBuffer;
 
+[[vk::binding(1, 1)]] Sampler2D globalTextures[];
 [[vk::binding(0, 2)]] SamplerCube envCubemap;
 
 struct PushConstants
@@ -77,10 +108,10 @@ struct PushConstants
     float3x3 normalMatrix;
     uint     vertexOffset;
     uint64_t vertexBufferAddress;
-    float    roughness;
-    float    metallic;
-    float3   baseColorTint;
-    float    _padding;
+	uint     isInstanced;
+	float    instRoughness;
+	float    instMetallic;
+	uint     materialIndex;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -106,8 +137,8 @@ float SmoothRangeFalloff(float dist, float range)
 
 float LinearizeDepth(float d, float n, float f)
 {
-    // Convert to NDC space [-1,1]
-    float zNDC = d * 2.0 - 1.0;
+    float standardD = 1.0 - d;
+    float zNDC = standardD * 2.0 - 1.0;
     // Solve projection eq. for view-space Z
     return (2.0 * n * f) / (f + n - zNDC * (f - n));
 }
@@ -145,7 +176,6 @@ float3 fresnelSchlick(float cosTheta, float3 F0)
 
 // ACES Filmic Tone Mapping (Narkowicz 2015 approximation)
 // with Rec.709 gamma output
-
 inline float3 TonemapACES(float3 color)
 {
     // Input transform
@@ -170,42 +200,63 @@ inline float3 TonemapACES(float3 color)
     color = mul(ACESOutputMat, y);
 
     // Clamp & gamma correct
-    color = saturate(color);
-    color = pow(color, 1.0 / 2.2);
-
-    return color;
+    return saturate(color);
 }
-
 
 // Vertex Shader
 [shader("vertex")]
-VertexOutput vertexMain(uint vertexID : SV_VertexID)
+VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
 {
     VertexOutput o;
 
     Ptr<Vertex> verts = Ptr<Vertex>(pc.vertexBufferAddress);
     Vertex v = verts[pc.vertexOffset + vertexID];
 
-    float4x4 M = pc.model;
-    float3x3 nM = pc.normalMatrix;
+    float roughness = materialBuffer[pc.materialIndex].roughness;
+    float metallic  = materialBuffer[pc.materialIndex].metallic;
+    uint matIdx     = pc.materialIndex;
 
-    float4 posWS = mul(M, float4(v.position, 1.0));
+    float4x4 worldMatrix;
+    float3x3 normalMatrix;
+
+    if (pc.isInstanced == 1)
+    {
+        GPUInstanceData data = instanceBuffer[instanceID];
+        worldMatrix  = data.worldMatrix;
+        matIdx       = data.materialIndex;
+
+        roughness  = data.roughness;
+        metallic   = data.metalic;
+
+        normalMatrix = (float3x3)worldMatrix;
+    }
+    else
+    {
+        worldMatrix  = pc.model;
+        normalMatrix = pc.normalMatrix;
+        matIdx       = pc.materialIndex;
+
+        roughness = pc.instRoughness;
+        metallic  = pc.instMetallic;
+    }
+
+    float4 posWS = mul(worldMatrix, float4(v.position, 1.0));
     o.worldPosition = posWS.xyz;
+    o.position = mul(sceneUBO.proj, mul(sceneUBO.view, posWS));
 
-    float3 N = normalize(mul(nM, v.normal));
-    float3 T = mul(nM, v.tangent.xyz);
-
+    // Transform Normal & Tangent using the correct normal matrix
+    float3 N = normalize(mul(normalMatrix, v.normal));
+    float3 T = normalize(mul(normalMatrix, v.tangent.xyz));
     T = normalize(T - N * dot(N, T));
 
-    o.worldNormal = N;
-    o.worldTangent = float4(T, v.tangent.w);
+    o.worldNormal   = N;
+    o.worldTangent  = float4(T, v.tangent.w);
+    o.color         = v.color;
+    o.texCoord      = v.uv;
 
-    o.color = v.color;
-    o.texCoord = v.uv;
-
-    float4 posVS = mul(sceneUBO.view, posWS);
-    o.position = mul(sceneUBO.proj, posVS);
-
+    o.instRoughness = roughness;
+    o.instMetallic  = metallic;
+    o.materialIndex = matIdx;
     return o;
 }
 
@@ -213,6 +264,9 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID)
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Target
 {
+
+    MaterialProperties mat = materialBuffer[input.materialIndex];
+
     // Debug Views
     switch (debugUBO.debugViewMode)
     {
@@ -239,37 +293,33 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
         default: break;
     }
 
-    
-    // Material Setup
-    float3 albedo = albedoTexture.Sample(input.texCoord).rgb * input.color.rgb * pc.baseColorTint;
 
-    // TBN Matrix (re-orthogonalized in fragment shader)
+    // Normal Mapping using the centralized normal index
     float3 N = normalize(input.worldNormal);
-    float3 T = normalize(input.worldTangent.xyz - N * dot(N, input.worldTangent.xyz));
-    float3 B = cross(N, T) * input.worldTangent.w;
-
-    float3x3 TBN = float3x3(T, B, N);
-
-    // Normal Mapping
     if (debugUBO.disableNormalMap == 0)
     {
-        float3 nTex = normalTexture.Sample(input.texCoord).rgb;
+        float3 nTex = globalTextures[mat.normalIndex].Sample(input.texCoord).rgb;
+        float3 T = normalize(input.worldTangent.xyz - N * dot(N, input.worldTangent.xyz));
+        float3 B = cross(N, T) * input.worldTangent.w;
+        float3x3 TBN = float3x3(T, B, N);
+
         if (dot(nTex - 0.5.xxx, nTex - 0.5.xxx) > 1e-4)
             N = normalize(mul(DecodeTangentSpaceNormal(nTex), TBN));
     }
 
-
     // PBR Setup
     float3 V = normalize(cameraUBO.camPosition - input.worldPosition);
-    float roughness = clamp(pc.roughness, 0.025, 1.0);
-    float metallic = saturate(pc.metallic);
-    float3 F0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
-    float alpha = roughness * roughness;
+
+    float roughness = clamp(input.instRoughness, 0.025, 1.0);
+    float metallic  = saturate(input.instMetallic);
+    float alpha     = roughness * roughness;
+
+    float3 albedo = globalTextures[mat.albedoIndex].Sample(input.texCoord).rgb * mat.baseColor.rgb;
+    float3 F0 = lerp(float3(0.04), albedo, metallic);
 
 
     // Direct Lighting
     float3 Lo = 0.0;
-
     [loop]
     for (uint i = 0; i < lightMeta.lightCount; i++)
     {
@@ -346,7 +396,6 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
     float3 specularIBL = envColor * F_ambient * iblContribution * debugUBO.iblStrength;
 
     float3 color = ambient + Lo + specularIBL * ao;
-    color = TonemapACES(color);
-    return float4(color, 1.0);
+    return float4(TonemapACES(color), 1.0);
 }
 

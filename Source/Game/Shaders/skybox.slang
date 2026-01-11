@@ -44,16 +44,14 @@ SkyVertexOutput vertexMain(uint vertexID : SV_VertexID)
 {
     SkyVertexOutput output;
 
-    // In-shader indexing: use vertexID to index into static arrays
     uint index = g_skyboxIndices[vertexID];
     float3 localPos = g_skyboxVertices[index];
 
-    // Apply view-projection (view matrix should have translation removed for skybox)
     float4 pos = mul(pc.viewProjection, float4(localPos, 1.0));
 
     // Standard depth: Set z=w for far plane (after perspective divide: z/w = 1.0)
     // When drawn LAST with depth test ON, skybox only renders where depth buffer == 1.0 (no geometry)
-    output.position = float4(pos.xy, pos.w, pos.w); // z=w, after divide: 1.0 (far plane)
+    output.position = float4(pos.xy, 0.0, pos.w); // z=w, after divide: 1.0 (far plane)
 
 
     output.dir = localPos;
@@ -64,6 +62,5 @@ SkyVertexOutput vertexMain(uint vertexID : SV_VertexID)
 [shader("fragment")]
 float4 fragmentMain(SkyVertexOutput input) : SV_Target
 {
-    // Sample skybox texture and tonemap
     return skyTexture.Sample(input.dir);
 }

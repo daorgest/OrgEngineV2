@@ -30,6 +30,7 @@ namespace Gamepad
         A, B, X, Y,
         Start, Select,
         L1, R1,
+        L2, R2,
         L3, R3,
         DpadUp, DpadDown, DpadLeft, DpadRight,
         LeftShoulder, RightShoulder,

@@ -26,8 +26,8 @@ private:
     GI::IGameInputReading* lastMouseReading_ = nullptr;
     GI::GameInputMouseState lastMouseState_{}; // baseline for deltas
     bool haveMouseBaseline_ = false;
-    GI::IGameInputReading* lastKeyboardReading_ = nullptr;
     u32 connectedCount = 0;
+    GI::IGameInputReading* lastKeyboardReading_ = nullptr;
 
     static void CALLBACK DeviceCallback(GI::GameInputCallbackToken token, void* context, GI::IGameInputDevice* device,
                                         u64 timestamp,

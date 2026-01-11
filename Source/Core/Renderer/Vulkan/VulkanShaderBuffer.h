@@ -12,6 +12,7 @@
 
 namespace Renderer
 {
+	struct GPUCommandBuffer;
 	struct VulkanBuffer;
 	struct VulkanSampler;
 	struct VulkanImage;
@@ -24,7 +25,7 @@ namespace Renderer
 		Vector<VulkanBuffer> buffers;
 		Array<DescriptorSet, MAX_FRAME_OVERLAP> descriptorSets;
 		DescriptorLayout layout;
-		UniformBufferDesc desc;
+		DescriptorSetLayoutDesc desc;
 		Vector<u32> bindingToSlot;       // binding -> slot index
 		u32 slotCount = 0;               // number of actual UBOs/SSBOs
 
@@ -34,14 +35,14 @@ namespace Renderer
 			return (frame * slotCount) + slot;
 		}
 
-		VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc, const UniformBufferDesc& desc);
+		VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc);
 
 		// Raw update with manual size
 		void UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size) const;
 
 		void Update(u32 frameIndex, const void* data, size_t size) const;
-		void Bind(VkCommandBuffer cmd, const VulkanPipeline& pipeline, u32 frameIndex) const;
-		void AllocateDescriptorSets();
+		void Bind(GPUCommandBuffer* cmd, const VulkanPipeline& pipeline, u32 frameIndex) const;
+		void AllocateDescriptorSets(bool isBindless = false, u32 bindlessCount = 1);
 		void Destroy();
 	};
 }

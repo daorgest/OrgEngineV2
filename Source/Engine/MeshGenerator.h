@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include "MeshData.h"
+#include "MikkWrapper.h"
 
 #include "../../Source/PrimTypes.h"
 namespace MeshGenerator
@@ -87,7 +88,7 @@ namespace MeshGenerator
 
 	// Generate a UV sphere with given subdivisions
 	// segments = horizontal (longitude), rings = vertical (latitude)
-	inline auto GenerateSphere(float radius = 1.0f, u32 segments = 32, u32 rings = 16) -> Mesh
+	inline auto GenerateSphere(float radius = 1.0f, u32 segments = 64, u32 rings = 32) -> Mesh
 	{
 		Mesh mesh;
 		mesh.name = "Sphere";
@@ -99,45 +100,21 @@ namespace MeshGenerator
 		for (u32 ring = 0; ring <= rings; ++ring)
 		{
 			const float phi = glm::pi<float>() * static_cast<float>(ring) / static_cast<float>(rings);
-			const float sinPhi = std::sin(phi);
-			const float cosPhi = std::cos(phi);
 
 			for (u32 seg = 0; seg <= segments; ++seg)
 			{
 				const float theta = 2.0f * glm::pi<float>() * static_cast<float>(seg) / static_cast<float>(segments);
-				const float sinTheta = std::sin(theta);
-				const float cosTheta = std::cos(theta);
 
 				Vertex vert{};
-
-				// Position
-				vert.position.x = radius * sinPhi * cosTheta;
-				vert.position.y = radius * cosPhi;
-				vert.position.z = radius * sinPhi * sinTheta;
-
-				// Normal (normalized position vector for a sphere)
-				vert.normal = glm::normalize(glm::vec3(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta));
-
-				// Tangent (derivative with respect to theta - along longitude)
-				// dP/dtheta = radius * (-sinPhi*sinTheta, 0, sinPhi*cosTheta)
-				// At poles (sinPhi ≈ 0), tangent becomes degenerate, so use fallback
-				glm::vec3 tangent;
-				if (sinPhi > 0.001f) // Not at poles
-				{
-					tangent = glm::normalize(glm::vec3(-sinPhi * sinTheta, 0.0f, sinPhi * cosTheta));
-				}
-				else // At poles, use arbitrary tangent along X-axis
-				{
-					tangent = glm::vec3(1.0f, 0.0f, 0.0f);
-				}
-				vert.tangent = glm::vec4(tangent, 1.0f); // +1 for right-handed
-
-				// Default white color
-				vert.color = glm::vec3(1.0f, 1.0f, 1.0f);
-
-				// UV coordinates
-				vert.uv.x = static_cast<float>(seg) / static_cast<float>(segments);
-				vert.uv.y = 1.0f - (static_cast<float>(ring) / static_cast<float>(rings));
+				vert.position = glm::vec3(
+					radius * std::sin(phi) * std::cos(theta),
+					radius * std::cos(phi),
+					radius * std::sin(phi) * std::sin(theta)
+				);
+				vert.normal = glm::normalize(vert.position);
+				vert.uv = glm::vec2(static_cast<f32>(seg) / (f32)segments, 1.0f - ((f32)ring / (f32)rings));
+				vert.color = glm::vec3(1.0f);
+				vert.tangent = glm::vec4(0.0f);
 
 				vertices.push_back(vert);
 			}
@@ -168,7 +145,7 @@ namespace MeshGenerator
 		part.aabb = AABB(std::span<const Vertex>(vertices));
 
 		mesh.parts.push_back(part);
-
+		GenerateMikkTangents(vertices, indices);
 		return mesh;
 	}
 

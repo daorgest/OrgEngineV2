@@ -15,14 +15,13 @@ namespace Renderer
 {
 	struct RenderPassDesc
 	{
-		std::span<const VulkanImage> renderPasses;
-		const VulkanImage* depthTexture = nullptr;
+		std::span<const VulkanTexture> renderPasses;
+		const VulkanTexture* depthTexture = nullptr;
 	};
 
 	struct VulkanRenderPass
 	{
-		Vector<VkRenderingAttachmentInfo> colorInfos;
-		std::optional<VkRenderingAttachmentInfo> depthInfo;
+		Vector<VkRenderingAttachmentInfo> colorAttachments;
 
 		void Begin(VkCommandBuffer cmd, const Extent2D& size, const RenderPassDesc& renderInfo, bool clear = true);
 		void End(VkCommandBuffer commandBuffer);

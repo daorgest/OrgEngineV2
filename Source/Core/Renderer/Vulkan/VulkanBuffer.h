@@ -10,49 +10,70 @@
 
 namespace Renderer
 {
-	// Forward declarations
-	struct GPUDevice;
-	struct VulkanDevice;
+    struct GPUDevice;
+    struct VulkanDevice;
 
-	/// Vulkan implementation of GPUBuffer
-	struct VulkanBuffer final : GPUBuffer
-	{
-		// RHI interface implementation
-		void Init(GPUDevice* device, const GPUBufferInfo& inputInfo) override;
-		void Destroy() override;
-		[[nodiscard]] void* Map() const override;
-		void Unmap() const override;
-		void Upload(const void* srcData, u64 size) const override;
-		[[nodiscard]] u64 GetSize() const override { return info.size; }
-		[[nodiscard]] u64 GetDeviceAddress() const override;
-		[[nodiscard]] bool IsValid() const override { return buffer != VK_NULL_HANDLE; }
+    struct VulkanBuffer final : GPUBuffer
+    {
+        VulkanBuffer() = default;
+        VulkanBuffer(VulkanDevice* devicePtr, const BufferInfo& bufferInfo);
+        VulkanBuffer(VulkanDevice* devicePtr, BufferPreset preset, u64 size);
 
-		// Vulkan-specific initialization (backward compatibility)
-		void Init(VulkanDevice* devicePtr, BufferPreset preset, u64 size);
+        void Init(GPUDevice* device, const BufferInfo& inputInfo) override;
 
-		// Constructors
-		VulkanBuffer() = default;
-		VulkanBuffer(VulkanDevice* devicePtr, const GPUBufferInfo& bufferInfo);
-		VulkanBuffer(VulkanDevice* devicePtr, BufferPreset preset, u64 size);
+        // (Backward compatibility before my RHI shenanigans)
+        void Init(VulkanDevice* devicePtr, BufferPreset preset, u64 size);
 
-		// Explicitly delete copy, allow move
-		VulkanBuffer(const VulkanBuffer&) = delete;
-		VulkanBuffer& operator=(const VulkanBuffer&) = delete;
-		VulkanBuffer(VulkanBuffer&&) noexcept = default;
-		VulkanBuffer& operator=(VulkanBuffer&&) noexcept = default;
+        ~VulkanBuffer() override { Destroy(); }
+        void Destroy() override;
 
-		// ~VulkanBuffer() override { Destroy(); }
+        [[nodiscard]] void* Map() const override;
+        void Unmap() const override;
+        void Upload(const void* srcData, u64 size) const override;
+        [[nodiscard]] u64 GetSize() const override { return info.size; }
+        [[nodiscard]] u64 GetDeviceAddress() const override;
+        [[nodiscard]] bool IsValid() const override { return buffer != VK_NULL_HANDLE; }
 
-		// Vulkan-specific helpers
-		void CopyFrom(VkCommandBuffer cmd, const VulkanBuffer* src, u64 size, u64 srcOffset = 0, u64 dstOffset = 0) const;
-		[[nodiscard]] VkBuffer GetVkBuffer() const noexcept { return buffer; }
+        // Vulkan-specific helpers
+        void CopyFrom(VkCommandBuffer cmd, const VulkanBuffer* src, u64 size, u64 srcOffset = 0,
+                      u64 dstOffset = 0) const;
+        [[nodiscard]] VkBuffer GetVkBuffer() const noexcept { return buffer; }
 
-		// Public Vulkan handles for compatibility
-		VkBuffer buffer = VK_NULL_HANDLE;
-		VulkanDevice* device = nullptr;
-		VmaAllocation allocation = VK_NULL_HANDLE;
-		VmaAllocationInfo allocationInfo = {};
-		GPUBufferInfo info = {};
-	};
+        // Explicitly delete copy, allow move
+        VulkanBuffer(const VulkanBuffer&) = delete;
+        VulkanBuffer& operator=(const VulkanBuffer&) = delete;
 
+        VulkanBuffer(VulkanBuffer&& other) noexcept
+        {
+            *this = std::move(other);
+        }
+
+        VulkanBuffer& operator=(VulkanBuffer&& other) noexcept
+        {
+            if (this != &other)
+            {
+                // Clean up existing resource before taking the new one
+                Destroy();
+
+                // Shallow copy the handles
+                buffer = other.buffer;
+                device = other.device;
+                allocation = other.allocation;
+                allocationInfo = other.allocationInfo;
+                info = other.info;
+
+                other.buffer = VK_NULL_HANDLE;
+                other.allocation = VK_NULL_HANDLE;
+                other.device = nullptr;
+            }
+            return *this;
+        }
+
+        // Public Vulkan handles for compatibility
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VulkanDevice* device = nullptr;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        VmaAllocationInfo allocationInfo = {};
+        BufferInfo info = {};
+    };
 } // namespace Renderer

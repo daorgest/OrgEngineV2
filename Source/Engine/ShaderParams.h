@@ -10,16 +10,41 @@ struct SceneUBO
 	glm::mat4 proj;
 };
 
+enum class MaterialType : u32 { Opaque, AlphaMask, Transparent };
+
+struct MaterialProperties
+{
+	glm::vec4 baseColor = glm::vec4(1.0f);
+	glm::vec3 emissive = glm::vec3(0.0f);
+	f32 roughness = 0.5f;
+	f32 metallic = 0.0f;
+	f32 ior = 1.5f;
+
+	u32 albedoIndex = 0;
+	u32 normalIndex = 0;
+
+	MaterialType type = MaterialType::Opaque;
+	uint32_t _pad[3];
+};
+
 struct PushConstants
 {
-	glm::mat4 worldMatrix{};
-	glm::mat3 normalMatrix{};  // Pre-computed transpose(inverse(worldMatrix3x3))
-	u32 vertexOffset = 0;    // For dynamic vertex indexing
+	glm::mat4 model;
+	glm::mat3 normalMatrix;
+	u32 vertexOffset = 0; // For dynamic vertex indexing
 	u64 deviceAddress = 0;
-	float roughness = 0.5f;  // Surface roughness [0=smooth, 1=rough]
-	float metallic = 0.0f;   // Metallic property [0=dielectric, 1=metal]
-	glm::vec3 baseColorTint = glm::vec3(1.0f); // Material base color tint (from MTL Kd)
-	float _padding = 0.0f;   // Padding for alignment
+	u32 isInstanced = 0;
+	f32 instRoughness = 1.0f;
+	f32 instMetallic = 1.0f;
+	u32 materialIndex;
+};
+
+struct GPUInstanceSSBO
+{
+	glm::mat4 worldMatrix;
+	u32 materialIndex;
+	f32 roughness;           // 4 bytes: Unique override for this sphere
+	f32 metallic;            // 4 bytes: Unique override for this sphere
 };
 
 enum class LightType : u32
@@ -38,7 +63,7 @@ struct LightUBO
 	float innerCone;
 	glm::vec3 color;
 	float intensity;
-	u32 type;
+	LightType type;
 	float outerCone;
 };
 
@@ -65,7 +90,7 @@ struct LightUBOCount
 
 struct CameraUBO
 {
-	glm::vec3 position{};
-	f32  nearPlane{};
-	f32  farPlane{};
+	glm::vec3 position;
+	f32  nearPlane;
+	f32  farPlane;
 };

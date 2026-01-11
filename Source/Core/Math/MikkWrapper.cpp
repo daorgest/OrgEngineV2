@@ -8,77 +8,71 @@
 // User data passed to mikktspace
 struct MikkUserData
 {
-	Vertex* vtx;
-	const uint32_t* idx;
-	uint32_t indexCount; // triangle indices
+    std::span<Vertex> vertices;
+    std::span<const uint32_t> indices;
 };
 
 static int mikkGetNumFaces(const SMikkTSpaceContext* ctx)
 {
-	auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
-	return static_cast<int>(d->indexCount / 3);
+    auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
+    return static_cast<int>(d->indices.size() / 3);
 }
 
 static int mikkGetNumVerticesOfFace(const SMikkTSpaceContext* /*unused*/, const int /*face*/)
 {
-	return 3;
+    return 3;
 }
 
-static void mikkGetPosition(const SMikkTSpaceContext* ctx, float out[], const int face, const int vert)
+static void mikkGetPosition(const SMikkTSpaceContext* context, float posOut[], const int faceIdx, const int vertIdx)
 {
-	auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
-	const Vertex& v = d->vtx[d->idx[(face * 3) + vert]];
-	out[0] = v.position.x;
-	out[1] = v.position.y;
-	out[2] = v.position.z;
+    const auto* data = static_cast<MikkUserData*>(context->m_pUserData);
+    const uint32_t index = data->indices[faceIdx * 3 + vertIdx];
+    const auto& pos = data->vertices[index].position;
+    posOut[0] = pos.x;
+    posOut[1] = pos.y;
+    posOut[2] = pos.z;
 }
 
-static void mikkGetNormal(const SMikkTSpaceContext* ctx, float out[], const int face, const int vert)
+static void mikkGetNormal(const SMikkTSpaceContext* context, float normOut[], const int faceIdx, const int vertIdx)
 {
-	auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
-	const Vertex& v = d->vtx[d->idx[(face * 3) + vert]];
-	out[0] = v.normal.x;
-	out[1] = v.normal.y;
-	out[2] = v.normal.z;
+    const auto* data = static_cast<MikkUserData*>(context->m_pUserData);
+    const uint32_t index = data->indices[faceIdx * 3 + vertIdx];
+    const auto& norm = data->vertices[index].normal;
+    normOut[0] = norm.x;
+    normOut[1] = norm.y;
+    normOut[2] = norm.z;
 }
 
-static void mikkGetTexCoord(const SMikkTSpaceContext* ctx, float out[], const int face, const int vert)
+static void mikkGetTexCoord(const SMikkTSpaceContext* context, float uvOut[], const int faceIdx, const int vertIdx)
 {
-	auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
-	const Vertex& v = d->vtx[d->idx[(face * 3) + vert]];
-	out[0] = v.uv.x;
-	out[1] = v.uv.y;
+    const auto* data = static_cast<MikkUserData*>(context->m_pUserData);
+    const uint32_t index = data->indices[faceIdx * 3 + vertIdx];
+    const auto& uv = data->vertices[index].uv;
+    uvOut[0] = uv.x;
+    uvOut[1] = uv.y;
 }
 
-static void mikkSetTSpaceBasic(const SMikkTSpaceContext* ctx,
-                               const float tangent[3], const float sign,
-                               const int face, const int vert)
+static void mikkSetTSpaceBasic(const SMikkTSpaceContext* context, const float tangent[], const float sign,
+                               const int faceIdx, const int vertIdx)
 {
-	auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
-	Vertex& v = d->vtx[d->idx[(face * 3) + vert]];
-	v.tangent.x = tangent[0];
-	v.tangent.y = tangent[1];
-	v.tangent.z = tangent[2];
-	v.tangent.w = sign; // handedness (+1 / -1)
+    auto* data = static_cast<MikkUserData*>(context->m_pUserData);
+    const uint32_t index = data->indices[faceIdx * 3 + vertIdx];
+    auto& v = data->vertices[index];
+    v.tangent = glm::vec4(tangent[0], tangent[1], tangent[2], sign);
 }
 
-void GenerateMikkTangents(Vertex* verts, uint32_t vertCount,
-                          const uint32_t* indices, uint32_t indexCount)
+void GenerateMikkTangents(const std::span<Vertex> vertices, const std::span<const uint32_t> indices)
 {
-	(void)vertCount; // not required by mikktspace, but we keep it for sanity checks
+    SMikkTSpaceInterface iface{};
+    iface.m_getNumFaces = mikkGetNumFaces;
+    iface.m_getNumVerticesOfFace = mikkGetNumVerticesOfFace;
+    iface.m_getPosition = mikkGetPosition;
+    iface.m_getNormal = mikkGetNormal;
+    iface.m_getTexCoord = mikkGetTexCoord;
+    iface.m_setTSpaceBasic = mikkSetTSpaceBasic;
 
-	// Preconditions: indexCount % 3 == 0, verts have valid normals & UVs
-	SMikkTSpaceInterface iface{};
-	iface.m_getNumFaces = mikkGetNumFaces;
-	iface.m_getNumVerticesOfFace = mikkGetNumVerticesOfFace;
-	iface.m_getPosition = mikkGetPosition;
-	iface.m_getNormal = mikkGetNormal;
-	iface.m_getTexCoord = mikkGetTexCoord;
-	iface.m_setTSpaceBasic = mikkSetTSpaceBasic;
+    MikkUserData data{vertices, indices};
+    const SMikkTSpaceContext ctx{&iface, &data};
 
-	MikkUserData data{verts, indices, indexCount};
-	const SMikkTSpaceContext ctx{&iface, &data};
-
-	// Generates tangent.xyz and handedness in .w
-	genTangSpaceDefault(&ctx);
+    genTangSpaceDefault(&ctx);
 }

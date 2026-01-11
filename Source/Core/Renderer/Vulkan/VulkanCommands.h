@@ -6,10 +6,9 @@
 #include <volk.h>
 #include <tracy/TracyVulkan.hpp>
 
-#include "RendererTypes.h"
 #include "VulkanCommandBuffer.h"
-#include "VulkanDescriptors.h"
 #include "VulkanQueryPool.h"
+#include "Tools/Array.h"
 #include "Tools/Vector.h"
 
 namespace Renderer
@@ -19,24 +18,18 @@ namespace Renderer
 	struct DescriptorAllocatorGrowable;
 
 	/// Per-frame rendering data
-	/// Contains command buffer, synchronization objects, and per-frame allocators
 	struct VulkanFrameData final : GPUFrameData
 	{
+		VkCommandPool commandPool = VK_NULL_HANDLE; // Single threaded for now
 		VulkanCommandBuffer commandBuffer;
-		VulkanCommandPool commandPool;
-		VkFence renderFence = VK_NULL_HANDLE;
-		VkSemaphore acquireSemaphore = VK_NULL_HANDLE;
+		std::unique_ptr<VulkanFence> renderFence;
+		std::unique_ptr<VulkanSemaphore> acquireSemaphore;
 		VulkanQueryPool queryPool;
-		DescriptorAllocatorGrowable descriptors;
-		TracyVkCtx tracyCtx = nullptr;
 
 		// RHI interface implementation
 		bool Init(GPUDevice* device) override;
 		void Destroy() override;
 		void Reset() override;
-
-		// Vulkan-specific Init (with Tracy context)
-		bool Init(VulkanDevice* device, TracyVkCtx tracyCtx = nullptr);
 
 		GPUCommandBuffer* GetCommandBuffer() override { return &commandBuffer; }
 		void* GetRenderFence() override { return &renderFence; }
@@ -47,49 +40,28 @@ namespace Renderer
 		VulkanDevice* device = nullptr;
 	};
 
-	/// Frame context returned by BeginFrame
-	struct FrameContext
-	{
-		GPUCommandBuffer* commandBuffer = nullptr;
-		VulkanFrameData* frameData = nullptr;
-		u32 frameIndex = 0;
-		u32 imageIndex = 0;
-
-		// Backward compatibility alias
-		GPUCommandBuffer*& commandContext = commandBuffer;
-	};
-
-	/// High-level renderer managing frame resources and presentation
-	/// Marked final to enable compiler devirtualization
+	// High-level renderer managing frame resources and presentation
 	struct VulkanRenderer final : GPURenderer
 	{
 		bool Init(GPUDevice* device, GPUSwapchain* swapchain, u32 frameOverlap = MAX_FRAME_OVERLAP) override;
-		void Destroy() override;
-
-		bool BeginFrame(u32& frameIndex, u32& imageIndex) override;
+		bool BeginFrame(u32& outFrameIndex, u32& outImageIndex) override;
 		void EndFrame(u32 frameIndex, u32 imageIndex) override;
-		bool ResizeIfNeeded() override;
+		void Destroy() override;
 
 		GPUFrameData* GetCurrentFrameData() override { return &frames[frameNumber % framesActive]; }
 		[[nodiscard]] u32 GetFrameNumber() const override { return frameNumber; }
+		u32 GetFrameIndex() const override { return frameNumber % framesActive; }
 
-		// Compatibility methods for old FrameContext API (will be deprecated)
-		FrameContext BeginFrame();
-		void EndFrame(const FrameContext& frame);
-
-		// Vulkan-specific helpers
-		VulkanFrameData& GetCurrentFrame() { return frames[frameNumber % framesActive]; }
-		static void SetViewportAndScissor(VkCommandBuffer cmd, const Extent2D& extent);
-
+		TracyVkCtx tracyCtx = nullptr;
 	private:
-		Vector<VulkanFrameData> frames;
-		Vector<VkSemaphore> presentSemaphores; // One per swapchain image (indexed by imageIndex)
+		Array<VulkanFrameData, MAX_FRAME_OVERLAP> frames;
+		Vector<std::unique_ptr<VulkanSemaphore>> presentSemaphores; // One per swapchain image (indexed by imageIndex)
+
 		u32 frameNumber = 0;
 		u32 framesActive = MAX_FRAME_OVERLAP;
 
 		VulkanDevice* device = nullptr;
 		VulkanSwapchain* swapchain = nullptr;
-		TracyVkCtx tracyCtx = nullptr;
 	};
 
 } // namespace Renderer

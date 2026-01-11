@@ -1,5 +1,6 @@
 #pragma once
 #include "Application.h"
+#include "Tools/Logger.h"
 
 #if ENGINE_PLATFORM_WIN32
 
@@ -17,6 +18,7 @@ int main()
 int main()
 #endif
 {
+    Logger::Init();
     Application app;
 
     if (!app.Init())
@@ -24,5 +26,6 @@ int main()
 
     app.Run();
     app.Cleanup();
+    Logger::Shutdown();
     return 0;
 }

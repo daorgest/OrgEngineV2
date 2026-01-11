@@ -48,5 +48,3 @@ struct DeletionQueue
 		tasks.clear();
 	}
 };
-
-inline DeletionQueue gDeletionQueue;

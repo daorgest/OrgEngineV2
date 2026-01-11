@@ -23,36 +23,29 @@ namespace Renderer
     struct VulkanSwapchain final : GPUSwapchain
     {
         // RHI interface implementation
-        bool Init(GPUDevice* device, void* windowHandle) override;
+        Result<void> Init(GPUDevice* devicePtr, WindowHandle windowHandle_) override;
         void Destroy() override;
-        bool Resize() override;
-        u32 AcquireNextImage(void* semaphore) override;
-        void Present(u32 imageIndex, void* waitSemaphore) override;
+        bool ResizeIfNeeded() override;
         GPUTexture* GetCurrentImage() override;
 
-        [[nodiscard]] const Extent2D& GetExtent() const override
+        [[nodiscard]] const Extent2D GetExtent() const override
         {
-            thread_local Extent2D extent;
-            extent = {width, height};
-            return extent;
+            return {width, height};
         }
 
         [[nodiscard]] TextureFormat GetFormat() const override;
-
-        // Vulkan-specific initialization (backward compatibility)
-        bool Init(VulkanDevice* device, WindowHandle handle);
 
         // Vulkan-specific methods
         void CreateImages();
         void DestroyImageViews();
         void CreateDepthImage();
         void DestroyDepthImage() const;
-        void VsyncEnable(PresentMode mode);
-        void SetBufferingMode(BufferingMode mode);
+        void SetVsyncMode(PresentMode mode) override;
+        void SetBufferingMode(BufferingMode mode) override;
         bool Recreate();
 
         // Vulkan-specific accessors
-        [[nodiscard]] const VulkanImage& GetImage(u32 index) const;
+        [[nodiscard]] GPUTexture* GetImage(u32 index) override;
         [[nodiscard]] VkFormat GetVkFormat() const { return surfaceFormat.format; }
         [[nodiscard]] VkSwapchainKHR GetVkSwapchain() const noexcept { return swapchain; }
         [[nodiscard]] VkSurfaceKHR GetVkSurface() const noexcept { return surface; }
@@ -65,9 +58,11 @@ namespace Renderer
         VulkanSwapchain& operator=(VulkanSwapchain&&) noexcept = default;
 
         ~VulkanSwapchain() override { Destroy(); }
+        PresentMode GetPresentMode() override { return presentMode; }
+        Result<u32> AcquireNextImage(GPUSemaphore* semaphore) override;
 
         // Public Vulkan handles for compatibility
-        VulkanDevice* device = nullptr;
+        VulkanDevice* vkDev = nullptr;
         WindowHandle handle = nullptr;
         VkSwapchainKHR swapchain = VK_NULL_HANDLE;
         VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -77,8 +72,8 @@ namespace Renderer
         VkSurfaceFormatKHR surfaceFormat = {
             .format = VK_FORMAT_B8G8R8A8_SRGB, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
         };
-        Vector<VulkanImage> images;
-        VulkanImage depthImage;
+        Vector<VulkanTexture> images;
+        VulkanTexture depthTexture;
 
         u32 imageCount = 0;
         u32 width = 0;

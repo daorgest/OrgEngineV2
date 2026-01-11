@@ -4,30 +4,38 @@
 
 #pragma once
 #include <volk.h>
+
+#include "RenderInterface.h"
 #include "Tools/Vector.h"
 
 namespace Renderer
 {
-	struct VulkanDevice;
-	struct VulkanQueryPool
-	{
-		struct TimestampResult
-		{
-			u64 time;
-			u64 available;
-		};
+    struct VulkanDevice;
 
-		bool Init(VulkanDevice* device, u32 queryCount);
-		void Destroy() const;
-		void Reset(VkCommandBuffer cmd) const;
-		void WriteTimestamp(VkCommandBuffer cmd, VkPipelineStageFlagBits2 stage, u32 queryIndex) const;
-		bool FetchResults();
-		[[nodiscard]] f32 DeltaMs(u32 beginIdx, u32 endIdx) const;
+    struct VulkanQueryPool final : GPUQueryPool
+    {
+        struct TimestampResult
+        {
+            u64 time;
+            u64 available;
+        };
 
-		VulkanDevice* device = nullptr;
-		VkQueryPool queryPool = VK_NULL_HANDLE;
+        bool Init(VulkanDevice* inDevice, u32 inQueryCount);
+        ~VulkanQueryPool() override { Destroy(); }
+        void Destroy();
 
-		u32 queryCount = 0;
-		Vector<TimestampResult> queryResults;
-	};
+        void Reset(GPUCommandBuffer* cmd) override;
+        void WriteTimestamp(GPUCommandBuffer* cmd, u32 queryIndex) override;
+
+        bool FetchResults() override;
+        [[nodiscard]] f32 GetDeltaMs(u32 beginIdx, u32 endIdx) const override;
+
+    private:
+        VulkanDevice* device = nullptr;
+        VkQueryPool queryPool = VK_NULL_HANDLE;
+
+        f32 timestampPeriod = 0.0f;
+        u32 queryCount = 0;
+        Vector<TimestampResult> queryResults;
+    };
 }

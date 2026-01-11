@@ -19,48 +19,56 @@ bool DebugRenderer::Initialize(VulkanDevice* dev, ArenaAllocator* arena, VulkanS
 	}
 	shader = arena->Emplace<VulkanShader>(device, codeResult.value());
 
-	// Shader Instance buffer!!
-	UniformBufferDesc instDesc = {
-		.setIndex = 1,
-		.stageFlags = ShaderStage::Vertex,
-		.bindings = {
-			{0, DescriptorType::StorageBuffer, maxInstances * sizeof(BBoxPush)},
+	static Binding instBindings[] = {
+		{
+			.binding = 0,
+			.type = DescriptorType::StorageBuffer,
+			.stageFlags = ShaderStage::AllGraphics, // Moved from Desc to Binding
+			.size = maxInstances * sizeof(BBoxPush)
 		}
 	};
-	instanceBuffer = arena->Emplace<VulkanShaderBuffer>(device,globalDescriptorAllocator,instDesc);
+
+	// Shader Instance buffer!!
+	DescriptorSetLayoutDesc instDesc = {
+		.setIndex = 1,
+		.bindings = instBindings
+	};
+	instanceBuffer = arena->Emplace<VulkanShaderBuffer>(device, globalDescriptorAllocator, instDesc);
 	instanceBuffer->AllocateDescriptorSets();
 
 
-	Array setLayouts = {
-		sceneUBO->layout.vk,       // set = 0
-		instanceBuffer->layout.vk  // set = 1
+	static DescriptorSetLayoutDesc setLayouts[] = {
+		{ .setIndex = 0, .bindings = sceneUBO->desc.bindings },      // Shared scene data
+		{ .setIndex = 1, .bindings = instanceBuffer->desc.bindings } // Instance-specific BBox data
 	};
 
-	PipelineLayoutDesc layoutDesc{};
-	layoutDesc.setLayouts = setLayouts;
+	auto depthOp = CompareOp::Always;
+	bool depthWrite   = false;
 
-	VulkanPipelineBuilder pb;
-	pb.SetFragVerShaders(shader->shader, shader->shader)
-	  .SetInputTopology(VK_PRIMITIVE_TOPOLOGY_LINE_LIST)
-	  .SetPolygonMode(VK_POLYGON_MODE_LINE)
-	  .SetCullMode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-	  .SetMultisamplingNone()
-	  .DisableBlending()
-	  .SetColorAttachmentFormat(TextureFormat::BGRA8_SRGB)
-	  .SetDepthAttachmentFormat(TextureFormat::D32_SFLOAT);
+	if (!alwaysOnTop && depthTest) {
+		depthOp    = CompareOp::Greater;
+		depthWrite = true;
+	}
 
-	if (alwaysOnTop)
-		pb.EnableDepthTest(false, VK_COMPARE_OP_ALWAYS);  // No depth test, always visible
-	else if (depthTest)
-		pb.EnableDepthTest(true, VK_COMPARE_OP_LESS);     // Standard depth test with writes
-	else
-		pb.EnableDepthTest(false, VK_COMPARE_OP_LESS);    // Depth test without writes
+	const GraphicsPipelineDesc debugDesc = {
+		.vertexShader   = shader,
+		.fragmentShader = shader,
+		.raster = {
+			.topology     = PrimitiveTopology::LineList,
+			.cull         = CullMode::None,
+			.depthFormat  = TextureFormat::D32_SFLOAT,
+			.depthWrite   = depthWrite,
+			.depthOp      = depthOp,
+			.colorFormats = { TextureFormat::BGRA8_SRGB }
+		},
+		.layout = {
+			.setLayouts = std::span(setLayouts)
+		}
+	};
 
-	pb.Layout(pipeline.vkLayout);
-
-	if (!pipeline.Create(device, layoutDesc, pb))
+	if (!pipeline.CreateGraphicsPipeline(device, debugDesc))
 	{
-		LOG(Error, "Failed to create AABB debug pipeline");
+		LOG(Error, "Failed to create AABB Debug Pipeline");
 		return false;
 	}
 
@@ -68,23 +76,22 @@ bool DebugRenderer::Initialize(VulkanDevice* dev, ArenaAllocator* arena, VulkanS
 	return true;
 }
 
-void DebugRenderer::QueueBox(const glm::mat4& model, const glm::vec3& min, const glm::vec3& max)
+void DebugRenderer::QueueBox(const glm::mat4& model, const AABB& aabb)
 {
-	drawQueue.push_back({model, min, depthBias, max, flags, color});
+	drawQueue.push_back({model, aabb.Min(), depthBias, aabb.Max(), flags, color});
 }
 
-void DebugRenderer::Flush(VkCommandBuffer cmd, u32 frameIndex)
+void DebugRenderer::Flush(GPUCommandBuffer* cmd, u32 frameIndex)
 {
 	if (drawQueue.empty())
 		return;
 
-	const u32 count = drawQueue.size();
-	const size_t size = count * sizeof(BBoxPush);
+	const size_t size = drawQueue.size() * sizeof(BBoxPush);
 
 	// Upload all instance data
 	instanceBuffer->Update(frameIndex, drawQueue.data(), size);
 
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vk);
+	cmd->BindPipeline(&pipeline);
 
 	// Bind scene UBO (set 0)
 	sceneUBO->Bind(cmd, pipeline, frameIndex);
@@ -93,7 +100,7 @@ void DebugRenderer::Flush(VkCommandBuffer cmd, u32 frameIndex)
 	instanceBuffer->Bind(cmd, pipeline, frameIndex);
 
 	// Draw all boxes in one call
-	vkCmdDraw(cmd, 24, count, 0, 0);
+	cmd->Draw(24, static_cast<u32>(drawQueue.size()), 0, 0);
 
 	drawQueue.clear();
 }

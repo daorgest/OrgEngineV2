@@ -35,7 +35,7 @@ struct FollowTargetComponent
 
 		}
 
-		position += velocity * dt;
+		position += dt;
 	}
 };
 

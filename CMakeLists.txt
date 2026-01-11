@@ -1,10 +1,18 @@
-cmake_minimum_required(VERSION 3.31)
+cmake_minimum_required(VERSION 4.0)
 
 project(OrgEngineV2 LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+    add_compile_options(/std:c++latest)
+    # Required to make sure MSVC reports the correct __cplusplus version
+    add_compile_options(/Zc:__cplusplus)
+    # Good for engine dev: treat warnings as errors to keep code clean
+    add_compile_options(/W4)
+else()
+    set(CMAKE_CXX_STANDARD 26)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
 
 set(3RDPARTY_DIR  ${CMAKE_SOURCE_DIR}/3rdParty)
 set(CORE_DIR ${CMAKE_SOURCE_DIR}/Source/Core)
@@ -13,6 +21,14 @@ set(GAME_DIR ${CMAKE_SOURCE_DIR}/Source/Game)
 set(TOOLS_DIR ${CMAKE_SOURCE_DIR}/Source/Core/Tools)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+)
 
 add_compile_definitions(
         UNICODE
@@ -24,8 +40,12 @@ add_compile_definitions(
         IMGUI_IMPL_VULKAN_USE_VOLK
         _CRT_SECURE_NO_WARNINGS
         VULKAN_DEBUG_MODE
+#        ENABLE_GPU_TIMING
+        ENGINE_ENABLE_LOGGING # Soon
         ENGINE_PLATFORM_WIN32
         ENGINE_COMMIT_HASH="${GIT_HASH}"
+#        TRACY_ENABLE
+#        TRACY_CALLSTACK=10
 )
 
 set(ENGINE_PLATFORM "WIN32" CACHE STRING "Platform backend")
@@ -95,6 +115,8 @@ set(SRC_FILES
         ${CMAKE_SOURCE_DIR}/Source/main.cpp
         ${TOOLS_DIR}/Arena.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanInit.cpp
+        ${CORE_DIR}/Renderer/Vulkan/VulkanDevice.cpp
+        ${CORE_DIR}/Renderer/Vulkan/VmaUsage.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanSwapchain.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanTexture.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanCommands.cpp
@@ -103,11 +125,11 @@ set(SRC_FILES
         ${CORE_DIR}/Renderer/Vulkan/VulkanShader.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanBuffer.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanDescriptors.cpp
-        ${CORE_DIR}/Renderer/Vulkan/VulkanRenderPass.cpp
+#        ${CORE_DIR}/Renderer/Vulkan/VulkanRenderPass.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanShaderBuffer.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanQueryPool.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanMesh.cpp
-        ${ENGINE_DIR}/TextureManager.cpp
+        ${ENGINE_DIR}/TextureLoader.cpp
         ${ENGINE_DIR}/MeshLoader.cpp
         ${CORE_DIR}/Math/MikkWrapper.cpp
         ${CORE_DIR}/Input/InputSys.cpp
@@ -123,7 +145,7 @@ set(SRC_FILES
 )
 
 if (ENGINE_PLATFORM STREQUAL "SDL")
-    list(APPEND SRC_FILES ${CORE_DIR}/Platform/PlatformSDL.cpp Source/Core/Input/InputSysSDL.cpp)
+    list(APPEND SRC_FILES ${CORE_DIR}/Platform/PlatformSDL.cpp Source/Core/Input/InputSystemSDL.cpp)
 else ()
     list(APPEND SRC_FILES ${CORE_DIR}/Platform/PlatformWindows.cpp)
 endif ()
@@ -132,9 +154,10 @@ set(HDR_FILES
         ${CORE_DIR}/Renderer/RendererTypes.h
         ${ENGINE_DIR}/MeshData.h
         ${ENGINE_DIR}/MeshStats.h
-        ${ENGINE_DIR}/TextureManager.h
+        ${ENGINE_DIR}/TextureLoader.h
         ${ENGINE_DIR}/MeshLoader.h
         ${ENGINE_DIR}/AABB.h
+        ${CORE_DIR}/Renderer/Vulkan/VulkanDevice.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanSwapchain.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanTexture.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanConvert.h
@@ -145,7 +168,7 @@ set(HDR_FILES
         ${CORE_DIR}/Renderer/Vulkan/VulkanBuffer.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanCheck.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanDescriptors.h
-        ${CORE_DIR}/Renderer/Vulkan/VulkanRenderPass.h
+#        ${CORE_DIR}/Renderer/Vulkan/VulkanRenderPass.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanDebugUtils.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanShaderBuffer.h
         ${CORE_DIR}/Renderer/Vulkan/VulkanQueryPool.h
@@ -160,9 +183,9 @@ set(HDR_FILES
         ${GAME_DIR}/DebugRenderer.h
         ${GAME_DIR}/SceneRenderer.h
         ${GAME_DIR}/SkyboxManager.h
-        Source/Core/Tools/FileManager.h
-        Source/Engine/FollowTarget.h
-        Source/Engine/ShaderParams.h
+        ${CORE_DIR}/Tools/FileManager.h
+        ${ENGINE_DIR}/FollowTarget.h
+        ${ENGINE_DIR}/ShaderParams.h
         ${TOOLS_DIR}/Timer.h
         ${TOOLS_DIR}/UUID.h
 )
@@ -201,7 +224,10 @@ list(APPEND SRC_FILES ${IMGUI_FILES})
 list(APPEND HDR_FILES ${3RDPARTY_HEADERS})
 
 # NATVIS for Visual Studio debugger / OR ANY DEBUGGER THAT SUPPORTS IT
-set(NATVIS_FILES ${CMAKE_SOURCE_DIR}/OrgEngineV2.natvis)
+set(NATVIS_FILES ${CMAKE_SOURCE_DIR}/OrgEngineV2.natvis
+        Source/Core/Tools/Logger.cpp
+        Source/Engine/ShaderConstants.h
+        Source/Engine/DefaultTextures.h)
 
 add_executable(OrgEngineV2 ${SRC_FILES} ${HDR_FILES} ${NATVIS_FILES})
 
@@ -241,13 +267,13 @@ add_subdirectory(3rdParty/mikktspace)
 add_subdirectory(3rdParty/glm)
 add_subdirectory(3rdParty/ufbx)
 
-option(TRACY_ENABLE "" OFF)
-option(TRACY_ON_DEMAND "" OFF)
+option(TRACY_ENABLE "" ON)
+option(TRACY_ON_DEMAND "" ON)
 option(TRACY_CALLSTACK "" 10)
 add_subdirectory(3rdParty/tracy)
 
 target_link_directories(OrgEngineV2 PRIVATE
-        ${3RDPARTY_DIR}/slang/lib
+#        ${3RDPARTY_DIR}/slang/lib
         ${3RDPARTY_DIR}/gameinput/lib
 )
 
@@ -264,7 +290,7 @@ target_link_libraries(OrgEngineV2 PRIVATE
         fmt::fmt
         volk
         GPUOpen::VulkanMemoryAllocator
-        slang
+#        slang
         meshoptimizer
         mikktspace
         glm
@@ -281,6 +307,18 @@ set_directory_properties(PROPERTIES VS_STARTUP_PROJECT OrgEngineV2)
 set_target_properties(OrgEngineV2 PROPERTIES
         VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
 )
+
+set(ASSET_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Assets")
+set(ASSET_DST "${CMAKE_CURRENT_BINARY_DIR}/App/Assets")
+
+add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${ASSET_SRC}"
+        "${ASSET_DST}"
+        COMMENT "Copying engine assets to build directory..."
+)
+
 
 if (MSVC)
     target_compile_options(OrgEngineV2 PRIVATE

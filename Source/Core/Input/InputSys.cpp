@@ -54,13 +54,12 @@ void Input::ResetInputOnFocusLoss()
 {
     Input temp{}; // clears EVERYTHING
 
-    // Preserve absolute cursor positions so the engine doesn't jump
     temp.cursorX = input.cursorX;
     temp.cursorY = input.cursorY;
     temp.lastX = input.lastX;
     temp.lastY = input.lastY;
 
-    // Preserve raw input mode
+    // Preserve raw input mode (we're not using this for now)
     temp.useRawInput = input.useRawInput;
 
     // Deltas must be zeroed explicitly to avoid ghost movement on refocus
@@ -70,4 +69,8 @@ void Input::ResetInputOnFocusLoss()
     temp.scrollY = 0;
 
     std::swap(input, temp);
+}
+
+void Input::ProcessEvents()
+{
 }

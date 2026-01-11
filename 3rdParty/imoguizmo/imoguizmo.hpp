@@ -250,8 +250,16 @@ namespace ImOGuizmo {
 
 		// sort axis based on distance
 		// 0 : +x axis, 1 : +y axis, 2 : +z axis, 3 : -x axis, 4 : -y axis, 5 : -z axis
-		std::vector<std::pair<int, float>> pairs = { {0, xAxis.w}, {1, yAxis.w}, {2, zAxis.w}, {3, -xAxis.w}, {4, -yAxis.w}, {5, -zAxis.w} };
-		sort(pairs.begin(), pairs.end(), [=](const std::pair<int, float>& aA, const std::pair<int, float>& aB) { return aA.second > aB.second; });
+
+		// Orgest Patch - Stack alloc this instead of std vector BROOOOOO
+		std::array<std::pair<int, float>, 6> pairs = {{
+			{0, xAxis.w}, {1, yAxis.w}, {2, zAxis.w},
+			{3, -xAxis.w}, {4, -yAxis.w}, {5, -zAxis.w}
+		}};
+		std::ranges::sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b)
+		{
+			return a.second > b.second;
+		});
 
 		// find selection, front to back
 		int selection = -1;

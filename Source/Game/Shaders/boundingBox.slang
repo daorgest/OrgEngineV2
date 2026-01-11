@@ -19,8 +19,7 @@ struct BBoxPush
     float4   color;
 };
 
-[[vk::binding(0, 1)]]
-StructuredBuffer<BBoxPush> instances;
+[[vk::binding(0, 1)]] StructuredBuffer<BBoxPush> instances;
 
 static const uint2 kEdgeCorners[12] = {
     uint2(0,1), uint2(1,3), uint2(3,2), uint2(2,0),
@@ -40,7 +39,7 @@ float3 cornerFromIndex(uint idx, float3 bmin, float3 bmax)
 float4 applyDepthBiasCS(float4 posCS, float biasAmount)
 {
     if (biasAmount == 0.0) return posCS;
-    posCS.z -= biasAmount * posCS.w;
+    posCS.z += biasAmount * posCS.w;
     return posCS;
 }
 

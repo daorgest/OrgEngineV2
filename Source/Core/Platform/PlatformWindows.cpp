@@ -5,18 +5,10 @@
 #ifdef ENGINE_PLATFORM_WIN32
 #include <Windows.h>
 // Xbox stuff
-#include <algorithm>
-#include <xinput.h>
 
 #include "RendererTypes.h"
 #include "Input/InputSys.h"
 #include "Input/InputSysGameInput.h"
-// on runtime load dll
-static HMODULE xinputLib = nullptr;
-static DWORD (WINAPI*XInputGetStateFn)(DWORD, XINPUT_STATE*) = nullptr;
-static DWORD (WINAPI*XInputSetStateFn)(DWORD, XINPUT_VIBRATION*) = nullptr;
-// Vibration handling
-constexpr u16 MAX_VIBRATION = UINT16_MAX;
 
 #include <fmt/core.h>
 
@@ -24,8 +16,11 @@ constexpr u16 MAX_VIBRATION = UINT16_MAX;
 #include <imgui_impl_win32.h>
 #endif
 
+#include <dwmapi.h>
+
 #include "Platform.h"
 #include "../Tools/Arena.h"
+#include "Tools/Logger.h"
 #include "tracy/Tracy.hpp"
 
 // Ensure we extract signed coordinate data (multi-monitor support) (Dont want to import the whole of <windowsx.h>)
@@ -40,144 +35,11 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 __declspec(dllexport) void NoHotPatch()
 {
 } // Disable Nahimic code injection.
-LONG __stdcall RtlGetVersion(PRTL_OSVERSIONINFOW lpVersionInformation);
 }
 
 // Forward Declare up here for init
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK GlobalWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
-
-// Input handling Win32
-static void LoadXInput()
-{
-    if (xinputLib != nullptr) return;
-
-    xinputLib = LoadLibraryA("xinput1_4.dll");
-    if (!xinputLib) xinputLib = LoadLibraryA("xinput9_1_0.dll"); // Fallback,
-
-    if (xinputLib != nullptr)
-    {
-        XInputGetStateFn = reinterpret_cast<decltype(XInputGetStateFn)>(GetProcAddress(xinputLib, "XInputGetState"));
-        XInputSetStateFn = reinterpret_cast<decltype(XInputSetStateFn)>(GetProcAddress(xinputLib, "XInputSetState"));
-        fprintf(stderr, "[Win32] XInput loaded from library.\n");
-    }
-    else
-    {
-        fprintf(stderr, "[Win32] Failed to load XInput library.\n");
-    }
-}
-
-void Platform::UpdateGamepads()
-{
-    if (XInputGetStateFn == nullptr)
-        return;
-
-    using namespace Gamepad;
-
-    input.usingController = false; // reset global flag each frame
-
-    for (u32 ctrlIdx = 0; ctrlIdx < CONTROLLER_COUNT; ++ctrlIdx)
-    {
-        auto& controller = input.controllers[ctrlIdx];
-
-        XINPUT_STATE state{};
-        const DWORD result = XInputGetStateFn(ctrlIdx, &state);
-        if (result == ERROR_SUCCESS)
-        {
-            controller.connected = true;
-            input.usingController = true;
-
-            // Avoid redundant updates if nothing changed
-            if (state.dwPacketNumber == controller.lastPacket)
-                continue;
-            controller.lastPacket = state.dwPacketNumber;
-
-            const XINPUT_GAMEPAD& gamepad = state.Gamepad;
-
-            // --- Digital buttons ---
-            Input::ProcessEventButton(controller.buttons[Button::A], gamepad.wButtons & XINPUT_GAMEPAD_A);
-            Input::ProcessEventButton(controller.buttons[Button::B], gamepad.wButtons & XINPUT_GAMEPAD_B);
-            Input::ProcessEventButton(controller.buttons[Button::X], gamepad.wButtons & XINPUT_GAMEPAD_X);
-            Input::ProcessEventButton(controller.buttons[Button::Y], gamepad.wButtons & XINPUT_GAMEPAD_Y);
-            Input::ProcessEventButton(controller.buttons[Button::Start], gamepad.wButtons & XINPUT_GAMEPAD_START);
-            Input::ProcessEventButton(controller.buttons[Button::Select], gamepad.wButtons & XINPUT_GAMEPAD_BACK);
-            Input::ProcessEventButton(controller.buttons[Button::LeftShoulder],
-                                      gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
-            Input::ProcessEventButton(controller.buttons[Button::RightShoulder],
-                                      gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
-            Input::ProcessEventButton(controller.buttons[Button::LeftThumb],
-                                      gamepad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB);
-            Input::ProcessEventButton(controller.buttons[Button::RightThumb],
-                                      gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB);
-            Input::ProcessEventButton(controller.buttons[Button::DpadUp], gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP);
-            Input::ProcessEventButton(controller.buttons[Button::DpadDown],
-                                      gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
-            Input::ProcessEventButton(controller.buttons[Button::DpadLeft],
-                                      gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
-            Input::ProcessEventButton(controller.buttons[Button::DpadRight],
-                                      gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
-
-            // --- Analog inputs ---
-            controller.leftTrigger = gamepad.bLeftTrigger / 255.0f;
-            controller.rightTrigger = gamepad.bRightTrigger / 255.0f;
-            controller.leftX = std::clamp(static_cast<f32>(gamepad.sThumbLX) / 32767.0f, -1.0f, 1.0f);
-            controller.leftY = std::clamp(static_cast<f32>(gamepad.sThumbLY) / 32767.0f, -1.0f, 1.0f);
-            controller.rightX = std::clamp(static_cast<f32>(gamepad.sThumbRX) / 32767.0f, -1.0f, 1.0f);
-            controller.rightY = std::clamp(static_cast<f32>(gamepad.sThumbRY) / 32767.0f, -1.0f, 1.0f);
-
-            // --- Deadzone filtering ---
-            auto applyDeadzone = [](f32& x, f32& y, f32 deadzone)
-            {
-                const f32 magnitudeSq = x * x + y * y;
-                const f32 deadzoneSq = deadzone * deadzone;
-
-                if (magnitudeSq < deadzoneSq)
-                {
-                    x = 0.0f;
-                    y = 0.0f;
-                }
-                else
-                {
-                    const f32 magnitude = std::sqrt(magnitudeSq);
-                    const f32 scale = std::clamp((magnitude - deadzone) / (1.0f - deadzone), 0.0f, 1.0f);
-                    x *= scale;
-                    y *= scale;
-                }
-            };
-
-            applyDeadzone(controller.leftX, controller.leftY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE / 32767.0f);
-            applyDeadzone(controller.rightX, controller.rightY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE / 32767.0f);
-
-            // --- Vibration ---
-            if (XInputSetStateFn && (controller.leftMotorVibration > 0.0f || controller.rightMotorVibration > 0.0f))
-            {
-                XINPUT_VIBRATION vib = {
-                    .wLeftMotorSpeed = static_cast<WORD>(controller.leftMotorVibration * MAX_VIBRATION),
-                    .wRightMotorSpeed = static_cast<WORD>(controller.rightMotorVibration * MAX_VIBRATION)
-                };
-                XInputSetStateFn(ctrlIdx, &vib);
-            }
-        }
-        else
-        {
-            // --- Controller disconnected ---
-            if (controller.connected)
-            {
-                controller.connected = false;
-                controller.lastPacket = 0;
-                controller.leftTrigger = controller.rightTrigger = 0.0f;
-                controller.leftX = controller.leftY = controller.rightX = controller.rightY = 0.0f;
-                controller.leftMotorVibration = controller.rightMotorVibration = 0.0f;
-
-                for (auto& b : controller.buttons)
-                {
-                    b = {}; // clear ButtonState
-                }
-            }
-        }
-    }
-}
-
 
 Keyboard::Key MapKeys(WPARAM wParam, LPARAM lParam)
 {
@@ -254,6 +116,46 @@ Keyboard::Key MapKeys(WPARAM wParam, LPARAM lParam)
         return static_cast<Keyboard::Key>(Keyboard::Key::Num0 + (wParam - '0'));
 
     return Keyboard::Key::Unknown;
+}
+
+bool IsSystemDarkModeEnabled()
+{
+    HKEY hKey;
+    LPCWSTR subkey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS)
+    {
+        DWORD value = 1;
+        DWORD size = sizeof(value);
+        if (RegQueryValueExW(hKey, L"AppsUseLightTheme", nullptr, nullptr, (LPBYTE)&value, &size) == ERROR_SUCCESS)
+        {
+            RegCloseKey(hKey);
+            return value == 0;
+        }
+        RegCloseKey(hKey);
+    }
+    return false;
+}
+
+void ApplyModernTheme(HWND hwnd)
+{
+    BOOL isDark = IsSystemDarkModeEnabled();
+
+    // Dark Mode (Win10 1809+ and Win11)
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &isDark, sizeof(isDark));
+
+    // Rounded Corners (Win11 only)
+    DWORD cornerPreference = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPreference, sizeof(cornerPreference));
+
+    // Custom Title Bar Color (Win11 only)
+    if (isDark)
+    {
+        COLORREF captionColor = RGB(20, 20, 20); // Match your engine's dark UI
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &captionColor, sizeof(captionColor));
+    }
+
+    // Force redraw for frame change
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 }
 
 void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mode)
@@ -337,6 +239,9 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
         ShowMessageBox("Failed to create window.", "Error", MessageBoxType::Error);
     }
 
+
+    ApplyModernTheme(static_cast<HWND>(window->handle));
+
     // for laptops/double-checking
     HMONITOR hMonitor = MonitorFromWindow(window->GetHandle<HWND>(), MONITOR_DEFAULTTONEAREST);
     MONITORINFOEX monitorInfo = {};
@@ -354,9 +259,6 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
 
     // Dpi!!
     window->dpiScale = static_cast<float>(GetDpiForWindow(window->GetHandle<HWND>())) / USER_DEFAULT_SCREEN_DPI;
-
-    // Xinput!!
-    LoadXInput();
 
     // GameInput!!
     gameInput.Init();
@@ -458,6 +360,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     switch (msg)
     {
+    case WM_SETTINGCHANGE:
+        // Check if the system theme color set changed
+        if (lParam && wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0)
+        {
+            ApplyModernTheme(hwnd);
+        }
+        break;
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -602,7 +511,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         {
             if (window == nullptr) break;
 
-            const bool wasMinimized = window->displayState.isMinimized;
 
             if (wParam == SIZE_MINIMIZED)
             {
@@ -613,14 +521,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             {
                 window->displayState.isMinimized = false;
                 window->displayState.isResized = true;
-
-                // // If we were minimized and now we're restored, reset timer to prevent huge deltaTime
-                // if (wasMinimized)
-                // {
-                // 	LARGE_INTEGER currentTime;
-                // 	QueryPerformanceCounter(&currentTime);
-                // 	window->lastFrameTime = static_cast<f64>(currentTime.QuadPart);
-                // }
             }
 
             window->windowWidth = LOWORD(lParam);
@@ -655,46 +555,67 @@ bool Platform::ShowMessageBox(std::string_view message, std::string_view title, 
     const std::wstring wideMsg = ConvertToWideString(message);
     const std::wstring wideTitle = ConvertToWideString(title);
 
-    switch (MessageBox(nullptr, wideMsg.c_str(), wideTitle.c_str(), flags))
+    // Standard Win32 MessageBox call
+    int result = MessageBox(nullptr, wideMsg.c_str(), wideTitle.c_str(), flags);
+
+    if (type == MessageBoxType::Error && result == IDCANCEL)
     {
-    case IDCANCEL:
-        {
 #ifndef NDEBUG
-            int flag = _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG);
-            flag ^= _CRTDBG_LEAK_CHECK_DF;
-            _CrtSetDbgFlag(flag);
+        // Cleanup debug flags before exiting
+        int flag = _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG);
+        flag ^= _CRTDBG_LEAK_CHECK_DF;
+        _CrtSetDbgFlag(flag);
 #endif
-            _exit(EXIT_FAILURE);
-            break;
-        }
-    case IDYES: return true;
-    case IDNO: return false;
-    case IDOK: return true;
-    default: return false;
+        _exit(EXIT_FAILURE);
     }
+
+    return (result == IDYES || result == IDOK);
 }
 
 void Platform::StartFrame(WindowContext& window)
 {
     LARGE_INTEGER currentTime;
     QueryPerformanceCounter(&currentTime);
-    const f64 currentTicks = static_cast<f64>(currentTime.QuadPart);
+    f64 currentTicks = static_cast<f64>(currentTime.QuadPart);
 
-    // Calculate delta time in seconds
+    if (!window.displayState.isFocused)
+    {
+        const f64 elapsedMs = ((currentTicks - window.lastFrameTime) / static_cast<f64>(window.perfCountFrequency)) *
+            1000.0;
+
+        if (elapsedMs < static_cast<f64>(BACKGROUND_FRAME_TIME))
+        {
+            const f64 sleepMs = static_cast<f64>(BACKGROUND_FRAME_TIME) - elapsedMs;
+            Sleep(static_cast<DWORD>(sleepMs));
+
+            QueryPerformanceCounter(&currentTime);
+            currentTicks = static_cast<f64>(currentTime.QuadPart);
+        }
+    }
+
     const f64 deltaTicks = currentTicks - window.lastFrameTime;
     window.deltaTime = deltaTicks / static_cast<f64>(window.perfCountFrequency);
 
-    // Accumulate total elapsed time
     window.elapsedTime += window.deltaTime;
 
-    // Calculate derived timing values
-    window.frameTime = static_cast<f32>(window.deltaTime * 1000.0); // Convert to milliseconds
-    window.fps = (window.deltaTime > 0.0) ? static_cast<f32>(1.0 / window.deltaTime) : 0.0f;
+    window.frameTime = static_cast<f32>(window.deltaTime * 1000.0);
 
-    // Save current time for next frame
+    // Store current frame time in the circular buffer
+    window.frameTimeBuffer[window.frameBufferIndex] = window.frameTime;
+    window.frameBufferIndex = (window.frameBufferIndex + 1) % 60;
+
+    // Calculate Average
+    f32 totalTime = 0;
+    for (int i = 0; i < 60; i++)
+    {
+        totalTime += window.frameTimeBuffer[i];
+    }
+    const f32 averageFrameTime = totalTime / 60.0f;
+
+    window.fps = (averageFrameTime > 0.0f) ? (1000.0f / averageFrameTime) : 0.0f;
+
     window.lastFrameTime = currentTicks;
 }
-
 void Platform::ShowWindow(const WindowContext& window)
 {
     ::ShowWindow(static_cast<HWND>(window.handle), SW_NORMAL);
@@ -816,9 +737,22 @@ bool Platform::WrapCursorToOppositeEdge(const WindowContext* window, i32 margin)
     return false;
 }
 
-void Platform::HideCursor(bool show)
+void Platform::SetCursorVisible(bool show)
 {
-    ShowCursor(show ? 1 : 0);
+    CURSORINFO ci = {sizeof(CURSORINFO)};
+    if (GetCursorInfo(&ci))
+    {
+        bool isCurrentlyVisible = (ci.flags & CURSOR_SHOWING) != 0;
+        if (show != isCurrentlyVisible)
+        {
+            // ShowCursor returns the new visibility level.
+            // We loop to ensure we override any previous nested calls.
+            if (show) while (ShowCursor(TRUE) < 0)
+            {
+            }
+            else while (ShowCursor(FALSE) >= 0);
+        }
+    }
 }
 
 bool GetClientRectOnScreen(HWND hwnd, RECT& rect)
@@ -851,32 +785,22 @@ bool GetClientRectOnScreen(HWND hwnd, RECT& rect)
     return true;
 }
 
-void Platform::LockCursor(WindowContext& wc, bool enable)
+void Platform::SetCursorLocked(const WindowContext* wc, bool locked)
 {
-    HWND hwnd = static_cast<HWND>(wc.handle);
-    if (IsWindow(hwnd) == 0) return;
-
-    if (enable)
+    const auto hwnd = static_cast<HWND>(wc->handle);
+    if (locked)
     {
-        RECT screenClip{};
-        if (!GetClientRectOnScreen(hwnd, screenClip)) return;
-
-        // Constrain pointer + route mouse to our window.
-        ClipCursor(&screenClip);
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+        MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&rect), 2);
+        ClipCursor(&rect);
         SetCapture(hwnd);
-
-        // Hide cursor and mark locked.
-        HideCursor(false);
-
-        // Warp once on transition
-        CenterMouse(&wc);
     }
     else
     {
         // Release everything.
         ClipCursor(nullptr);
         ReleaseCapture();
-        HideCursor(true);
     }
 }
 

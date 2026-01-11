@@ -3,6 +3,9 @@
 #include <initializer_list>
 #include <utility>
 
+#include <memory>   // construct_at AND destroy_at
+#include <cstring>  // memcpy
+
 #ifdef USE_SMALL_VECTOR
     using vecSizeType = u32;
 #else
@@ -61,7 +64,10 @@ public:
 
     Vector(const T* first, const T* last)
     {
-        m_size = static_cast<vecSizeType>(last - first);
+        const ptrdiff_t diff = last - first;
+        assert(diff >= 0 && "Last pointer must be after first");
+
+        m_size = static_cast<vecSizeType>(diff);
         m_capacity = m_size;
         m_data = allocate(m_capacity);
         for (vecSizeType i = 0; i < m_size; ++i)
@@ -147,6 +153,21 @@ public:
         return *this;
     }
 
+    bool operator==(const Vector& other) const
+    {
+        if (m_size != other.m_size) return false;
+        for (vecSizeType i = 0; i < m_size; i++)
+        {
+            if (!(m_data[i] == other.m_data[i])) return false;
+        }
+        return true;
+    }
+
+    bool operator!=(const Vector& other) const
+    {
+        return !(*this == other);
+    }
+
     ~Vector()
     {
         clear();
@@ -192,13 +213,29 @@ public:
 
     void reserve(vecSizeType newCapacity)
     {
+        if constexpr (sizeof(vecSizeType) < sizeof(size_t)) {
+            assert(newCapacity >= m_capacity && "Vector capacity overflow!");
+        }
+
         if (newCapacity <= m_capacity) return;
 
         T* newData = allocate(newCapacity);
-        for (vecSizeType i = 0; i < m_size; i++)
+        if constexpr (std::is_trivially_copyable_v<T>)
         {
-            new(newData + i) T(std::move(m_data[i]));
-            m_data[i].~T();
+            if (m_data)
+            {
+                // Fast Path: Just a raw memory copy.
+                memcpy(newData, m_data, m_size * sizeof(T));
+            }
+        }
+        else
+        {
+            // Safe Path: For complex objects that need their constructors called.
+            for (vecSizeType i = 0; i < m_size; i++)
+            {
+                std::construct_at(newData + i, std::move(m_data[i]));
+                std::destroy_at(m_data + i);
+            }
         }
 
         deallocate(m_data);
@@ -211,16 +248,24 @@ public:
         if (newSize > m_capacity)
             reserve(newSize);
 
-        // Construct new elements (default-construct)
-        for (vecSizeType i = m_size; i < newSize; i++)
+        if (newSize > m_size)
         {
-            new(m_data + i) T();
+            // Adding new elements
+            for (vecSizeType i = m_size; i < newSize; i++)
+            {
+                std::construct_at(m_data + i);
+            }
         }
-
-        // Destroy excess elements if shrinking
-        for (vecSizeType i = newSize; i < m_size; i++)
+        else if (newSize < m_size)
         {
-            m_data[i].~T();
+            // Shrinking: Destroy the extras
+            if constexpr (!std::is_trivially_destructible_v<T>)
+            {
+                for (vecSizeType i = newSize; i < m_size; i++)
+                {
+                    std::destroy_at(m_data + i);
+                }
+            }
         }
 
         m_size = newSize;
@@ -278,12 +323,16 @@ public:
     {
         if (position >= m_size)
             return;
-        m_data[position].~T();
+
+        // Shift elements left by assigning the next one over
+        // This is safer than manual placement-new in the same buffer
         for (vecSizeType i = position; i < m_size - 1; i++)
         {
-            new(m_data + i) T(std::move(m_data[i + 1]));
-            m_data[i + 1].~T();
+            m_data[i] = std::move(m_data[i + 1]);
         }
+
+        // Explicitly destroy the last element since it's now a duplicate/garbage
+        m_data[m_size - 1].~T();
         m_size--;
     }
 
@@ -305,13 +354,23 @@ public:
         if (m_size >= m_capacity)
             reserve(m_capacity == 0 ? 1 : m_capacity * 2);
 
-        for (vecSizeType i = m_size; i > idx; i--)
+        if (idx == m_size)
         {
-            new (m_data + i) T(std::move(m_data[i - 1]));
-            m_data[i - 1].~T();
+            push_back(object);
+            return;
         }
 
-        new (m_data + idx) T(object);
+        // Construct the last element into the uninitialized slot first
+        new (m_data + m_size) T(std::move(m_data[m_size - 1]));
+
+        // Move existing elements upward to make room at idx
+        for (vecSizeType i = m_size - 1; i > idx; i--)
+        {
+            m_data[i] = std::move(m_data[i - 1]);
+        }
+
+        // Assign the new object to the now-vacant index
+        m_data[idx] = object;
         m_size++;
     }
 
@@ -352,9 +411,12 @@ public:
 
     void clear()
     {
-        for (vecSizeType i = 0; i < m_size; ++i)
+        if constexpr (!std::is_trivially_destructible_v<T>)
         {
-            m_data[i].~T();
+            for (vecSizeType i = 0; i < m_size; ++i)
+            {
+                m_data[i].~T();
+            }
         }
         m_size = 0;
     }

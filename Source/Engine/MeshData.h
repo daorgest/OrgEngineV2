@@ -7,13 +7,11 @@
 
 #include <string>
 
-#include <type_traits>  // std::underlying_type_t
-#include <utility>      // std::to_underlying (C++23)
-
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 
 #include "AABB.h"
+#include "ShaderParams.h"
 
 struct Vertex
 {
@@ -44,12 +42,14 @@ struct MeshPart
 	u32 indexCount = 0;
 	u32 firstIndex = 0;     // Offset into the Mesh's global index buffer
 	u32 vertexOffset = 0;   // Offset to add to each index (base vertex)
+
+	glm::mat4 localTransform = glm::mat4(1.0f);
 };
 
 struct Mesh
 {
-	Vector<MeshPart> parts;
 	std::string name;
+	Vector<MeshPart> parts;
 	Vector<Vertex> unifiedVertices;
 	Vector<u32> unifiedIndices;
 };
@@ -66,6 +66,8 @@ struct Material
 	std::string roughnessPath;  // PBR roughness map
 	std::string metallicPath;   // PBR metallic map
 	std::string aoPath;          // Ambient occlusion map
+
+	MaterialType materialType = MaterialType::Opaque;
 
 	// PBR material properties (fallback values if no textures)
 	glm::vec3 baseColor = glm::vec3(1.0f);  // Base albedo color (Kd in MTL)

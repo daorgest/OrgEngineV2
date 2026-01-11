@@ -14,103 +14,122 @@ namespace Renderer
 	struct VulkanDevice;
 
 	/// Vulkan implementation of GPUTexture
-	struct VulkanImage final : GPUTexture
+	struct VulkanTexture final : GPUTexture
 	{
 		// RHI interface implementation
 		void Init(GPUDevice* device, const TextureInfo& info) override;
 		void Destroy() override;
 		void UploadData(const void* data) override;
-		void TransitionLayout(void* cmdBuffer, TextureLayout newLayout) override;
-		void GenerateMipmaps(void* cmdBuffer) override;
 
 		// Vulkan-specific initialization (backward compatibility)
 		void Init(VulkanDevice* device, TextureInfo& info);
 
 		// Constructors
-		VulkanImage() = default;
-		VulkanImage(VulkanDevice* device, TextureInfo& info);
-		VulkanImage(VulkanDevice* device, VkImage image);
+		VulkanTexture() = default;
+		VulkanTexture(VulkanDevice* device, TextureInfo& info);
+		VulkanTexture(VulkanDevice* device, VkImage image);
 
-		// C++23: Delete copy, allow move
-		VulkanImage(const VulkanImage&) = delete;
-		VulkanImage& operator=(const VulkanImage&) = delete;
-		VulkanImage(VulkanImage&&) noexcept = default;
-		VulkanImage& operator=(VulkanImage&&) noexcept = default;
+		VulkanTexture(const VulkanTexture&) = delete;
+		VulkanTexture& operator=(const VulkanTexture&) = delete;
+		VulkanTexture(VulkanTexture&& other) noexcept
+		{
+			*this = std::move(other);
+		}
+		VulkanTexture& operator=(VulkanTexture&& other) noexcept
+		{
+			if (this != &other)
+			{
+				Destroy();
 
-		// ~VulkanImage() override { Destroy(); }
+				// Transfer all handles and state
+				image = other.image;
+				imageView = other.imageView;
+				allocation = other.allocation;
+				device = other.device;
+				allocInfo = other.allocInfo;
+				imageFormat = other.imageFormat;
+				imageLayout = other.imageLayout;
+				subresourceRange = other.subresourceRange;
+				textureInfo = other.textureInfo;
+				owns = other.owns;
+
+				// IMPORTANT: Null out the source so its destructor is a no-op
+				other.image = VK_NULL_HANDLE;
+				other.imageView = VK_NULL_HANDLE;
+				other.allocation = VK_NULL_HANDLE;
+				other.owns = false;
+			}
+			return *this;
+		}
+
+		~VulkanTexture() override { Destroy(); }
 
 		// Vulkan-specific helpers
-		void MakeSampleable(VkCommandBuffer cmd);
-		void PrepareAsRenderTarget(VkCommandBuffer cmd);
-		void CopyFrom(VkCommandBuffer cmd, const VulkanImage& src) const;
 		void UploadTextureToGPU(const void* data, const TextureInfo& texInfo);
 		void CreateImageView(VkFormat format);
 		void FillSubresourceInfo();
-		void Transition(VkCommandBuffer cmd, TextureLayout newLayout);  // Single-parameter version
-		void Transition(VkCommandBuffer cmd, TextureLayout oldLayout, TextureLayout newLayout);  // Two-parameter version
-
-		static void GenerateMipmaps(VkCommandBuffer cmd, const VulkanImage& image);
-
-		// Fallback image handlers
-		static VulkanImage CreateCheckerboardTexture(VulkanDevice& device);
-		static VulkanImage CreateDefaultNormalMap(VulkanDevice& device);
-
-		// Vulkan-specific accessors
-		[[nodiscard]] VkImage GetVkImage() const noexcept { return image; }
-		[[nodiscard]] VkImageView GetVkImageView() const noexcept { return imageView; }
-		[[nodiscard]] VkFormat GetVkFormat() const noexcept { return imageFormat; }
+		void InitializeLayout(VkCommandBuffer cmd);
+		void SetName(const std::string& name) override;
 
 		// Public Vulkan handles for compatibility
 		VkImage                 image = VK_NULL_HANDLE;
 		VkImageView             imageView = VK_NULL_HANDLE;
 		VmaAllocation           allocation = VK_NULL_HANDLE;
-		VulkanDevice*           device = nullptr;
 		VmaAllocationInfo       allocInfo = {};
+		VulkanDevice*           device = nullptr;
 		VkFormat                imageFormat = VK_FORMAT_UNDEFINED;
 		TextureLayout           imageLayout = TextureLayout::Unknown;
 		VkImageSubresourceRange subresourceRange = {};
 		TextureInfo             textureInfo = {};
+		bool owns = false;
 	};
 
 	struct VulkanImageView
 	{
 		VkImageView imageView = VK_NULL_HANDLE;
-		VulkanImage* image = nullptr;
+		VulkanTexture* image = nullptr;
 
-		VulkanImageView(VulkanImage* device, TextureViewInfo& texViewInfo);
+		VulkanImageView(VulkanTexture* device, TextureViewInfo& texViewInfo);
 		~VulkanImageView();
 	};
 
-	/// Vulkan implementation of GPUSampler
-	/// Marked final to enable compiler devirtualization (C++23)
+
 	struct VulkanSampler final : GPUSampler
 	{
-		// RHI interface implementation
-		void Init(GPUDevice* device, const SamplerDesc& inputDesc) override;
-		void Destroy() override;
-
-		// Vulkan-specific initialization (backward compatibility)
-		void Init(VulkanDevice* device, const SamplerDesc& inputDesc);
-
-		// Constructors
 		VulkanSampler() = default;
-		VulkanSampler(VulkanDevice* device, const SamplerDesc& desc); // Implemented in .cpp
 
-		// C++23: Delete copy, allow move
-		VulkanSampler(const VulkanSampler&) = delete;
-		VulkanSampler& operator=(const VulkanSampler&) = delete;
-		VulkanSampler(VulkanSampler&&) noexcept = default;
-		VulkanSampler& operator=(VulkanSampler&&) noexcept = default;
+		VulkanSampler(VulkanDevice* dev, const SamplerInfo& desc) {
+			Init(dev, desc);
+		}
 
-		// ~VulkanSampler() override { Destroy(); }
+		void Init(VulkanDevice* dev, const SamplerInfo& desc);
 
-		// Vulkan-specific accessor
-		[[nodiscard]] VkSampler GetVkSampler() const noexcept { return sampler; }
+		void Destroy() const;
+		~VulkanSampler() override { Destroy(); }
+
+		VulkanSampler(VulkanSampler&& other) noexcept
+		{
+			*this = std::move(other);
+		}
+
+		VulkanSampler& operator=(VulkanSampler&& other) noexcept
+		{
+			if (this != &other)
+			{
+				Destroy();
+
+				sampler = other.sampler;
+				device  = other.device;
+
+				other.sampler = VK_NULL_HANDLE;
+				other.device  = nullptr;
+			}
+			return *this;
+		}
 
 		// Public Vulkan handles for compatibility
 		VkSampler sampler = VK_NULL_HANDLE;
 		VulkanDevice* device = nullptr;
-		SamplerDesc desc = {};
 	};
 
 } // namespace Renderer

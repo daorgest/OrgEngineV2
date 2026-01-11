@@ -5,4 +5,4 @@
 #pragma once
 #include "../../Engine/MeshData.h"
 
-void GenerateMikkTangents(Vertex* verts, uint32_t vertCount, const uint32_t* indices, uint32_t indexCount);
+void GenerateMikkTangents(const std::span<Vertex> vertices, const std::span<const uint32_t> indices);

@@ -12,11 +12,11 @@
 #include "MeshStats.h"
 #include "RendererTypes.h"
 #include "VulkanConvert.h"
+#include "VulkanDevice.h"
 #include "VulkanSwapchain.h"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include "glm/gtx/norm.hpp"
-#include "Input/InputSys.h"
 #ifndef IMGUI_DISABLE
 #include <imgui.h>
 #include <backends/imgui_impl_vulkan.h>
@@ -32,105 +32,110 @@
 
 void EditorUI::InitEditorStyles()
 {
-    ImGuiStyle& style = ImGui::GetStyle();
+ ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    colors[ImGuiCol_TextDisabled] = ImVec4(0.35f, 0.63f, 0.78f, 1.00f);
-    colors[ImGuiCol_WindowBg] = ImVec4(0.13f, 0.13f, 0.13f, 0.94f);
-    colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.19f);
-    colors[ImGuiCol_PopupBg] = ImVec4(0.00f, 0.32f, 0.39f, 0.94f);
-    colors[ImGuiCol_Border] = ImVec4(0.62f, 0.62f, 0.62f, 1.00f);
-    colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_FrameBg] = ImVec4(0.00f, 0.38f, 0.44f, 0.66f);
-    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.00f, 0.36f, 0.33f, 0.36f);
-    colors[ImGuiCol_FrameBgActive] = ImVec4(0.26f, 0.59f, 0.98f, 0.67f);
-    colors[ImGuiCol_TitleBg] = ImVec4(0.12f, 0.36f, 0.37f, 1.00f);
-    colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 0.63f, 0.36f, 0.78f);
-    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.00f, 0.00f, 0.00f, 0.51f);
-    colors[ImGuiCol_MenuBarBg] = ImVec4(0.37f, 0.37f, 0.37f, 1.00f);
-    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.02f, 0.02f, 0.02f, 0.53f);
-    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.31f, 0.31f, 0.31f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.41f, 0.41f, 0.41f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.51f, 0.51f, 0.51f, 1.00f);
-    colors[ImGuiCol_CheckMark] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    colors[ImGuiCol_SliderGrab] = ImVec4(0.26f, 0.64f, 0.69f, 1.00f);
-    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    colors[ImGuiCol_Button] = ImVec4(0.00f, 0.60f, 0.55f, 0.42f);
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.00f, 0.83f, 0.79f, 1.00f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.69f, 0.82f, 0.96f, 1.00f);
-    colors[ImGuiCol_Header] = ImVec4(0.00f, 0.36f, 0.33f, 0.46f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.71f, 0.69f, 0.54f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.43f, 0.50f, 0.59f, 1.00f);
-    colors[ImGuiCol_Separator] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
-    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.10f, 0.40f, 0.75f, 0.78f);
-    colors[ImGuiCol_SeparatorActive] = ImVec4(0.10f, 0.40f, 0.75f, 1.00f);
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.26f, 0.59f, 0.98f, 0.20f);
-    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.74f, 0.26f, 0.98f, 0.67f);
-    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.55f, 0.26f, 0.98f, 0.95f);
-    colors[ImGuiCol_InputTextCursor] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-    colors[ImGuiCol_TabHovered] = ImVec4(0.00f, 0.71f, 0.69f, 0.77f);
-    colors[ImGuiCol_Tab] = ImVec4(0.13f, 0.13f, 0.13f, 0.85f);
-    colors[ImGuiCol_TabSelected] = ImVec4(0.00f, 0.71f, 0.69f, 0.56f);
-    colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.28f, 0.69f, 0.91f, 1.00f);
-    colors[ImGuiCol_TabDimmed] = ImVec4(0.23f, 0.23f, 0.23f, 0.62f);
-    colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.14f, 0.26f, 0.42f, 1.00f);
-    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.50f, 0.50f, 0.50f, 0.00f);
-    colors[ImGuiCol_DockingPreview] = ImVec4(0.26f, 0.59f, 0.98f, 0.70f);
-    colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
-    colors[ImGuiCol_PlotLines] = ImVec4(0.67f, 0.71f, 0.00f, 1.00f);
-    colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
-    colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
-    colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
-    colors[ImGuiCol_TableHeaderBg] = ImVec4(0.19f, 0.19f, 0.20f, 1.00f);
-    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.31f, 0.31f, 0.35f, 1.00f);
-    colors[ImGuiCol_TableBorderLight] = ImVec4(0.23f, 0.23f, 0.25f, 1.00f);
-    colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.00f, 1.00f, 1.00f, 0.06f);
-    colors[ImGuiCol_TextLink] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.26f, 0.59f, 0.98f, 0.35f);
-    colors[ImGuiCol_TreeLines] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
-    colors[ImGuiCol_DragDropTarget] = ImVec4(1.00f, 1.00f, 0.00f, 0.90f);
-    colors[ImGuiCol_NavCursor] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
-    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
+    // Catppuccin Mocha Palette
+    // --------------------------------------------------------
+    const ImVec4 base       = ImVec4(0.117f, 0.117f, 0.172f, 1.0f); // #1e1e2e
+    const ImVec4 mantle     = ImVec4(0.109f, 0.109f, 0.156f, 1.0f); // #181825
+    const ImVec4 surface0   = ImVec4(0.200f, 0.207f, 0.286f, 1.0f); // #313244
+    const ImVec4 surface1   = ImVec4(0.247f, 0.254f, 0.337f, 1.0f); // #3f4056
+    const ImVec4 surface2   = ImVec4(0.290f, 0.301f, 0.388f, 1.0f); // #4a4d63
+    const ImVec4 overlay0   = ImVec4(0.396f, 0.403f, 0.486f, 1.0f); // #65677c
+    const ImVec4 overlay2   = ImVec4(0.576f, 0.584f, 0.654f, 1.0f); // #9399b2
+    const ImVec4 text       = ImVec4(0.803f, 0.815f, 0.878f, 1.0f); // #cdd6f4
+    const ImVec4 subtext0   = ImVec4(0.639f, 0.658f, 0.764f, 1.0f); // #a3a8c3
+    const ImVec4 mauve      = ImVec4(0.796f, 0.698f, 0.972f, 1.0f); // #cba6f7
+    const ImVec4 peach      = ImVec4(0.980f, 0.709f, 0.572f, 1.0f); // #fab387
+    const ImVec4 yellow     = ImVec4(0.980f, 0.913f, 0.596f, 1.0f); // #f9e2af
+    const ImVec4 green      = ImVec4(0.650f, 0.890f, 0.631f, 1.0f); // #a6e3a1
+    const ImVec4 teal       = ImVec4(0.580f, 0.886f, 0.819f, 1.0f); // #94e2d5
+    const ImVec4 sapphire   = ImVec4(0.458f, 0.784f, 0.878f, 1.0f); // #74c7ec
+    const ImVec4 blue       = ImVec4(0.533f, 0.698f, 0.976f, 1.0f); // #89b4fa
+    const ImVec4 lavender   = ImVec4(0.709f, 0.764f, 0.980f, 1.0f); // #b4befe
 
+    // Main window and backgrounds
+    colors[ImGuiCol_WindowBg]             = base;
+    colors[ImGuiCol_ChildBg]              = base;
+    colors[ImGuiCol_PopupBg]              = surface0;
+    colors[ImGuiCol_Border]               = surface1;
+    colors[ImGuiCol_BorderShadow]         = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    colors[ImGuiCol_FrameBg]              = surface0;
+    colors[ImGuiCol_FrameBgHovered]       = surface1;
+    colors[ImGuiCol_FrameBgActive]        = surface2;
+    colors[ImGuiCol_TitleBg]              = mantle;
+    colors[ImGuiCol_TitleBgActive]        = surface0;
+    colors[ImGuiCol_TitleBgCollapsed]     = mantle;
+    colors[ImGuiCol_MenuBarBg]            = mantle;
+    colors[ImGuiCol_ScrollbarBg]          = surface0;
+    colors[ImGuiCol_ScrollbarGrab]        = surface2;
+    colors[ImGuiCol_ScrollbarGrabHovered] = overlay0;
+    colors[ImGuiCol_ScrollbarGrabActive]  = overlay2;
+    colors[ImGuiCol_CheckMark]            = green;
+    colors[ImGuiCol_SliderGrab]           = sapphire;
+    colors[ImGuiCol_SliderGrabActive]     = blue;
+    colors[ImGuiCol_Button]               = surface0;
+    colors[ImGuiCol_ButtonHovered]        = surface1;
+    colors[ImGuiCol_ButtonActive]         = surface2;
+    colors[ImGuiCol_Header]               = surface0;
+    colors[ImGuiCol_HeaderHovered]        = surface1;
+    colors[ImGuiCol_HeaderActive]         = surface2;
+    colors[ImGuiCol_Separator]            = surface1;
+    colors[ImGuiCol_SeparatorHovered]     = mauve;
+    colors[ImGuiCol_SeparatorActive]      = mauve;
+    colors[ImGuiCol_ResizeGrip]           = surface2;
+    colors[ImGuiCol_ResizeGripHovered]    = mauve;
+    colors[ImGuiCol_ResizeGripActive]     = mauve;
+    colors[ImGuiCol_Tab]                  = surface0;
+    colors[ImGuiCol_TabHovered]           = surface2;
+    colors[ImGuiCol_TabActive]            = surface1;
+    colors[ImGuiCol_TabUnfocused]         = surface0;
+    colors[ImGuiCol_TabUnfocusedActive]   = surface1;
+    colors[ImGuiCol_DockingPreview]       = sapphire;
+    colors[ImGuiCol_DockingEmptyBg]       = base;
+    colors[ImGuiCol_PlotLines]            = blue;
+    colors[ImGuiCol_PlotLinesHovered]     = peach;
+    colors[ImGuiCol_PlotHistogram]        = teal;
+    colors[ImGuiCol_PlotHistogramHovered] = green;
+    colors[ImGuiCol_TableHeaderBg]        = surface0;
+    colors[ImGuiCol_TableBorderStrong]    = surface1;
+    colors[ImGuiCol_TableBorderLight]     = surface0;
+    colors[ImGuiCol_TableRowBg]           = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    colors[ImGuiCol_TableRowBgAlt]        = ImVec4(1.0f, 1.0f, 1.0f, 0.06f);
+    colors[ImGuiCol_TextSelectedBg]       = surface2;
+    colors[ImGuiCol_DragDropTarget]       = yellow;
+    colors[ImGuiCol_NavHighlight]         = lavender;
+    colors[ImGuiCol_NavWindowingHighlight]= ImVec4(1.0f, 1.0f, 1.0f, 0.7f);
+    colors[ImGuiCol_NavWindowingDimBg]    = ImVec4(0.8f, 0.8f, 0.8f, 0.2f);
+    colors[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.0f, 0.0f, 0.0f, 0.35f);
+    colors[ImGuiCol_Text]                 = text;
+    colors[ImGuiCol_TextDisabled]         = subtext0;
 
-    // Styles
-    style.WindowPadding = ImVec2(12, 10);
-    style.FramePadding = ImVec2(12, 4);
-    style.ItemSpacing = ImVec2(8, 4);
-    style.ItemInnerSpacing = ImVec2(4, 4);
-    style.TouchExtraPadding = ImVec2(0, 0);
-    style.IndentSpacing = 17.0f;
-    style.ScrollbarSize = 15.0f;
-    style.GrabMinSize = 12.0f;
-    style.WindowBorderSize = 1.0f;
-    style.ChildBorderSize = 1.0f;
-    style.PopupBorderSize = 1.0f;
-    style.FrameBorderSize = 0.0f;
-    style.WindowRounding = 8.0f;
-    style.ChildRounding = 3.0f;
-    style.FrameRounding = 5.0f;
-    style.PopupRounding = 4.0f;
+    // Rounded corners
+    style.WindowRounding    = 6.0f;
+    style.ChildRounding     = 6.0f;
+    style.FrameRounding     = 4.0f;
+    style.PopupRounding     = 4.0f;
     style.ScrollbarRounding = 9.0f;
-    style.GrabRounding = 3.0f;
-    style.TabBorderSize = 1.0f;
-    style.TabBarBorderSize = 2.0f;
-    style.TabRounding = 5.0f;
-    style.CellPadding = ImVec2(6, 4);
-    style.TableAngledHeadersAngle = 22.0f;
-    style.TableAngledHeadersTextAlign = ImVec2(0.50f, 0.00f);
-    style.WindowTitleAlign = ImVec2(0.00f, 0.50f);
-    style.WindowBorderHoverPadding = 3.0f;
-    style.WindowMenuButtonPosition = ImGuiDir_Right;
-    style.ColorButtonPosition = ImGuiDir_Left;
-    style.SelectableTextAlign = ImVec2(0.00f, 0.50f);
-    style.SeparatorTextAlign = ImVec2(0.50f, 0.50f);
-    style.SeparatorTextPadding = ImVec2(20.0f, 5.0f);
-    style.LogSliderDeadzone = 4.0f;
-    style.ImageBorderSize = 1.0f;
+    style.GrabRounding      = 4.0f;
+    style.TabRounding       = 4.0f;
+
+    // Padding and spacing
+    style.WindowPadding     = ImVec2(8.0f, 8.0f);
+    style.FramePadding      = ImVec2(5.0f, 3.0f);
+    style.ItemSpacing       = ImVec2(8.0f, 4.0f);
+    style.ItemInnerSpacing  = ImVec2(4.0f, 4.0f);
+    style.IndentSpacing     = 21.0f;
+    style.ScrollbarSize     = 14.0f;
+    style.GrabMinSize       = 10.0f;
+
+    // Borders
+    style.WindowBorderSize  = 1.0f;
+    style.ChildBorderSize   = 1.0f;
+    style.PopupBorderSize   = 1.0f;
+    style.FrameBorderSize   = 0.0f;
+    style.TabBorderSize     = 0.0f;
 }
 
 // For multi-viewport support
@@ -174,7 +179,7 @@ bool EditorUI::Init(const Renderer::VulkanInstance* instance, const Renderer::Vu
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-    io.ConfigFlags |= ImGuiConfigFlags_IsSRGB;
+    // io.ConfigFlags |= ImGuiConfigFlags_IsSRGB;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.ConfigDpiScaleFonts = true;
     io.ConfigDebugHighlightIdConflicts = true;
@@ -272,14 +277,14 @@ void EditorUI::EndFrame()
     ImGui::UpdatePlatformWindows();
 }
 
-void EditorUI::Render(const VkCommandBuffer cmd)
+void EditorUI::Render(Renderer::GPUCommandBuffer* cmd)
 {
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+    const auto* vkCmd = static_cast<Renderer::VulkanCommandBuffer*>(cmd);
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), vkCmd->GetVkHandle());
 }
 
-void EditorUI::DrawCameraGizmo(const Camera* camera)
+void EditorUI::DrawCameraGizmo(CameraComponent& camComp)
 {
-    glm::mat4 view = camera->GetViewMatrix();
     const glm::mat4 proj = glm::perspective(Radians(90.0f), 1.0f, 0.1f, 1000.0f);
 
     // Use viewport work area like stats overlay (accounts for menu bar and docking)
@@ -299,102 +304,84 @@ void EditorUI::DrawCameraGizmo(const Camera* camera)
     ImOGuizmo::SetRect(xPos, yPos, gizmoSize);
     ImOGuizmo::SetDrawList(ImGui::GetForegroundDrawList(const_cast<ImGuiViewport*>(viewport)));
     ImOGuizmo::BeginFrame();
-    ImOGuizmo::DrawGizmo(glm::value_ptr(view), glm::value_ptr(proj), 5.0f);
+    ImOGuizmo::DrawGizmo(glm::value_ptr(camComp.base.view), glm::value_ptr(proj), 5.0f);
 }
 
-void EditorUI::DrawCameraProperties(Camera& camera)
+void EditorUI::DrawCameraEditor()
 {
-    ImGui::TextUnformatted("Camera");
+    // 1. Selection List using the span in state
+    if (ImGui::BeginListBox("##SceneCameras", ImVec2(-FLT_MIN, 120)))
+    {
+        for (u32 i = 0; i < state.cameraComponents.size(); ++i)
+        {
+            const bool isActive = (i == state.activeCameraIdx);
+            const bool isSelected = (i == state.selectedCameraIdx);
+            char label[64];
+            std::snprintf(label, sizeof(label), "%s Camera %u", isActive ? "[VIEWING]" : "[IDLE]", i);
+
+            if (ImGui::Selectable(label, isSelected))
+            {
+                state.selectedCameraIdx = i;
+            }
+        }
+        ImGui::EndListBox();
+    }
+
     ImGui::Separator();
 
-    // 2-column property table: Label | Control
-    if (ImGui::BeginTable("CameraProps", 2,
-                          ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg))
+    const u32 selIdx = state.selectedCameraIdx;
+    if (selIdx < state.cameraComponents.size())
     {
-        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        CameraComponent& targetComp = state.cameraComponents[selIdx];
+
+        if (ImGui::Button("Possess Camera")) state.activeCameraIdx = selIdx;
+        ImGui::SameLine();
+        if (ImGui::Button("Snap to Me"))
+        {
+            const CameraComponent& activeComp = state.cameraComponents[state.activeCameraIdx];
+            targetComp.position = activeComp.position;
+            targetComp.base.yaw = activeComp.base.yaw;
+            targetComp.base.pitch = activeComp.base.pitch;
+        }
+
+        DrawCameraProperties(targetComp);
+    }
+}
+
+void EditorUI::DrawCameraProperties(CameraComponent& camComp)
+{
+    ImGui::SeparatorText("Selected Camera Settings");
+
+    if (ImGui::BeginTable("CameraProps", 2, ImGuiTableFlags_RowBg))
+    {
+        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 100.0f);
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
-        auto Row = [](const char* label, auto drawWidget)
-        {
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(label);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted("Position");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::DragFloat3("##pos", glm::value_ptr(camComp.position), 0.1f);
+        if (ImGui::SmallButton("Reset Pos")) camComp.position = {0, 5, 0};
 
-            ImGui::TableSetColumnIndex(1);
-            drawWidget();
-        };
+        // --- FOV ---
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted("FOV");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::SliderFloat("##CameraFOV", &camComp.base.fov, 5.0f, 160.0f);
 
-        // Position
-        Row("Position", [&]
-        {
-            ImGui::PushID("pos");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("World-space position (XYZ)");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset")) camera.position = {0.0f, 0.0f, 0.0f};
-            ImGui::PopID();
-        });
-
-        // Forward (normalized)
-        Row("Forward", [&]
-        {
-            ImGui::PushID("fwd");
-            bool changed = ImGui::DragFloat3("##value", glm::value_ptr(camera.forward), 0.01f, -1.0f, 1.0f, "%.3f");
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("View direction. Will be normalized.");
-            // Normalize to keep it a proper direction vector
-            if (changed)
-            {
-                if (glm::length2(camera.forward) > 1e-8f)
-                    camera.forward = glm::normalize(camera.forward);
-                else
-                    camera.forward = {0, 0, -1};
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset")) camera.forward = {0.0f, 0.0f, -1.0f};
-            ImGui::PopID();
-        });
-
-        // FOV (deg)
-        Row("FOV (deg)", [&]
-        {
-            ImGui::PushID("fov");
-            if (ImGui::SliderFloat("##value", &camera.fov, 10.0f, 120.0f, "%.1f"))
-            {
-                camera.fov = glm::clamp(camera.fov, 1.0f, 179.0f);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vertical field-of-view in degrees");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset")) camera.fov = 60.0f;
-            ImGui::PopID();
-        });
-
-        // Near/Far
-        Row("Near / Far", [&]
-        {
-            ImGui::PushID("nf");
-            float nf[2] = {camera.nearPlane, camera.farPlane};
-            if (ImGui::InputFloat2("##value", nf, "%.3f"))
-            {
-                camera.nearPlane = glm::max(0.001f, nf[0]);
-                camera.farPlane = glm::max(camera.nearPlane + 0.001f, nf[1]);
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip(
-                    "Clip planes. Keep near as large as possible for depth precision.");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Tighten"))
-            {
-                // optional helper to keep reasonable defaults
-                camera.nearPlane = 0.05f;
-                camera.farPlane = 2000.0f;
-            }
-            ImGui::PopID();
-        });
+        // --- Clipping Planes ---
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted("Near/Far");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::InputFloat("Near", &camComp.base.nearPlane);
+        ImGui::InputFloat("Far", &camComp.base.farPlane);
 
         ImGui::EndTable();
     }
 }
-
 void EditorUI::HoverToolTip(const char* tooltip)
 {
     if (ImGui::IsItemHovered())
@@ -405,7 +392,21 @@ void EditorUI::HoverToolTip(const char* tooltip)
     }
 }
 
-void EditorUI::DrawCameraSpeedPopup(f32 camSpeedPopupTime)
+void EditorUI::ClampWindowToViewport()
+{
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 pos = ImGui::GetWindowPos();
+    ImVec2 size = ImGui::GetWindowSize();
+    ImVec2 work_pos = viewport->WorkPos;
+    ImVec2 work_size = viewport->WorkSize;
+
+    // Keep window within viewport bounds
+    pos.x = std::clamp(pos.x, work_pos.x, work_pos.x + work_size.x - size.x);
+    pos.y = std::clamp(pos.y, work_pos.y, work_pos.y + work_size.y - size.y);
+
+    ImGui::SetWindowPos(pos);
+}
+void EditorUI::DrawCameraSpeedPopup(f32 camSpeedPopupTime) const
 {
     if (camSpeedPopupTime <= 0.0f) return;
 
@@ -439,14 +440,15 @@ void EditorUI::DrawCameraSpeedPopup(f32 camSpeedPopupTime)
 
 
     ImGui::PopStyleVar();
-
-    state.cameraSpeed -= ImGui::GetIO().DeltaTime;
     ImGui::End();
 }
 
 
 bool EditorUI::DrawMainMenuBar()
 {
+    if (state.noUI)
+        return false;
+
     bool shouldExit = false;
 
     if (!state.showMenuBar)
@@ -456,6 +458,8 @@ bool EditorUI::DrawMainMenuBar()
     {
         if (ImGui::BeginMenu("File"))
         {
+            if (ImGui::MenuItem("No UI Mode", "F6")) { state.noUI = true; }
+            HoverToolTip("Hide the UI");
             if (ImGui::MenuItem("Exit"))
             {
                 shouldExit = true;
@@ -468,8 +472,6 @@ bool EditorUI::DrawMainMenuBar()
         {
             ImGui::MenuItem("Show Menu Bar", "F3", &state.showMenuBar);
             ImGui::MenuItem("Show GPU Info", "F4", &state.showGPUInfo);
-            // ImGui::MenuItem("Shader Hot Reload", nullptr, &state.shaderHotReloadEnabled);
-            // EditorUI::HoverToolTip("Automatically recompile and reload shaders when .slang files change");
 
             if (ImGui::BeginMenu("Render Views"))
             {
@@ -488,10 +490,10 @@ bool EditorUI::DrawMainMenuBar()
             {
                 for (const auto& [mode, label] : kVsyncModes)
                 {
-                    const bool selected = (state.swapchain->presentMode == mode);
+                    const bool selected = (state.swapchain->GetPresentMode() == mode);
                     if (ImGui::MenuItem(label, nullptr, selected))
                     {
-                        state.swapchain->VsyncEnable(mode);
+                        state.swapchain->SetVsyncMode(mode);
                     }
                     if (selected) { ImGui::SetItemDefaultFocus(); }
                 }
@@ -505,9 +507,31 @@ bool EditorUI::DrawMainMenuBar()
     return shouldExit;
 }
 
+void EditorUI::UpdateAlphaLerp(float& currentAlpha, float minAlpha, float maxAlpha, float speed)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    // Check if the current window being drawn is hovered
+    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+
+    const float target = hovered ? maxAlpha : minAlpha;
+    const float dt = io.DeltaTime;
+
+    if (std::abs(currentAlpha - target) > 0.001f)
+    {
+        currentAlpha = std::lerp(currentAlpha, target, std::clamp(speed * dt, 0.0f, 1.0f));
+    }
+    else
+    {
+        currentAlpha = target;
+    }
+}
+
 void EditorUI::DrawMainOverlay()
 {
+    if (state.noUI) return;
     using namespace ImGui;
+
+    static float overlayAlpha = 0.7f;
 
     const bool showDepthRange =
         state.debugData->debugMode == DebugView::DepthLin ||
@@ -521,29 +545,29 @@ void EditorUI::DrawMainOverlay()
     const ImVec2 work_size = vp->WorkSize;
 
     // Scale pad with DPI/work area; clamp to reasonable range.
-    const float pad = std::clamp(10.0f * vp->DpiScale, 8.0f, 24.0f);
+    const float padding = std::clamp(10.0f * vp->DpiScale, 8.0f, 24.0f);
 
     ImVec2 window_pos;
     ImVec2 window_pivot;
 
     if (corner == TopLeft)
     {
-        window_pos = ImVec2(work_pos.x + pad, work_pos.y + pad);
+        window_pos = ImVec2(work_pos.x + padding, work_pos.y + padding);
         window_pivot = ImVec2(0.0f, 0.0f);
     }
     else if (corner == TopRight)
     {
-        window_pos = ImVec2(work_pos.x + work_size.x - pad, work_pos.y + pad);
+        window_pos = ImVec2(work_pos.x + work_size.x - padding, work_pos.y + padding);
         window_pivot = ImVec2(1.0f, 0.0f);
     }
     else if (corner == BottomLeft)
     {
-        window_pos = ImVec2(work_pos.x + pad, work_pos.y + work_size.y - pad);
+        window_pos = ImVec2(work_pos.x + padding, work_pos.y + work_size.y - padding);
         window_pivot = ImVec2(0.0f, 1.0f);
     }
     else if (corner == BottomRight)
     {
-        window_pos = ImVec2(work_pos.x + work_size.x - pad, work_pos.y + work_size.y - pad);
+        window_pos = ImVec2(work_pos.x + work_size.x - padding, work_pos.y + work_size.y - padding);
         window_pivot = ImVec2(1.0f, 1.0f);
     }
 
@@ -568,16 +592,16 @@ void EditorUI::DrawMainOverlay()
 
     // Max size = screen area minus padding
     const ImVec2 max_size = ImVec2(
-        std::max(150.0f, work_size.x - pad * 2.0f),
-        std::max(80.0f, work_size.y - pad * 2.0f)
+        std::max(150.0f, work_size.x - padding * 2.0f),
+        std::max(80.0f, work_size.y - padding * 2.0f)
     );
 
     // Clamp again just to be safe
     min_size.x = std::clamp(min_size.x, 150.0f, max_size.x);
     min_size.y = std::clamp(min_size.y, 80.0f, max_size.y);
 
-    ImGui::SetNextWindowSizeConstraints(min_size, max_size);
-    ImGui::SetNextWindowBgAlpha(0.7f);
+    ImGui::SetNextWindowBgAlpha(overlayAlpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, overlayAlpha);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration
         | ImGuiWindowFlags_AlwaysAutoResize
@@ -590,6 +614,9 @@ void EditorUI::DrawMainOverlay()
     if (ImGui::Begin("Simple overlay", nullptr, flags))
     {
         // Drag to move only when in Custom mode
+        UpdateAlphaLerp(overlayAlpha, 0.7f, 0.90f, 8.0f);
+        ClampWindowToViewport();
+
         if (corner == Custom)
         {
             ImGui::SetNextItemAllowOverlap();
@@ -612,11 +639,11 @@ void EditorUI::DrawMainOverlay()
 #ifdef ENABLE_GPU_TIMING
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("GPU Draw Time");
-                ImGui::TableSetColumnIndex(1); ImGui::Text("%.3f ms", sceneStats.gpuDrawTime);
+                ImGui::TableSetColumnIndex(1); ImGui::Text("%.3f ms", state.sceneStats->gpuDrawTime);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("GPU Busy");
-                ImGui::TableSetColumnIndex(1); ImGui::Text("%.1f%%", sceneStats.gpuBusy);
+                ImGui::TableSetColumnIndex(1); ImGui::Text("%.1f%%", state.sceneStats->gpuBusy);
                 EditorUI::HoverToolTip("How much of your frame time the GPU was actively doing work you submitted.");
 #endif
                 ImGui::EndTable();
@@ -641,7 +668,7 @@ void EditorUI::DrawMainOverlay()
             }
         }
 
-        ImGui::SeparatorText("Scene Stats");
+        ImGui::SeparatorText("Mesh / Input status");
         {
             if (ImGui::BeginTable("SceneStatsTable", 2, ImGuiTableFlags_SizingStretchProp))
             {
@@ -674,6 +701,22 @@ void EditorUI::DrawMainOverlay()
 
                 ImGui::EndTable();
             }
+        }
+
+        SeparatorText("Controls");
+        {
+            constexpr auto hintCol = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+
+            TextColored(hintCol, "F1      - Toggle Camera Mode (FPS/FreeFly)");
+            TextColored(hintCol, "F2      - Toggle Debug Renderer");
+            TextColored(hintCol, "F3      - Toggle Menu Bar");
+            TextColored(hintCol, "F4      - Toggle GPU Info");
+            TextColored(hintCol, "F5      - Toggle VSync");
+            TextColored(hintCol, "F6      - Toggle UI Visibility");
+            TextColored(hintCol, "F7      - Toggle Freeze Frustum");
+            TextColored(hintCol, "F8      - Cycle Active Camera");
+            TextColored(hintCol, "Alt     - Unlock Cursor (FPS)");
+            TextColored(hintCol, "Scroll  - Change Camera Speed");
         }
 
         // GPU Info
@@ -809,15 +852,15 @@ void EditorUI::DrawMainOverlay()
                 ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 120.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
-                // ImGui::TableNextRow();
-                // ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Disable Normal Map");
-                // ImGui::TableSetColumnIndex(1);
-                // {
-                // 	bool dn = (debugData.disableNormalMap != 0);
-                // 	if (ImGui::Checkbox("##DisableNormal", &dn))
-                // 		debugData.disableNormalMap = dn ? 1u : 0u;
-                // 	EditorUI::HoverToolTip("Skip sampling/decoding the normal map to profile fragment cost.");
-                // }
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Disable Normal Map");
+                ImGui::TableSetColumnIndex(1);
+                {
+                	bool dn = (state.debugData->disableNormalMap != 0);
+                	if (ImGui::Checkbox("##DisableNormal", &dn))
+                		state.debugData->disableNormalMap = dn ? 1u : 0u;
+                	EditorUI::HoverToolTip("Skip sampling/decoding the normal map to profile fragment cost.");
+                }
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -871,137 +914,64 @@ void EditorUI::DrawMainOverlay()
 
         ImGui::End();
     }
+    ImGui::PopStyleVar();
 }
 
-void EditorUI::DrawInputDebugPanel()
+void EditorUI::DrawEditorTools()
 {
-    if (!ImGui::Begin("Input Debug"))
-    {
-        ImGui::End();
-        return;
-    }
+    if (state.noUI) return;
 
-    // --- Keyboard ---
-    if (ImGui::CollapsingHeader("Keyboard", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        ImGui::Text("Using Keyboard: %s", input.usingKeyboard ? "Yes" : "No");
-        ImGui::Separator();
-        ImGui::BeginChild("KeyboardKeys", ImVec2(0, 180), true);
+    // 1. Calculate the Default Anchor Position (Top-Right, below Gizmo)
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    constexpr float gizmoSize = 160.0f; // Matches DrawCameraGizmo
+    constexpr float padding = 15.0f;
 
-        for (int k = 0; k < Keyboard::ButtonCount; ++k)
+    // Tools window width
+    constexpr float windowWidth = 400.0f;
+
+    // Position: X is right-aligned minus window width and padding.
+    // Y is top-aligned plus gizmo size and double padding.
+    const float defaultX = viewport->WorkPos.x + viewport->WorkSize.x - windowWidth - padding;
+    const float defaultY = viewport->WorkPos.y + padding + gizmoSize + padding;
+
+    // Use FirstUseEver so the user can "detach" it by dragging it elsewhere
+    ImGui::SetNextWindowPos(ImVec2(defaultX, defaultY), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(windowWidth, 0.0f), ImGuiCond_Always); // 0 height + AutoResize = Snap to content
+
+    ImGui::SetNextWindowBgAlpha(state.editorAlpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, state.editorAlpha);
+
+    // AlwaysAutoResize is the secret to making it change size based on the active tab
+    ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
+
+    if (ImGui::Begin("Editor Tools", &state.showEditorTools, flags))
+    {
+        UpdateAlphaLerp(state.editorAlpha, 0.7f, 1.0f, 8.0f);
+
+        // Prevent window from being dragged outside the viewport
+        ClampWindowToViewport();
+
+        if (ImGui::BeginTabBar("EditorManagerTabs"))
         {
-            const auto& key = input.keyboard[k];
-            if (!key.pressed && !key.held && !key.released)
-                continue;
-
-            ImVec4 col;
-            if (key.pressed)
-                col = ImVec4(1.0f, 1.0f, 0.2f, 1.0f); // yellow = just pressed
-            else if (key.held)
-                col = ImVec4(0.2f, 1.0f, 0.2f, 1.0f); // green = held
-            else if (key.released)
-                col = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); // red = released
-            else
-                col = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
-
-            ImGui::TextColored(col, "Key %d (%s%s%s)",
-                               k,
-                               key.pressed ? "P" : "",
-                               key.held ? "H" : "",
-                               key.released ? "R" : "");
-        }
-
-        ImGui::EndChild();
-    }
-
-    // --- Mouse ---
-    if (ImGui::CollapsingHeader("Mouse", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        ImGui::Text("Using Mouse: %s", input.usingMouse ? "Yes" : "No");
-        ImGui::Text("Pos: (%.1f, %.1f)", input.cursorX, input.cursorY);
-        ImGui::Text("Delta: (%.1f, %.1f)", input.xrel, input.yrel);
-        ImGui::Text("Scroll: (%d, %d)", input.scrollX, input.scrollY);
-        ImGui::Separator();
-
-        for (int i = 0; i < Mouse::Button::ButtonCount; ++i)
-        {
-            const char* btnNames[] = {"Left", "Right", "Middle", "Button4", "Button5"};
-            const auto& btn = input.mouseButtons[i];
-            ImVec4 col;
-            if (btn.pressed)
-                col = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
-            else if (btn.held)
-                col = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
-            else if (btn.released)
-                col = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-            else
-                col = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-
-            ImGui::TextColored(col, "%s", btnNames[i]);
-            ImGui::SameLine();
-        }
-        ImGui::NewLine();
-    }
-
-    // --- Controllers ---
-    if (ImGui::CollapsingHeader("Controllers", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        for (u32 i = 0; i < input.controllers.size(); ++i)
-        {
-            const auto& pad = input.controllers[i];
-            if (!pad.connected) continue;
-
-            ImGui::SeparatorText(("Controller " + std::to_string(i)).c_str());
-            ImGui::Text("Connected: Yes");
-            ImGui::Text("LTrigger: %.2f | RTrigger: %.2f", pad.leftTrigger, pad.rightTrigger);
-            ImGui::Text("Left Stick: (%.2f, %.2f)", pad.leftX, pad.leftY);
-            ImGui::Text("Right Stick: (%.2f, %.2f)", pad.rightX, pad.rightY);
-            ImGui::Text("Vibration: L %.2f | R %.2f", pad.leftMotorVibration, pad.rightMotorVibration);
-            ImGui::Spacing();
-
-            // Visualize left stick movement
-            constexpr float size = 60.0f;
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            ImDrawList* draw = ImGui::GetWindowDrawList();
-            ImVec2 center(p.x + size * 0.5f, p.y + size * 0.5f);
-            draw->AddCircle(center, size * 0.5f, IM_COL32(120, 120, 120, 255));
-            draw->AddCircleFilled(
-                ImVec2(center.x + pad.leftX * size * 0.4f,
-                       center.y - pad.leftY * size * 0.4f),
-                5.0f, IM_COL32(0, 255, 0, 255));
-            ImGui::Dummy(ImVec2(size, size));
-
-            // Button visualization
-            ImGui::SeparatorText("Buttons");
-            ImGui::BeginChild(("PadButtons" + std::to_string(i)).c_str(), ImVec2(0, 120), true);
-            for (int b = 0; b < Gamepad::Button::ButtonCount; ++b)
+            if (ImGui::BeginTabItem("Lights"))
             {
-                const auto& btn = pad.buttons[b];
-                if (!btn.pressed && !btn.held && !btn.released) continue;
-
-                ImVec4 col;
-                if (btn.pressed)
-                    col = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
-                else if (btn.held)
-                    col = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
-                else if (btn.released)
-                    col = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-                else
-                    col = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
-
-                ImGui::TextColored(col, "Button %d (%s%s%s)",
-                                   b,
-                                   btn.pressed ? "P" : "",
-                                   btn.held ? "H" : "",
-                                   btn.released ? "R" : "");
+                DrawLightEditor();
+                ImGui::EndTabItem();
             }
-            ImGui::EndChild();
+
+            if (ImGui::BeginTabItem("Camera"))
+            {
+                DrawCameraEditor();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
     }
+    DrawLightGizmos(state.selectedLightIdx, state.cameraComponents[state.activeCameraIdx]);
 
     ImGui::End();
+    ImGui::PopStyleVar();
 }
-
 
 // Project a world-space point to screen space (returns false if behind camera or off-screen)
 static bool ProjectToScreen(const glm::vec3& worldPos, const glm::mat4& view, const glm::mat4& proj, ImVec2& outScreen)
@@ -1024,232 +994,178 @@ static LightUBO MakeDirectional()
         .direction = glm::normalize(glm::vec3{-0.5f, -1.f, -0.3f}),
         .color = {1.f, 0.95f, 0.85f},
         .intensity = 3.f,
-        .type = static_cast<u32>(LightType::Directional),
+        .type = LightType::Directional,
     };
 }
 
-static LightUBO MakePoint(const Camera* cam)
+static LightUBO MakePoint(const glm::vec3& forward, const glm::vec3& position)
 {
     return {
-        .position = cam->position + cam->forward * 2.f,
+        .position = position + forward * 2.f,
         .range = 8.f,
         .innerCone = 0.f,
         .color = {1.f, 1.f, 1.f},
         .intensity = 5.f,
-        .type = static_cast<u32>(LightType::Point),
+        .type = LightType::Point,
         .outerCone = 0.f
     };
 }
 
 
-static LightUBO MakeSpot(const Camera* cam)
+static LightUBO MakeSpot(const glm::vec3& forward, const glm::vec3& position)
 {
     return {
-        .position = cam->position,
+        .position = position,
         .range = 12.f,
-        .direction = glm::normalize(cam->forward),
+        .direction = glm::normalize(forward),
         .innerCone = std::cos(glm::radians(12.f)),
         .color = {1.f, 1.f, 1.f},
         .intensity = 6.f,
-        .type = static_cast<u32>(LightType::Spot),
+        .type = LightType::Spot,
         .outerCone = std::cos(glm::radians(20.f))
     };
 }
 
-void EditorUI::DrawLightEditor() const
+void EditorUI::UpdateLights(float deltaTime)
 {
-    const Camera* cam = state.activeCamera;
     auto& lights = *state.lights;
+    CameraComponent& activeCam = state.cameraComponents[state.activeCameraIdx];
 
-    // Little helper: Draw "+Directional/Point/Spot"
-    auto DrawAddButtons = [&]()
+    for (int i = 0; i < (int)lights.size(); ++i)
     {
-        if (ImGui::Button("+ Directional")) lights.push_back(MakeDirectional());
-        ImGui::SameLine();
-        if (ImGui::Button("+ Point")) lights.push_back(MakePoint(cam));
-        ImGui::SameLine();
-        if (ImGui::Button("+ Spot")) lights.push_back(MakeSpot(cam));
-    };
+        auto& L = lights[i];
 
-
-    if (lights.empty())
-    {
-        ImGui::Begin("Light Editor");
-        ImGui::TextUnformatted("No lights in scene.");
-        DrawAddButtons();
-        ImGui::End();
-        return;
+        // Flashlight Logic: Sync spotlight to camera if toggled
+        if (L.type == LightType::Spot && state.followCamera && (u32)i == state.selectedCameraIdx)
+        {
+            L.position = activeCam.position;
+            L.direction = glm::normalize(activeCam.base.forward);
+        }
     }
 
-    ImGui::Begin("Light Editor");
-    DrawAddButtons();
+    // Global Animations (e.g., Spinning lights)
+    if (state.spinLights && lights.size() >= 4) {
+        state.currentLightTime += deltaTime * state.spinSpeed;
+        for (int i = 0; i < 4; ++i) {
+            const float angle = state.currentLightTime + (i * glm::half_pi<float>());
+            lights[i].position = glm::vec3(
+                state.spinCenter.x + (state.spinRadius * std::sin(angle)),
+                state.spinHeight,
+                state.spinCenter.z + (state.spinRadius * std::cos(angle))
+            );
+        }
+    }
+}
+
+void EditorUI::DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam) const
+{
+    auto& lights = *state.lights;
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+
+    const Camera& cam = activeCam.base;
+    const glm::mat4& view = cam.view;
+    const glm::mat4& proj = cam.projection;
+
+    for (int i = 0; i < (int)lights.size(); ++i)
+    {
+        const LightUBO& Li = lights[i];
+        const bool isSel = (i == selectedIdx);
+
+        // Color coding: Blue (Point), Green (Spot)
+        const ImU32 col = (Li.type == 0) ? IM_COL32(255, 225, 100, 255)
+                        : (Li.type == 1) ? IM_COL32(100, 200, 255, 255)
+                        : IM_COL32(150, 255, 150, 255);
+
+        ImVec2 sPos;
+        glm::vec3 wPos = Li.position;
+
+        if (!ProjectToScreen(wPos, view, proj, sPos)) continue;
+
+        // 1. Selection Highlight (Glow Ring)
+        if (isSel)
+        {
+            dl->AddCircle(sPos, 12.0f, col, 16, 2.0f);
+            dl->AddCircle(sPos, 15.0f, IM_COL32(255, 255, 255, 120), 16, 1.0f);
+        }
+        dl->AddCircleFilled(sPos, isSel ? 7.0f : 4.0f, col);
+
+        char idLabel[16];
+        std::snprintf(idLabel, sizeof(idLabel), "%d", i);
+        dl->AddText({sPos.x + 15, sPos.y - 15}, col, idLabel);
+    }
+}
+
+void EditorUI::DrawLightEditor()
+{
+    // Retrieve the unified camera component for spawning references
+    CameraComponent& activeCam = state.cameraComponents[state.activeCameraIdx];
+    auto& lights = *state.lights;
+
+    // --- 1. Add New Lights ---
+    // These helpers (MakeDirectional, etc.) create UBO-compatible structs
+    if (ImGui::Button("+ Directional")) lights.push_back(MakeDirectional());
+    ImGui::SameLine();
+    if (ImGui::Button("+ Point")) lights.push_back(MakePoint(activeCam.base.forward, activeCam.position));
+    ImGui::SameLine();
+    if (ImGui::Button("+ Spot")) lights.push_back(MakeSpot(activeCam.base.forward, activeCam.position));
+
     ImGui::Separator();
 
-    // Selection list
-    static int selected = 0;
-    selected = glm::clamp(selected, 0, static_cast<int>(lights.size()) - 1);
-
-    if (ImGui::BeginListBox("Lights"))
+    // --- 2. Light Selection and Removal ---
+    if (ImGui::BeginListBox("##LightsList", ImVec2(-FLT_MIN, 150)))
     {
-        for (int i = 0; i < lights.size(); ++i)
+        for (int i = 0; i < (int)lights.size(); ++i)
         {
-            const char* tn =
-                (lights[i].type == static_cast<u32>(LightType::Directional))
-                    ? "Dir"
-                    : (lights[i].type == static_cast<u32>(LightType::Point))
-                    ? "Point"
-                    : "Spot";
+            const bool isSelected = (state.selectedLightIdx == (u32)i);
+            const char* typeIcon = (lights[i].type == 0) ? "[D]" : (lights[i].type == 1) ? "[P]" : "[S]";
 
-            char label[32];
-            std::snprintf(label, sizeof(label), "%s %d", tn, i);
+            char label[64];
+            std::snprintf(label, sizeof(label), "%s Light %d", typeIcon, i);
 
-            if (ImGui::Selectable(label, selected == i))
-                selected = i;
+            if (ImGui::Selectable(label, isSelected))
+            {
+                state.selectedLightIdx = i;
+            }
         }
         ImGui::EndListBox();
     }
 
-    LightUBO& L = lights[selected];
+    ImGui::Separator();
 
-
-    if (ImGui::Button("Remove Selected"))
+    if (ImGui::CollapsingHeader("Global Spin Settings"))
     {
-        lights.erase(lights.begin() + selected);
-
-        if (lights.empty())
-        {
-            ImGui::End();
-            return;
-        }
-
-        selected = std::max(0, selected - 1);
+        ImGui::Checkbox("Enable Animation", &state.spinLights);
+        ImGui::DragFloat("Speed", &state.spinSpeed, 0.05f);
+        ImGui::DragFloat("Radius", &state.spinRadius, 0.1f);
+        ImGui::DragFloat("Height", &state.spinHeight, 0.1f);
+        ImGui::DragFloat3("Center", &state.spinCenter.x, 0.1f);
     }
 
-    ImGui::SameLine();
-    if (ImGui::Button("Duplicate"))
-        lights.push_back(L);
+    ImGui::Separator();
 
-
-    ImGui::SeparatorText("Properties");
-
-    static const char* TypeNames[] = {"Directional", "Point", "Spot"};
-    ImGui::Text("Type: %s", TypeNames[L.type]);
-
-    ImGui::ColorEdit3("Color", &L.color.x);
-    ImGui::DragFloat("Intensity", &L.intensity, 0.1f, 0.f, 1000.f);
-
-    if (L.type != LightType::Directional)
+    // --- 3. Property Editing ---
+    if (!lights.empty() && state.selectedLightIdx < (u32)lights.size())
     {
-        ImGui::DragFloat3("Position", &L.position.x, 0.05f);
-        ImGui::DragFloat("Range", &L.range, 0.1f, 0.f, 5000.f);
-    }
+        LightUBO& L = lights[state.selectedLightIdx];
+        ImGui::SeparatorText("Properties");
 
-    if (L.type != LightType::Point)
-    {
-        ImGui::DragFloat3("Direction", &L.direction.x, 0.01f, -1.f, 1.f);
-        if (glm::length2(L.direction) > 1e-6f)
-            L.direction = glm::normalize(L.direction);
+        ImGui::ColorEdit3("Color", &L.color.x);
+        ImGui::DragFloat("Intensity", &L.intensity, 0.5f, 0.0f, 1000.0f);
 
-        if (L.type == LightType::Spot)
-        {
-            float innerDeg = glm::degrees(std::acos(std::clamp(L.innerCone, -1.f, 1.f)));
-            float outerDeg = glm::degrees(std::acos(std::clamp(L.outerCone, -1.f, 1.f)));
-
-            if (ImGui::SliderFloat("Inner Cone (deg)", &innerDeg, 0.f, 80.f))
-                L.innerCone = std::cos(glm::radians(innerDeg));
-
-            if (ImGui::SliderFloat("Outer Cone (deg)", &outerDeg, innerDeg + 1.f, 89.f))
-                L.outerCone = std::cos(glm::radians(outerDeg));
-        }
-    }
-
-    static bool showOverlay = true;
-    ImGui::Checkbox("Show overlay gizmos", &showOverlay);
-
-    ImGui::SameLine();
-    if (ImGui::Button("Snap Selected To Camera"))
-    {
         if (L.type != LightType::Directional)
-            L.position = cam->position;
+            ImGui::DragFloat3("Position", &L.position.x, 0.1f);
 
         if (L.type != LightType::Point)
-            L.direction = glm::normalize(cam->forward);
-    }
-
-    ImGui::End();
-
-    if (!showOverlay) return;
-
-
-    // 2D Gizmos Overlay
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-
-    const glm::mat4 view = cam->GetViewMatrix();
-    const glm::mat4 proj = cam->GetProjectionMatrix(
-        static_cast<f32>(state.swapchain->width) / static_cast<f32>(state.swapchain->height));
-
-    for (int i = 0; i < lights.size(); ++i)
-    {
-        const LightUBO& Li = lights[i];
-        const bool isSel = (i == selected);
-
-        ImU32 baseColor =
-            (Li.type == LightType::Directional)
-                ? IM_COL32(255, 220, 100, 255)
-                : (Li.type == LightType::Point)
-                ? IM_COL32(120, 200, 255, 255)
-                : IM_COL32(180, 255, 120, 255);
-
-        const float radius = isSel ? 8.f : 6.f;
-        const ImU32 outline = isSel
-                                  ? IM_COL32(255, 255, 200, 255)
-                                  : IM_COL32(0, 0, 0, 180);
-
-        // Directional light gizmo
-        if (Li.type == LightType::Directional)
         {
-            glm::vec3 A = cam->position;
-            glm::vec3 B = cam->position - glm::normalize(Li.direction) * 2.f;
-
-            ImVec2 sA, sB;
-            if (ProjectToScreen(A, view, proj, sA) &&
-                ProjectToScreen(B, view, proj, sB))
-            {
-                if (isSel)
-                    dl->AddCircle(sA, radius * 1.8f, IM_COL32(255, 255, 180, 100), 24, 2.f);
-
-                dl->AddCircleFilled(sA, radius, baseColor);
-                dl->AddCircle(sA, radius, outline);
-                dl->AddLine(sA, sB, baseColor, isSel ? 2.5f : 2.f);
-                dl->AddText({sA.x + 8, sA.y - 10}, baseColor, "Dir");
-            }
+            if (ImGui::DragFloat3("Direction", &L.direction.x, 0.01f))
+                L.direction = glm::normalize(L.direction);
         }
-        else // Point or Spot
+
+        if (ImGui::Button("Delete Selected"))
         {
-            ImVec2 sP;
-            if (!ProjectToScreen(Li.position, view, proj, sP))
-                continue;
-
-            if (isSel)
-                dl->AddCircle(sP, radius * 1.8f, IM_COL32(255, 255, 180, 100), 24, 2.f);
-
-            dl->AddCircleFilled(sP, radius, baseColor);
-            dl->AddCircle(sP, radius, outline);
-
-            const char* lbl = (Li.type == LightType::Spot) ? "Spot" : "Point";
-            dl->AddText({sP.x + 8, sP.y - 10}, baseColor, lbl);
-
-            if (Li.type == LightType::Spot)
-            {
-                glm::vec3 tip =
-                    Li.position +
-                    glm::normalize(Li.direction) *
-                    0.8f * glm::max(Li.range, 0.5f);
-
-                ImVec2 sQ;
-                if (ProjectToScreen(tip, view, proj, sQ))
-                    dl->AddLine(sP, sQ, baseColor, isSel ? 2.5f : 2.f);
-            }
+            lights.erase(lights.begin() + state.selectedLightIdx);
+            if (state.selectedLightIdx >= (u32)lights.size() && !lights.empty())
+                state.selectedLightIdx = (u32)lights.size() - 1;
         }
     }
 }

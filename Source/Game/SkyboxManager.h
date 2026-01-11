@@ -30,30 +30,28 @@ class SkyboxManager
 public:
 	bool Initialize(Renderer::VulkanDevice* device, ArenaAllocator* arena);
 
-	[[nodiscard]] Renderer::VulkanImage CreateCubeMapFromSource(CubeSource source);
-	Renderer::VulkanImage               CreateHDRTexture(const char* path);
-	[[nodiscard]] Renderer::VulkanImage CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const;
+	[[nodiscard]] Renderer::VulkanTexture CreateCubeMapFromSource(CubeSource source);
+	Renderer::VulkanTexture               CreateHDRTexture(const char* path) const;
+	[[nodiscard]] Renderer::VulkanTexture CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const;
 
-	void Render(VkCommandBuffer cmd, const Camera& camera, float aspectRatio) const;
+	void Render(Renderer::GPUCommandBuffer* cmd, const Camera& camera, float aspectRatio);
 	void Cleanup();
 
 	// Getters for IBL integration
 	[[nodiscard]] Renderer::DescriptorLayout GetLayout() const { return layout; }
 	[[nodiscard]] Renderer::DescriptorSet GetDescriptorSet() const { return descriptorSet; }
-	Renderer::VulkanImage& GetCubemap() { return cubemap; }
+	Renderer::VulkanTexture& GetCubemap() { return cubemap; }
 
 private:
 	auto CreateCubemap() -> bool;
-	bool CreateSampler();
-	bool CreateDescriptors();
+	void CreateSampler();
 	bool CreateShaderAndPipeline();
 
 	Renderer::VulkanDevice* devicePtr = nullptr;
 	ArenaAllocator* arena = nullptr;
-	SphericalHarmonics shIrradiance;
 
 	// Skybox resources
-	Renderer::VulkanImage cubemap;
+	Renderer::VulkanTexture cubemap;
 	Renderer::VulkanSampler sampler;
 	Renderer::VulkanShader* shader = nullptr;
 	Renderer::VulkanPipeline pipeline;

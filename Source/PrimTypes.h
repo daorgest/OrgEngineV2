@@ -48,6 +48,12 @@ enum OrgErrCode
 	VulkanBufferCreationFailed,
 	VulkanCommandBufferFailed,
 
+	// Swapchain
+	OutOfDate,
+	Suboptimal,
+	SurfaceLost,
+	DeviceLost,
+
 	// Audio
 	AudioInitFailed,
 	AudioDeviceLost,
@@ -62,6 +68,7 @@ enum OrgErrCode
 	InputDeviceLost,
 	ThreadCreateFailed,
 	OutOfMemory,
+	PlatformError,
 
 
 	// Misc
@@ -122,7 +129,6 @@ static constexpr u32 SWAPCHAIN_IMAGECOUNT = std::max(MAX_FRAME_OVERLAP + 1, 3u);
 // Engine Information
 constexpr auto ENGINE_NAME    = "OrgEngine";
 constexpr auto ENGINE_VERSION = "0.1";
-
 constexpr auto ENGINE_BUILD_DATE = __DATE__;
 #ifdef _DEBUG
 constexpr auto ENGINE_BUILD = "Debug";
@@ -130,9 +136,22 @@ constexpr auto ENGINE_BUILD = "Debug";
 constexpr auto ENGINE_BUILD = "Release";
 #endif
 
+// FPS Options
+constexpr i32 BACKGROUND_FPS = 15;
+constexpr auto BACKGROUND_FRAME_TIME = 1000 / BACKGROUND_FPS;
+
 // Span Macros
 #define SPAN_ONE(x) std::span(&(x), 1)
 #define SPAN_PTR(ptr, count) std::span((ptr), (count))
 
 // Controllers
 constexpr u32 MAX_GAMEPADS = 4;
+
+// Max Render Images/Targets
+constexpr u32 MAX_RENDER_TARGETS = 1;
+
+// Cameras
+constexpr u32 MAX_SCENE_CAMERAS = 2;
+
+// Lights
+constexpr u32 MAX_LIGHTS = 8;
