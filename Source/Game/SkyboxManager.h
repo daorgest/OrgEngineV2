@@ -34,7 +34,7 @@ public:
 	Renderer::VulkanTexture               CreateHDRTexture(const char* path) const;
 	[[nodiscard]] Renderer::VulkanTexture CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const;
 
-	void Render(Renderer::GPUCommandBuffer* cmd, const Camera& camera, float aspectRatio);
+	void Render(Renderer::GPUCommandBuffer* cmd, const Camera& camera, f32 aspectRatio);
 	void Cleanup();
 
 	// Getters for IBL integration

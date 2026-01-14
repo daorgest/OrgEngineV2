@@ -211,37 +211,36 @@ void CALLBACK InputSysGameInput::DeviceCallback(GI::GameInputCallbackToken /*tok
 
     // recompute
     self->connectedCount = 0;
+    for (u32 i = 0; i < MAX_GAMEPADS; ++i)
+    {
+        if (self->gamepads[i]) self->connectedCount++;
+    }
 }
 
 void InputSysGameInput::HandleKeyboard(GI::IGameInputReading* reading)
 {
-    static bool lastState[Keyboard::ButtonCount] = {};
-    bool currState[Keyboard::ButtonCount] = {};
-
-    Array<GI::GameInputKeyState, 256> keys{};
+    Array<GI::GameInputKeyState, 32> keys{};
     const u32 numKeys = reading->GetKeyState(keys.size(), keys.data());
 
-    // Build current key bitmap
+    // Track what keys are present in THIS specific reading
+    bool keysInPacket[Keyboard::ButtonCount] = {};
     for (u32 i = 0; i < numKeys; ++i)
     {
         const Keyboard::Key k = MapKey(keys[i]);
-        if (k != Keyboard::Unknown)
-            currState[k] = true;
+        if (k != Keyboard::Unknown) keysInPacket[k] = true;
     }
 
-    // Diff vs last -> pressed/released; sustain held
-    for (int k = 0; k < Keyboard::ButtonCount; ++k)
+    // Process state changes
+    for (i32 k = 0; k < Keyboard::ButtonCount; ++k)
     {
-        const bool was = lastState[k];
-        const bool now = currState[k];
+        bool isCurrentlyHeld = input.keyboard[k].held;
+        bool isPresentInPacket = keysInPacket[k];
 
-        if (now && !was) Input::ProcessEventButton(input.keyboard[k], true);
-        if (!now && was) Input::ProcessEventButton(input.keyboard[k], false);
-        if (now && was) input.keyboard[k].held = true;
+        if (isPresentInPacket && !isCurrentlyHeld)
+            Input::ProcessEventButton(input.keyboard[k], true);
+        else if (!isPresentInPacket && isCurrentlyHeld)
+            Input::ProcessEventButton(input.keyboard[k], false);
     }
-
-    std::memcpy(lastState, currState, sizeof(currState));
-    input.usingKeyboard = (numKeys > 0);
 }
 
 void InputSysGameInput::InitialMouseReading(GI::IGameInputReading* reading)
@@ -250,8 +249,8 @@ void InputSysGameInput::InitialMouseReading(GI::IGameInputReading* reading)
     if (!reading->GetMouseState(&state))
         return;
 
-    // Initialize buttons to current state (no synthetic presses on frame 0)
-    for (int i = 0; i < 5; ++i)
+    // Initialize buttons to current state
+    for (i32 i = 0; i < 5; ++i)
     {
         const bool down = (state.buttons & (1u << i)) != 0;
         Input::ProcessEventButton(input.mouseButtons[i], down);
@@ -285,7 +284,7 @@ void InputSysGameInput::HandleMouse(GI::IGameInputReading* reading)
     // Buttons (XOR to detect changes)
     if (const u32 deltaButtons = curr.buttons ^ prev.buttons)
     {
-        for (int i = 0; i < 5; ++i)
+        for (i32 i = 0; i < 5; ++i)
         {
             const u32 mask = (1u << i);
             if (deltaButtons & mask)
@@ -311,21 +310,48 @@ void InputSysGameInput::HandleMouse(GI::IGameInputReading* reading)
     lastMouseState_ = curr;
 }
 
+i32 InputSysGameInput::GetControllerIndex(GI::IGameInputReading* reading)
+{
+    GI::IGameInputDevice* device = nullptr;
+    reading->GetDevice(&device);
+    if (!device) return -1;
+
+
+    i32 controllerIndex = -1;
+    for (i32 i = 0; i < MAX_GAMEPADS; ++i)
+    {
+        if (i >= connectedCount && connectedCount > 0) break;
+
+        if (gamepads[i] == device)
+        {
+            controllerIndex = i;
+            break;
+        }
+    }
+
+    device->Release(); // Man I have to make a ref pointer class
+
+    return controllerIndex;
+}
+
 void InputSysGameInput::HandleController(GI::IGameInputReading* reading)
 {
     GI::GameInputGamepadState gs{};
     if (!reading->GetGamepadState(&gs))
         return;
 
-    auto& controller = input.controllers[0]; // primary pad slot
+    const i32 idx = GetControllerIndex(reading);
+    if (idx == -1) return;
+
+    auto& controller = input.controllers[idx];
     controller.connected = true;
 
-    // --- Buttons ---
+    // Buttons
     const u32 mask = MapButtons(gs);
     for (u32 b = 0; b < Gamepad::Button::ButtonCount; ++b)
         Input::ProcessEventButton(controller.buttons[b], (mask & (1 << b)) != 0);
 
-    // --- Analog ---
+    // Analog
     auto ApplyDeadzone = [](const f32 value, const f32 deadzone = 0.1f)
     {
         if (fabsf(value) < deadzone) return 0.0f;
@@ -363,81 +389,55 @@ void InputSysGameInput::Update(const Platform::WindowContext& windowContext)
 
     if (!windowContext.displayState.isFocused)
     {
+        haveMouseBaseline_ = false;
         return;
     }
 
-    input.usingKeyboard = false;
-    input.usingMouse = false;
-    input.usingController = false;
-
+    // Accumulation resets (Deltas only)
     input.xrel = 0.0f;
     input.yrel = 0.0f;
     input.scrollX = 0;
     input.scrollY = 0;
 
-    // ============================================
-    // KEYBOARD
-    // ============================================
+    if (lastReading_ == nullptr)
     {
-        GI::IGameInputReading* r = nullptr;
-        if (SUCCEEDED(gi->GetCurrentReading(GI::GameInputKindKeyboard, nullptr, &r)) && r)
+        // Get the absolute latest reading to start our 'lastReading_' bookmark
+        gi->GetCurrentReading(GI::GameInputKindKeyboard | GI::GameInputKindMouse | GI::GameInputKindGamepad,
+                              nullptr, &lastReading_);
+        // If we still don't have a reading (no devices connected), just return
+        if (lastReading_ == nullptr) return;
+    }
+    GI::IGameInputReading* reading = nullptr;
+
+    // Drain the buffer sequentially
+    while (SUCCEEDED(gi->GetNextReading(lastReading_,
+           GI::GameInputKindKeyboard | GI::GameInputKindMouse | GI::GameInputKindGamepad,
+           nullptr, &reading)))
+    {
+        GI::GameInputKind kind = reading->GetInputKind();
+
+        if (kind & GI::GameInputKindKeyboard) HandleKeyboard(reading);
+
+        if (kind & GI::GameInputKindMouse)
         {
-            HandleKeyboard(r);
-            r->Release();
+            if (!haveMouseBaseline_) InitialMouseReading(reading);
+            else HandleMouse(reading);
         }
-        else
-        {
-            // Check if any keys are still physically held from previous frames
-            for (int i = 0; i < Keyboard::ButtonCount; ++i)
-            {
-                if (input.keyboard[i].held)
-                {
-                    input.usingKeyboard = true;
-                    break;
-                }
-            }
-        }
+
+        if (kind & GI::GameInputKindGamepad) HandleController(reading);
+
+        // Release the old reference and update the bookmark
+        lastReading_->Release();
+        lastReading_ = reading;
     }
 
-    // ============================================
-    // GAMEPAD
-    // ============================================
-    for (u32 i = 0; i < MAX_GAMEPADS; ++i)
-    {
-        if (gamepads[i])
-        {
-            GI::IGameInputReading* r = nullptr;
-            if (SUCCEEDED(gi->GetCurrentReading(GI::GameInputKindGamepad, gamepads[i], &r)) && r)
-            {
-                HandleController(r);
-                r->Release();
-            }
+    // Final physical state check
+    bool anyKeyHeld = false;
+    for (i32 i = 0; i < Keyboard::ButtonCount; ++i) {
+        if (input.keyboard[i].held) {
+            anyKeyHeld = true;
+            break;
         }
     }
-
-    // ============================================
-    // MOUSE
-    // ============================================
-    {
-        GI::IGameInputReading* r = nullptr;
-        if (SUCCEEDED(gi->GetCurrentReading(GI::GameInputKindMouse, nullptr, &r)) && r)
-        {
-            // If we just regained focus, we need a baseline to calculate deltas
-            if (!haveMouseBaseline_)
-            {
-                InitialMouseReading(r);
-            }
-            else
-            {
-                HandleMouse(r);
-            }
-
-            // Always manage the reference count of the stored reading
-            if (lastMouseReading_)
-            {
-                lastMouseReading_->Release();
-            }
-            lastMouseReading_ = r; // Keep for next frame delta
-        }
-    }
+    input.usingKeyboard = anyKeyHeld;
 }

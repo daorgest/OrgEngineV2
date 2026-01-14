@@ -11,10 +11,12 @@ bool DebugRenderer::Initialize(VulkanDevice* dev, ArenaAllocator* arena, VulkanS
 	device = dev;
 	this->sceneUBO = sceneUBO;
 
+    drawQueue.reserve(maxInstances);
+
 	auto codeResult = VulkanShader::ReadShaderFile("Shaders/boundingBox.spv");
 	if (!codeResult)
 	{
-		LOG(Error, "Failed to read shader 'Shaders/boundingBox.spv' ({})", static_cast<int>(codeResult.error()));
+		LOG(Error, "Failed to read shader 'Shaders/boundingBox.spv' ({})", static_cast<i32>(codeResult.error()));
 		return false;
 	}
 	shader = arena->Emplace<VulkanShader>(device, codeResult.value());

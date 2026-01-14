@@ -17,9 +17,10 @@ void SceneRenderer::Init(SceneRenderConfig& cfg)
     config = cfg;
 
     // Scene pipeline descriptor sets:
-    // Set 0: Scene UBO (camera, lights, debug)
-    // Set 1: Material (albedo, normal textures)
-    // Set 2: Skybox cubemap (for IBL reflections)
+        // Set 0: Scene UBO (camera, lights, debug)
+        // Set 1: Material (albedo, normal textures on a bindless array)
+        // Set 2: Skybox cubemap (for IBL reflections)
+        // Set 3: Instanced Data
     DescriptorSetLayoutDesc sceneLayouts[] = {
         {.setIndex = 0, .bindings = Constants::Scene},
         {.setIndex = 1, .bindings = Constants::Material},
@@ -73,15 +74,20 @@ void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Ca
 
     standardBucket.clear();
     transparentBucket.clear();
-    instanceBucket.clear();
+    totalVisibleInstances = 0;
+
+    // Resetting the sizes of the existing batches instead of clearing the whole bucket....
+    for (auto& batch : instanceBucket) {
+        batch.instanceData.clear();
+    }
 
     if (!freeze)
     {
-        const float aspect = static_cast<float>(window->windowWidth) / static_cast<float>(window->windowHeight);
+        const f32 aspect = static_cast<f32>(window->windowWidth) / static_cast<f32>(window->windowHeight);
         frustum.Update(camera->GetViewProjectionMatrix(aspect));
     }
 
-    // sorting models
+    // Sorting models to their respective buckets before presentation :3
     for (const auto& inst : *config.models)
     {
         if (!frustum.IsBoxInFrustum(inst.model->modelBounds, inst.transform)) continue;
@@ -89,20 +95,36 @@ void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Ca
         if (inst.model->materials[0].type == MaterialType::Transparent)
         {
             transparentBucket.push_back(&inst);
-            // continue;
         }
 
         if (inst.path == Renderer::RenderPath::Instance)
         {
-            auto& batch = instanceBucket[inst.model];
-            batch.model = inst.model;
+            // Find existing batch for this model
+            InstanceBatch* targetBatch = nullptr;
+            for (auto& batch : instanceBucket)
+            {
+                if (batch.model == inst.model)
+                {
+                    targetBatch = &batch;
+                    break;
+                }
+            }
 
-            batch.instanceData.push_back({
+            // If no batch exists, create one
+            if (!targetBatch)
+            {
+                instanceBucket.push_back({inst.model, {}});
+                targetBatch = &instanceBucket.back();
+            }
+
+            // Add the instance data
+            targetBatch->instanceData.push_back({
                 .worldMatrix = inst.transform,
                 .materialIndex = inst.materialIndex,
                 .roughness = inst.roughness,
                 .metallic = inst.metallic
             });
+            totalVisibleInstances++; // add to the count
         }
         else
         {
@@ -113,8 +135,8 @@ void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Ca
     // std::ranges::sort(transparentBucket, [camera](const auto* a, const auto* b)
     // {
     //     // Use squared distance for performance (avoiding sqrt)
-    //     float distA = glm::distance2(camera->position, glm::vec3(a->transform[3]));
-    //     float distB = glm::distance2(camera->position, glm::vec3(b->transform[3]));
+    //     f32 distA = glm::distance2(camera->position, glm::vec3(a->transform[3]));
+    //     f32 distB = glm::distance2(camera->position, glm::vec3(b->transform[3]));
     //     return distA > distB; // Back-to-Front
     // });
 }
@@ -147,13 +169,12 @@ void SceneRenderer::DrawStandardObject(const Renderer::ModelComponent* inst, Ren
         // Frustum Check (Part Level)
         if (!frustum.IsBoxInFrustum(part.aabb, worldMatrix)) continue;
 
-        const auto& mat = model->materials[part.materialIndex];
 
         PushConstants pc = {
             .model = worldMatrix,
             .normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldMatrix))),
             .vertexOffset = part.vertexOffset,
-            .deviceAddress = model->vertexBufferAddress,
+            .vertexBufferAddress = model->vertexBufferAddress,
             .isInstanced = 0,
             .instRoughness = inst->roughness,
             .instMetallic = inst->metallic,
@@ -173,7 +194,7 @@ void SceneRenderer::DrawStandardObject(const Renderer::ModelComponent* inst, Ren
     }
 }
 
-void SceneRenderer::DrawInstancedBatch(Renderer::VulkanModel* model, u32 count, u32 offset, Renderer::DrawCache& dc) const
+void SceneRenderer::DrawInstancedBatch(Renderer::VulkanModel* model, u32 count, u32 offset, Renderer::DrawCache& dc)
 {
     if (!model || !model->indexBuffer.IsValid() || model->vertexBufferAddress == 0) return;
 
@@ -195,34 +216,39 @@ void SceneRenderer::DrawInstancedBatch(Renderer::VulkanModel* model, u32 count, 
     {
         PushConstants pc = {
             .vertexOffset = part.vertexOffset,
-            .deviceAddress = model->vertexBufferAddress,
+            .vertexBufferAddress = model->vertexBufferAddress,
             .isInstanced = 1,
             .materialIndex = part.materialIndex
         };
 
         dc.cmd->PushConstants(dc.activePipeline, ShaderStage::AllGraphics, 0, sizeof(PushConstants), &pc);
-        dc.cmd->DrawIndexed(part.indexCount, count, part.firstIndex, 0, offset);
+        dc.cmd->DrawIndexed(part.indexCount, count, part.firstIndex, static_cast<i32>(offset), 0);
 
         dc.stats->drawCallCount++;
         dc.stats->totalTris += (part.indexCount / 3) * count;
     }
 }
 
-void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, u32 frameIndex, SceneStats& stats) const
+void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 frameIndex, SceneStats& stats)
 {
-    if (!config.models || config.models->empty()) return;
+    if (!config.models || (standardBucket.empty() && transparentBucket.empty() && totalVisibleInstances == 0)) return;
 
-    u32 resIdx = frameIndex % MAX_FRAME_OVERLAP;
-
-    Vector<GPUInstanceSSBO> megaStagingData;
-    for (const auto& batch : instanceBucket | std::views::values)
-    {
-        megaStagingData.insert((vecSizeType)megaStagingData.end(), batch.instanceData.begin(),
-                               (vecSizeType)batch.instanceData.end());
-    }
-
+    const u32 resIdx = frameIndex % MAX_FRAME_OVERLAP;
     stats.drawCallCount = 0;
     stats.totalTris = 0;
+
+    megaStagingData.clear();
+    megaStagingData.resize(totalVisibleInstances);
+
+    size_t offset = 0;
+    for (const auto& batch : instanceBucket) {
+        if (batch.instanceData.empty()) continue;
+
+        const size_t batchSize = batch.instanceData.size();
+        std::memcpy(megaStagingData.data() + offset,batch.instanceData.data(), batchSize * sizeof(GPUInstanceSSBO));
+        offset += batchSize;
+    }
+
     Renderer::VulkanBuffer currentIB; // Empty buffer to force first bind
     Renderer::DrawCache dc = {
         .activePipeline = opaquePipeline.get(),
@@ -263,10 +289,21 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, u32 frameIndex
     for (const auto* inst : standardBucket) DrawStandardObject(inst, dc);
 
     // Draw Instanced Mega-Buffer
-    u32 globalOffset = 0;
-    for (auto& [model, batch] : instanceBucket) {
-        DrawInstancedBatch(model, (u32)batch.instanceData.size(), globalOffset, dc);
-        globalOffset += (u32)batch.instanceData.size();
+    u32 globalInstanceOffset = 0;
+    for (const auto& batch : instanceBucket) {
+        const u32 instanceCount = static_cast<u32>(batch.instanceData.size());
+        if (instanceCount == 0) continue;
+
+    	if (config.debugRenderer && config.debugRenderer->enabled) {
+    		for (const auto& data : batch.instanceData) {
+    			config.debugRenderer->QueueBox(data.worldMatrix, batch.model->modelBounds);
+    		}
+    	}
+
+        // Pass the starting index in the SSBO to the draw call
+        DrawInstancedBatch(batch.model, instanceCount, globalInstanceOffset, dc);
+
+        globalInstanceOffset += instanceCount;
     }
 
     if (!transparentBucket.empty()) {

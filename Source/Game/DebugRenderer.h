@@ -11,7 +11,7 @@ struct BBoxPush
 {
 	glm::mat4 model;
 	glm::vec3 aabbMin;
-	float depthBias;
+	f32 depthBias;
 	glm::vec3 aabbMax;
 	u32 flags;
 	glm::vec4 color;
@@ -32,7 +32,7 @@ public:
 
 	// Settings
 	void SetColor(const glm::vec4& col) { color = col; }
-	void SetDepthBias(float bias) { depthBias = bias; }
+	void SetDepthBias(f32 bias) { depthBias = bias; }
 	void SetFlags(u32 f) { flags = f; }
 
 	Renderer::VulkanDevice* device = nullptr;
@@ -43,7 +43,7 @@ public:
 
 	u32 maxInstances = 500000;
 	glm::vec4 color = {1.0f, 1.0f, 0.0f, 1.0f};
-	float depthBias = 0.0f;
+	f32 depthBias = 0.0f;
 	u32 flags = 0;
 	bool enabled = false;
 

@@ -11,12 +11,12 @@
 namespace MeshGenerator
 {
 	// Generate a cube with proper normals, tangents, and UVs
-	inline Mesh GenerateCube(float size = 1.0f)
+	inline Mesh GenerateCube(f32 size = 1.0f)
 	{
 		Mesh mesh;
 		mesh.name = "Cube";
 
-		const float halfSize = size * 0.5f;
+		const f32 halfSize = size * 0.5f;
 
 		Vector<Vertex>& vertices = mesh.unifiedVertices;
 		Vector<u32>& indices = mesh.unifiedIndices;
@@ -88,7 +88,7 @@ namespace MeshGenerator
 
 	// Generate a UV sphere with given subdivisions
 	// segments = horizontal (longitude), rings = vertical (latitude)
-	inline auto GenerateSphere(float radius = 1.0f, u32 segments = 64, u32 rings = 32) -> Mesh
+	inline auto GenerateSphere(f32 radius = 1.0f, u32 segments = 64, u32 rings = 32) -> Mesh
 	{
 		Mesh mesh;
 		mesh.name = "Sphere";
@@ -99,11 +99,11 @@ namespace MeshGenerator
 		// Generate vertices
 		for (u32 ring = 0; ring <= rings; ++ring)
 		{
-			const float phi = glm::pi<float>() * static_cast<float>(ring) / static_cast<float>(rings);
+			const f32 phi = glm::pi<f32>() * static_cast<f32>(ring) / static_cast<f32>(rings);
 
 			for (u32 seg = 0; seg <= segments; ++seg)
 			{
-				const float theta = 2.0f * glm::pi<float>() * static_cast<float>(seg) / static_cast<float>(segments);
+				const f32 theta = 2.0f * glm::pi<f32>() * static_cast<f32>(seg) / static_cast<f32>(segments);
 
 				Vertex vert{};
 				vert.position = glm::vec3(
@@ -154,7 +154,7 @@ namespace MeshGenerator
 	// minorRadius = tube radius
 	// majorSegments = segments around the major circle
 	// minorSegments = segments around the tube
-	inline auto GenerateTorus(float majorRadius = 1.0f, float minorRadius = 0.3f, u32 majorSegments = 32, u32 minorSegments = 16) -> Mesh
+	inline auto GenerateTorus(f32 majorRadius = 1.0f, f32 minorRadius = 0.3f, u32 majorSegments = 32, u32 minorSegments = 16) -> Mesh
 	{
 		Mesh mesh;
 		mesh.name = "Torus";
@@ -165,15 +165,15 @@ namespace MeshGenerator
 		// Generate vertices
 		for (u32 i = 0; i <= majorSegments; ++i)
 		{
-			const float u = 2.0f * glm::pi<float>() * static_cast<float>(i) / static_cast<float>(majorSegments);
-			const float cosU = std::cos(u);
-			const float sinU = std::sin(u);
+			const f32 u = 2.0f * glm::pi<f32>() * static_cast<f32>(i) / static_cast<f32>(majorSegments);
+			const f32 cosU = std::cos(u);
+			const f32 sinU = std::sin(u);
 
 			for (u32 j = 0; j <= minorSegments; ++j)
 			{
-				const float v = 2.0f * glm::pi<float>() * static_cast<float>(j) / static_cast<float>(minorSegments);
-				const float cosV = std::cos(v);
-				const float sinV = std::sin(v);
+				const f32 v = 2.0f * glm::pi<f32>() * static_cast<f32>(j) / static_cast<f32>(minorSegments);
+				const f32 cosV = std::cos(v);
+				const f32 sinV = std::sin(v);
 
 				Vertex vert{};
 
@@ -199,8 +199,8 @@ namespace MeshGenerator
 				vert.color = glm::vec3(1.0f, 1.0f, 1.0f);
 
 				// UV coordinates
-				vert.uv.x = static_cast<float>(i) / static_cast<float>(majorSegments);
-				vert.uv.y = static_cast<float>(j) / static_cast<float>(minorSegments);
+				vert.uv.x = static_cast<f32>(i) / static_cast<f32>(majorSegments);
+				vert.uv.y = static_cast<f32>(j) / static_cast<f32>(minorSegments);
 
 				vertices.push_back(vert);
 			}

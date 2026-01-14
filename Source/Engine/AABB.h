@@ -22,8 +22,8 @@ struct AABB
 		if (verts.empty()) return;
 
 		using std::numeric_limits;
-		glm::vec3 mn(numeric_limits<float>::infinity());
-		glm::vec3 mx(-numeric_limits<float>::infinity());
+		glm::vec3 mn(numeric_limits<f32>::infinity());
+		glm::vec3 mx(-numeric_limits<f32>::infinity());
 
 		if constexpr (std::is_same_v<T, glm::vec3>)
 		{
@@ -66,8 +66,8 @@ struct AABB
         if (indices.empty() || allVertices.empty()) return;
 
         using std::numeric_limits;
-        glm::vec3 mn(numeric_limits<float>::infinity());
-        glm::vec3 mx(-numeric_limits<float>::infinity());
+        glm::vec3 mn(numeric_limits<f32>::infinity());
+        glm::vec3 mx(-numeric_limits<f32>::infinity());
 
         for (const u32 index : indices)
         {
@@ -155,10 +155,10 @@ struct Frustum
 		for (const auto& plane : planes)
 		{
 			// Signed distance from center to plane
-			const float dist = glm::dot(glm::vec3(plane), globalCenter) + plane.w;
+			const f32 dist = glm::dot(glm::vec3(plane), globalCenter) + plane.w;
 
 			// Maximum radius of the box projected onto the plane normal
-			float radius = glm::dot(glm::abs(glm::vec3(plane)), globalExtents);
+			f32 radius = glm::dot(glm::abs(glm::vec3(plane)), globalExtents);
 
 			// If the box is behind the plane by more than its radius, it is outside
 			if (dist < -radius) return false;

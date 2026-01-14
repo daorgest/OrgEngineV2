@@ -389,7 +389,7 @@ DescriptorSet DescriptorAllocatorGrowable::Allocate(DescriptorLayout layout, con
 
         if (result != VK_SUCCESS)
         {
-            LOG(Error, "Failed to allocate descriptor set (VkResult: {})", static_cast<int>(result));
+            LOG(Error, "Failed to allocate descriptor set (VkResult: {})", static_cast<i32>(result));
             return {set};;
         }
 

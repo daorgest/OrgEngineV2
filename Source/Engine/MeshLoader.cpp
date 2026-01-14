@@ -134,8 +134,8 @@ Result<LoadedModel> MeshLoader::LoadFBX(const char* path)
         Material out{};
         out.name = umat->name.data;
         out.baseColor = { umat->pbr.base_color.value_vec3.x, umat->pbr.base_color.value_vec3.y, umat->pbr.base_color.value_vec3.z };
-        out.roughness = static_cast<float>(umat->pbr.roughness.value_real);
-        out.metallic = static_cast<float>(umat->pbr.metalness.value_real);
+        out.roughness = static_cast<f32>(umat->pbr.roughness.value_real);
+        out.metallic = static_cast<f32>(umat->pbr.metalness.value_real);
 
         // Map texture paths using your existing logic
         if (umat->pbr.base_color.texture) out.albedoPath = umat->pbr.base_color.texture->filename.data;
@@ -167,18 +167,18 @@ Result<LoadedModel> MeshLoader::LoadFBX(const char* path)
             mp.vertexOffset = 0;
 
             // Extract vertices per triangle
-            for (uint32_t face_i : part.face_indices)
+            for (u32 face_i : part.face_indices)
             {
                 ufbx_face face = umesh->faces[face_i];
-                uint32_t num_tris = face.num_indices - 2;
+                u32 num_tris = face.num_indices - 2;
 
-                for (uint32_t tri_i = 0; tri_i < num_tris; tri_i++)
+                for (u32 tri_i = 0; tri_i < num_tris; tri_i++)
                 {
                     // Basic triangulation (fan)
-                	uint32_t indices[3] = { 0, tri_i + 1, tri_i + 2 };
-                	for (uint32_t i : indices)
+                	u32 indices[3] = { 0, tri_i + 1, tri_i + 2 };
+                	for (u32 i : indices)
                 	{
-                		uint32_t corner = face.index_begin + i;
+                		u32 corner = face.index_begin + i;
                 		Vertex v{};
 
                 		// Position is always required
@@ -256,13 +256,13 @@ static void BuildMeshPartsFromShape(
     const std::vector<tinyobj::material_t>& materials,
     Mesh& outMesh)
 {
-    std::unordered_map<int, Vector<u32>> materialGroups;
+    std::unordered_map<i32, Vector<u32>> materialGroups;
 
     struct VertHash {
         size_t operator()(const tinyobj::index_t& i) const {
             size_t h = 0;
-            auto hash_combine = [](size_t& seed, int v) {
-                seed ^= std::hash<int>{}(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+            auto hash_combine = [](size_t& seed, i32 v) {
+                seed ^= std::hash<i32>{}(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
             };
             hash_combine(h, i.vertex_index);
             hash_combine(h, i.normal_index);
@@ -287,8 +287,8 @@ static void BuildMeshPartsFromShape(
 
     for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f)
     {
-        int fv = shape.mesh.num_face_vertices[f];
-        int matId = shape.mesh.material_ids[f];
+        i32 fv = shape.mesh.num_face_vertices[f];
+        i32 matId = shape.mesh.material_ids[f];
         auto& groupIndices = materialGroups[matId];
 
         for (size_t v = 0; v < static_cast<size_t>(fv); ++v)

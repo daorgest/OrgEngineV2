@@ -5,9 +5,9 @@
 #include "VulkanSwapchain.h"
 
 #include <algorithm>
+#define VOLK_IMPLEMENTATION
 #include <volk.h>
 #include <windows.h>
-#include <vulkan/vulkan_win32.h>
 
 #include "Platform.h"
 #include "VulkanCheck.h"
@@ -46,13 +46,12 @@ Result<void> VulkanSwapchain::Init(GPUDevice* device, WindowHandle windowHandle_
     VK_CHECK(vkCreateWin32SurfaceKHR(devicePtr->instance->instance, &surfaceCreateInfo, nullptr, &surface));
     LOG(Info, "Created Win32 Vulkan surface.");
 #elif ENGINE_PLATFORM_SDL
-    if (!SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(handle), device->instance->instance, nullptr, &surface))
+    if (!SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(handle), devicePtr->instance->instance, nullptr, &surface))
     {
         LOG(Error, "SDL_Vulkan_CreateSurface failed: {}", SDL_GetError());
-        return false;
+        return std::unexpected(OrgErrCode::SurfaceLost);
     }
     LOG(Info, "Created SDL3 Vulkan surface.");
-
 #else
 #error "Unsupported platform for Vulkan surface creation"
 #endif
@@ -115,14 +114,14 @@ Result<void> VulkanSwapchain::Init(GPUDevice* device, WindowHandle windowHandle_
     CreateDepthImage();
 
     LOG(Info, "Swapchain created successfully: {} x {}, format {}", width, height,
-        static_cast<int>(surfaceFormat.format));
+        static_cast<i32>(surfaceFormat.format));
     return {};
 }
 
 void VulkanSwapchain::Destroy()
 {
-    DestroyImageViews();
-    DestroyDepthImage();
+    images.clear();
+    depthTexture.Destroy();
 
     if (swapchain != VK_NULL_HANDLE)
     {
@@ -139,48 +138,24 @@ void VulkanSwapchain::Destroy()
 
 bool VulkanSwapchain::ResizeIfNeeded()
 {
-    static bool wasMinimized = false;
+    u32 windowWidth = 0;
+    u32 windowHeight = 0;
+    Platform::GetWindowSize(handle, windowWidth, windowHeight);
 
-    u32 newWidth = 0;
-    u32 newHeight = 0;
-    Platform::GetWindowSize(handle, newWidth, newHeight);
-
-    // Window minimized -> skip rendering & resizing
-    if (newWidth == 0 || newHeight == 0)
+    // if minimized
+    if (windowWidth == 0 || windowHeight == 0)
     {
-        if (!wasMinimized)
-        {
-            LOG(Warning, "Window minimized, skipping resize");
-            wasMinimized = true;
-        }
-        return false; // Skip frame
+        return false;
     }
 
-    // Window restored
-    if (wasMinimized)
+    // if different
+    if ((windowWidth != width) || (windowHeight != height))
     {
-        LOG(Info, "Window restored.");
-        wasMinimized = false;
+        Recreate();
+        return false;
     }
 
-    bool sizeChanged = (newWidth != width || newHeight != height);
-
-    if (sizeChanged || needsRecreation)
-    {
-
-        if (!Recreate())
-        {
-            LOG(Error, "Swapchain: Failed to recreate swapchain handles.");
-            return false;
-        }
-
-        LOG(Info, "Swapchain: Resized to {}x{} | Format: {}", width, height, static_cast<int>(surfaceFormat.format));
-
-        needsRecreation = false;
-        return false; // Skip the rest of this frame to be safe
-    }
-
-    return true; // Result: Ready to render
+    return true;
 }
 
 GPUTexture* VulkanSwapchain::GetCurrentImage()
@@ -267,11 +242,9 @@ void VulkanSwapchain::CreateDepthImage()
                                TextureLayout::DepthWrite;
 }
 
-void VulkanSwapchain::DestroyDepthImage() const
+void VulkanSwapchain::DestroyDepthImage()
 {
-    if (depthTexture.image != VK_NULL_HANDLE) {
-        const_cast<VulkanTexture&>(depthTexture).Destroy();
-    }
+    depthTexture.Destroy();
 }
 
 void VulkanSwapchain::SetVsyncMode(PresentMode mode)
@@ -308,7 +281,6 @@ bool VulkanSwapchain::Recreate()
     }
     else
     {
-        // Fallback: Clamp your window size to the allowed min/max
         u32 w, h;
         Platform::GetWindowSize(handle, w, h);
         width = std::clamp(w, caps.minImageExtent.width, caps.maxImageExtent.width);
@@ -320,16 +292,6 @@ bool VulkanSwapchain::Recreate()
     vkGetPhysicalDeviceSurfaceFormatsKHR(vkDev->physicalDevice, surface, &formatCount, nullptr);
     Vector<VkSurfaceFormatKHR> formats(formatCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(vkDev->physicalDevice, surface, &formatCount, formats.data());
-
-
-    // surfaceFormat = formats[0];
-    // for (const auto& f : formats) {
-    // 	if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-    // 		surfaceFormat = f;
-    // 		break;
-    // 	}
-    // }
-    // texFormat = static_cast<TextureFormat>(surfaceFormat.format);
 
     u32 presentModeCount = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(vkDev->physicalDevice, surface, &presentModeCount, nullptr);

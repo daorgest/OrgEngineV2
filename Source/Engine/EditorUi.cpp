@@ -22,6 +22,7 @@
 #include <backends/imgui_impl_vulkan.h>
 
 #if ENGINE_PLATFORM_WIN32
+#define VOLK_IMPLEMENTATION
 #include <backends/imgui_impl_win32.h>
 #elif ENGINE_PLATFORM_SDL
 #include <backends/imgui_impl_sdl3.h>
@@ -30,117 +31,128 @@
 
 #endif
 
+inline ImVec4 ToLinear(ImVec4 col)
+{
+    // Approximation: Gamma 2.2 curve
+    return ImVec4(
+        std::pow(col.x, 2.2f),
+        std::pow(col.y, 2.2f),
+        std::pow(col.z, 2.2f),
+        col.w // Alpha stays linear
+    );
+}
+
 void EditorUI::InitEditorStyles()
 {
- ImGuiStyle& style = ImGui::GetStyle();
+    ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
     // Catppuccin Mocha Palette
     // --------------------------------------------------------
-    const ImVec4 base       = ImVec4(0.117f, 0.117f, 0.172f, 1.0f); // #1e1e2e
-    const ImVec4 mantle     = ImVec4(0.109f, 0.109f, 0.156f, 1.0f); // #181825
-    const ImVec4 surface0   = ImVec4(0.200f, 0.207f, 0.286f, 1.0f); // #313244
-    const ImVec4 surface1   = ImVec4(0.247f, 0.254f, 0.337f, 1.0f); // #3f4056
-    const ImVec4 surface2   = ImVec4(0.290f, 0.301f, 0.388f, 1.0f); // #4a4d63
-    const ImVec4 overlay0   = ImVec4(0.396f, 0.403f, 0.486f, 1.0f); // #65677c
-    const ImVec4 overlay2   = ImVec4(0.576f, 0.584f, 0.654f, 1.0f); // #9399b2
-    const ImVec4 text       = ImVec4(0.803f, 0.815f, 0.878f, 1.0f); // #cdd6f4
-    const ImVec4 subtext0   = ImVec4(0.639f, 0.658f, 0.764f, 1.0f); // #a3a8c3
-    const ImVec4 mauve      = ImVec4(0.796f, 0.698f, 0.972f, 1.0f); // #cba6f7
-    const ImVec4 peach      = ImVec4(0.980f, 0.709f, 0.572f, 1.0f); // #fab387
-    const ImVec4 yellow     = ImVec4(0.980f, 0.913f, 0.596f, 1.0f); // #f9e2af
-    const ImVec4 green      = ImVec4(0.650f, 0.890f, 0.631f, 1.0f); // #a6e3a1
-    const ImVec4 teal       = ImVec4(0.580f, 0.886f, 0.819f, 1.0f); // #94e2d5
-    const ImVec4 sapphire   = ImVec4(0.458f, 0.784f, 0.878f, 1.0f); // #74c7ec
-    const ImVec4 blue       = ImVec4(0.533f, 0.698f, 0.976f, 1.0f); // #89b4fa
-    const ImVec4 lavender   = ImVec4(0.709f, 0.764f, 0.980f, 1.0f); // #b4befe
+    const ImVec4 base     = ToLinear(ImVec4(0.117f, 0.117f, 0.172f, 1.0f)); // #1e1e2e
+    const ImVec4 mantle   = ToLinear(ImVec4(0.109f, 0.109f, 0.156f, 1.0f)); // #181825
+    const ImVec4 surface0 = ToLinear(ImVec4(0.200f, 0.207f, 0.286f, 1.0f)); // #313244
+    const ImVec4 surface1 = ToLinear(ImVec4(0.247f, 0.254f, 0.337f, 1.0f)); // #3f4056
+    const ImVec4 surface2 = ToLinear(ImVec4(0.290f, 0.301f, 0.388f, 1.0f)); // #4a4d63
+    const ImVec4 overlay0 = ToLinear(ImVec4(0.396f, 0.403f, 0.486f, 1.0f)); // #65677c
+    const ImVec4 overlay2 = ToLinear(ImVec4(0.576f, 0.584f, 0.654f, 1.0f)); // #9399b2
+    const ImVec4 text     = ToLinear(ImVec4(0.803f, 0.815f, 0.878f, 1.0f)); // #cdd6f4
+    const ImVec4 subtext0 = ToLinear(ImVec4(0.639f, 0.658f, 0.764f, 1.0f)); // #a3a8c3
+    const ImVec4 mauve    = ToLinear(ImVec4(0.796f, 0.698f, 0.972f, 1.0f)); // #cba6f7
+    const ImVec4 peach    = ToLinear(ImVec4(0.980f, 0.709f, 0.572f, 1.0f)); // #fab387
+    const ImVec4 yellow   = ToLinear(ImVec4(0.980f, 0.913f, 0.596f, 1.0f)); // #f9e2af
+    const ImVec4 green    = ToLinear(ImVec4(0.650f, 0.890f, 0.631f, 1.0f)); // #a6e3a1
+    const ImVec4 teal     = ToLinear(ImVec4(0.580f, 0.886f, 0.819f, 1.0f)); // #94e2d5
+    const ImVec4 sapphire = ToLinear(ImVec4(0.458f, 0.784f, 0.878f, 1.0f)); // #74c7ec
+    const ImVec4 blue     = ToLinear(ImVec4(0.533f, 0.698f, 0.976f, 1.0f)); // #89b4fa
+    const ImVec4 lavender = ToLinear(ImVec4(0.709f, 0.764f, 0.980f, 1.0f)); // #b4befe
 
     // Main window and backgrounds
-    colors[ImGuiCol_WindowBg]             = base;
-    colors[ImGuiCol_ChildBg]              = base;
-    colors[ImGuiCol_PopupBg]              = surface0;
-    colors[ImGuiCol_Border]               = surface1;
-    colors[ImGuiCol_BorderShadow]         = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-    colors[ImGuiCol_FrameBg]              = surface0;
-    colors[ImGuiCol_FrameBgHovered]       = surface1;
-    colors[ImGuiCol_FrameBgActive]        = surface2;
-    colors[ImGuiCol_TitleBg]              = mantle;
-    colors[ImGuiCol_TitleBgActive]        = surface0;
-    colors[ImGuiCol_TitleBgCollapsed]     = mantle;
-    colors[ImGuiCol_MenuBarBg]            = mantle;
-    colors[ImGuiCol_ScrollbarBg]          = surface0;
-    colors[ImGuiCol_ScrollbarGrab]        = surface2;
+    colors[ImGuiCol_WindowBg] = base;
+    colors[ImGuiCol_ChildBg] = base;
+    colors[ImGuiCol_PopupBg] = surface0;
+    colors[ImGuiCol_Border] = surface1;
+    colors[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    colors[ImGuiCol_FrameBg] = surface0;
+    colors[ImGuiCol_FrameBgHovered] = surface1;
+    colors[ImGuiCol_FrameBgActive] = surface2;
+    colors[ImGuiCol_TitleBg] = mantle;
+    colors[ImGuiCol_TitleBgActive] = surface0;
+    colors[ImGuiCol_TitleBgCollapsed] = mantle;
+    colors[ImGuiCol_MenuBarBg] = mantle;
+    colors[ImGuiCol_ScrollbarBg] = surface0;
+    colors[ImGuiCol_ScrollbarGrab] = surface2;
     colors[ImGuiCol_ScrollbarGrabHovered] = overlay0;
-    colors[ImGuiCol_ScrollbarGrabActive]  = overlay2;
-    colors[ImGuiCol_CheckMark]            = green;
-    colors[ImGuiCol_SliderGrab]           = sapphire;
-    colors[ImGuiCol_SliderGrabActive]     = blue;
-    colors[ImGuiCol_Button]               = surface0;
-    colors[ImGuiCol_ButtonHovered]        = surface1;
-    colors[ImGuiCol_ButtonActive]         = surface2;
-    colors[ImGuiCol_Header]               = surface0;
-    colors[ImGuiCol_HeaderHovered]        = surface1;
-    colors[ImGuiCol_HeaderActive]         = surface2;
-    colors[ImGuiCol_Separator]            = surface1;
-    colors[ImGuiCol_SeparatorHovered]     = mauve;
-    colors[ImGuiCol_SeparatorActive]      = mauve;
-    colors[ImGuiCol_ResizeGrip]           = surface2;
-    colors[ImGuiCol_ResizeGripHovered]    = mauve;
-    colors[ImGuiCol_ResizeGripActive]     = mauve;
-    colors[ImGuiCol_Tab]                  = surface0;
-    colors[ImGuiCol_TabHovered]           = surface2;
-    colors[ImGuiCol_TabActive]            = surface1;
-    colors[ImGuiCol_TabUnfocused]         = surface0;
-    colors[ImGuiCol_TabUnfocusedActive]   = surface1;
-    colors[ImGuiCol_DockingPreview]       = sapphire;
-    colors[ImGuiCol_DockingEmptyBg]       = base;
-    colors[ImGuiCol_PlotLines]            = blue;
-    colors[ImGuiCol_PlotLinesHovered]     = peach;
-    colors[ImGuiCol_PlotHistogram]        = teal;
+    colors[ImGuiCol_ScrollbarGrabActive] = overlay2;
+    colors[ImGuiCol_CheckMark] = green;
+    colors[ImGuiCol_SliderGrab] = sapphire;
+    colors[ImGuiCol_SliderGrabActive] = blue;
+    colors[ImGuiCol_Button] = surface0;
+    colors[ImGuiCol_ButtonHovered] = surface1;
+    colors[ImGuiCol_ButtonActive] = surface2;
+    colors[ImGuiCol_Header] = surface0;
+    colors[ImGuiCol_HeaderHovered] = surface1;
+    colors[ImGuiCol_HeaderActive] = surface2;
+    colors[ImGuiCol_Separator] = surface1;
+    colors[ImGuiCol_SeparatorHovered] = mauve;
+    colors[ImGuiCol_SeparatorActive] = mauve;
+    colors[ImGuiCol_ResizeGrip] = surface2;
+    colors[ImGuiCol_ResizeGripHovered] = mauve;
+    colors[ImGuiCol_ResizeGripActive] = mauve;
+    colors[ImGuiCol_Tab] = surface0;
+    colors[ImGuiCol_TabHovered] = surface2;
+    colors[ImGuiCol_TabActive] = surface1;
+    colors[ImGuiCol_TabUnfocused] = surface0;
+    colors[ImGuiCol_TabUnfocusedActive] = surface1;
+    colors[ImGuiCol_DockingPreview] = sapphire;
+    colors[ImGuiCol_DockingEmptyBg] = base;
+    colors[ImGuiCol_PlotLines] = blue;
+    colors[ImGuiCol_PlotLinesHovered] = peach;
+    colors[ImGuiCol_PlotHistogram] = teal;
     colors[ImGuiCol_PlotHistogramHovered] = green;
-    colors[ImGuiCol_TableHeaderBg]        = surface0;
-    colors[ImGuiCol_TableBorderStrong]    = surface1;
-    colors[ImGuiCol_TableBorderLight]     = surface0;
-    colors[ImGuiCol_TableRowBg]           = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-    colors[ImGuiCol_TableRowBgAlt]        = ImVec4(1.0f, 1.0f, 1.0f, 0.06f);
-    colors[ImGuiCol_TextSelectedBg]       = surface2;
-    colors[ImGuiCol_DragDropTarget]       = yellow;
-    colors[ImGuiCol_NavHighlight]         = lavender;
-    colors[ImGuiCol_NavWindowingHighlight]= ImVec4(1.0f, 1.0f, 1.0f, 0.7f);
-    colors[ImGuiCol_NavWindowingDimBg]    = ImVec4(0.8f, 0.8f, 0.8f, 0.2f);
-    colors[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.0f, 0.0f, 0.0f, 0.35f);
-    colors[ImGuiCol_Text]                 = text;
-    colors[ImGuiCol_TextDisabled]         = subtext0;
+    colors[ImGuiCol_TableHeaderBg] = surface0;
+    colors[ImGuiCol_TableBorderStrong] = surface1;
+    colors[ImGuiCol_TableBorderLight] = surface0;
+    colors[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 1.0f, 1.0f, 0.06f);
+    colors[ImGuiCol_TextSelectedBg] = surface2;
+    colors[ImGuiCol_DragDropTarget] = yellow;
+    colors[ImGuiCol_NavHighlight] = lavender;
+    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.0f, 1.0f, 1.0f, 0.7f);
+    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.8f, 0.8f, 0.8f, 0.2f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.35f);
+    colors[ImGuiCol_Text] = text;
+    colors[ImGuiCol_TextDisabled] = subtext0;
 
     // Rounded corners
-    style.WindowRounding    = 6.0f;
-    style.ChildRounding     = 6.0f;
-    style.FrameRounding     = 4.0f;
-    style.PopupRounding     = 4.0f;
+    style.WindowRounding = 6.0f;
+    style.ChildRounding = 6.0f;
+    style.FrameRounding = 4.0f;
+    style.PopupRounding = 4.0f;
     style.ScrollbarRounding = 9.0f;
-    style.GrabRounding      = 4.0f;
-    style.TabRounding       = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.TabRounding = 4.0f;
 
     // Padding and spacing
-    style.WindowPadding     = ImVec2(8.0f, 8.0f);
-    style.FramePadding      = ImVec2(5.0f, 3.0f);
-    style.ItemSpacing       = ImVec2(8.0f, 4.0f);
-    style.ItemInnerSpacing  = ImVec2(4.0f, 4.0f);
-    style.IndentSpacing     = 21.0f;
-    style.ScrollbarSize     = 14.0f;
-    style.GrabMinSize       = 10.0f;
+    style.WindowPadding = ImVec2(8.0f, 8.0f);
+    style.FramePadding = ImVec2(5.0f, 3.0f);
+    style.ItemSpacing = ImVec2(8.0f, 4.0f);
+    style.ItemInnerSpacing = ImVec2(4.0f, 4.0f);
+    style.IndentSpacing = 21.0f;
+    style.ScrollbarSize = 14.0f;
+    style.GrabMinSize = 10.0f;
 
     // Borders
-    style.WindowBorderSize  = 1.0f;
-    style.ChildBorderSize   = 1.0f;
-    style.PopupBorderSize   = 1.0f;
-    style.FrameBorderSize   = 0.0f;
-    style.TabBorderSize     = 0.0f;
+    style.WindowBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+    style.FrameBorderSize = 0.0f;
+    style.TabBorderSize = 0.0f;
 }
 
 // For multi-viewport support
 #if ENGINE_PLATFORM_WIN32
-static int CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc, ImU64* outVkSurface)
+static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc, ImU64* outVkSurface)
 {
     VkWin32SurfaceCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
@@ -157,7 +169,7 @@ static int CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const vo
 
 #elif ENGINE_PLATFORM_SDL
 
-static int CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc, ImU64* outVkSurface)
+static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc, ImU64* outVkSurface)
 {
     auto* win = static_cast<SDL_Window*>(vp->PlatformHandleRaw);
 
@@ -179,7 +191,7 @@ bool EditorUI::Init(const Renderer::VulkanInstance* instance, const Renderer::Vu
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-    // io.ConfigFlags |= ImGuiConfigFlags_IsSRGB;
+    io.ConfigFlags |= ImGuiConfigFlags_IsSRGB;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.ConfigDpiScaleFonts = true;
     io.ConfigDebugHighlightIdConflicts = true;
@@ -218,8 +230,8 @@ bool EditorUI::Init(const Renderer::VulkanInstance* instance, const Renderer::Vu
         .Queue = device->graphicsQueue,
         .DescriptorPool = descriptorPool,
         .DescriptorPoolSize = 1000,
-        .MinImageCount = MAX_FRAME_OVERLAP, // Must match frames in flight, not swapchain images
-        .ImageCount = MAX_FRAME_OVERLAP, // Must match frames in flight, not swapchain images
+        .MinImageCount = MAX_FRAME_OVERLAP,
+        .ImageCount = MAX_FRAME_OVERLAP,
         .UseDynamicRendering = true,
     };
 
@@ -293,12 +305,12 @@ void EditorUI::DrawCameraGizmo(CameraComponent& camComp)
     const ImVec2 work_size = viewport->WorkSize;
 
     // Simple hardcoded sizes
-    constexpr float gizmoSize = 125.0f;
-    constexpr float padding = 10.0f;
+    constexpr f32 gizmoSize = 125.0f;
+    constexpr f32 padding = 10.0f;
 
     // Position in top-right corner of work area
-    const float xPos = work_pos.x + work_size.x - gizmoSize - padding;
-    const float yPos = work_pos.y + padding;
+    const f32 xPos = work_pos.x + work_size.x - gizmoSize - padding;
+    const f32 yPos = work_pos.y + padding;
 
     // Draw directly using viewport foreground draw list (sticks to main viewport)
     ImOGuizmo::SetRect(xPos, yPos, gizmoSize);
@@ -317,11 +329,20 @@ void EditorUI::DrawCameraEditor()
             const bool isActive = (i == state.activeCameraIdx);
             const bool isSelected = (i == state.selectedCameraIdx);
             char label[64];
-            std::snprintf(label, sizeof(label), "%s Camera %u", isActive ? "[VIEWING]" : "[IDLE]", i);
+            std::snprintf(label, sizeof(label), "%s Camera %u %s",
+                            isActive ? "[ACTIVE]" : "        ",
+                            i,
+                            isSelected ? "(Selected)" : "");
 
             if (ImGui::Selectable(label, isSelected))
             {
                 state.selectedCameraIdx = i;
+            }
+
+            // Double click to possess immediately
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
+            {
+                state.activeCameraIdx = i;
             }
         }
         ImGui::EndListBox();
@@ -342,6 +363,8 @@ void EditorUI::DrawCameraEditor()
             targetComp.position = activeComp.position;
             targetComp.base.yaw = activeComp.base.yaw;
             targetComp.base.pitch = activeComp.base.pitch;
+
+            targetComp.base.UpdateVecAndMat(targetComp.position, 1.67777777); // yeah ikik
         }
 
         DrawCameraProperties(targetComp);
@@ -418,7 +441,7 @@ void EditorUI::DrawCameraSpeedPopup(f32 camSpeedPopupTime) const
     // Position in top-center of work area (12% down from top)
     const ImVec2 pos = {work_pos.x + (work_size.x * 0.5f), work_pos.y + (work_size.y * 0.12f)};
 
-    const float alpha = std::min(1.0f, camSpeedPopupTime / 1.0f);
+    const f32 alpha = std::min(1.0f, camSpeedPopupTime / 1.0f);
 
     ImGui::SetNextWindowBgAlpha(alpha);
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always, {0.5f, 0.5f});
@@ -470,8 +493,10 @@ bool EditorUI::DrawMainMenuBar()
 
         if (ImGui::BeginMenu("View"))
         {
+            ImGui::MenuItem("Show Main Overlay", "F2", &state.showMainOverlay);
             ImGui::MenuItem("Show Menu Bar", "F3", &state.showMenuBar);
             ImGui::MenuItem("Show GPU Info", "F4", &state.showGPUInfo);
+            ImGui::MenuItem("Show Editor Tools", "T", &state.showEditorTools);
 
             if (ImGui::BeginMenu("Render Views"))
             {
@@ -507,14 +532,14 @@ bool EditorUI::DrawMainMenuBar()
     return shouldExit;
 }
 
-void EditorUI::UpdateAlphaLerp(float& currentAlpha, float minAlpha, float maxAlpha, float speed)
+void EditorUI::UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f32 speed)
 {
     const ImGuiIO& io = ImGui::GetIO();
     // Check if the current window being drawn is hovered
     const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 
-    const float target = hovered ? maxAlpha : minAlpha;
-    const float dt = io.DeltaTime;
+    const f32 target = hovered ? maxAlpha : minAlpha;
+    const f32 dt = io.DeltaTime;
 
     if (std::abs(currentAlpha - target) > 0.001f)
     {
@@ -528,24 +553,23 @@ void EditorUI::UpdateAlphaLerp(float& currentAlpha, float minAlpha, float maxAlp
 
 void EditorUI::DrawMainOverlay()
 {
-    if (state.noUI) return;
+    if (state.noUI || !state.showMainOverlay) return;
     using namespace ImGui;
 
-    static float overlayAlpha = 0.7f;
+    static f32 overlayAlpha = 0.7f;
 
     const bool showDepthRange =
-        state.debugData->debugMode == DebugView::DepthLin ||
-        state.debugData->debugMode == DebugView::DepthLog;
+        state.debugData->debugMode == DebugView::Depth;
 
     enum Corner { Custom = -1, TopLeft, TopRight, BottomLeft, BottomRight, Center };
-    static int corner = TopLeft;
+    static i32 corner = TopLeft;
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const ImVec2 work_pos = vp->WorkPos;
     const ImVec2 work_size = vp->WorkSize;
 
     // Scale pad with DPI/work area; clamp to reasonable range.
-    const float padding = std::clamp(10.0f * vp->DpiScale, 8.0f, 24.0f);
+    const f32 padding = std::clamp(10.0f * vp->DpiScale, 8.0f, 24.0f);
 
     ImVec2 window_pos;
     ImVec2 window_pivot;
@@ -585,7 +609,7 @@ void EditorUI::DrawMainOverlay()
         min_size.x = std::max(min_size.x, 420.0f);
 
     // Expand height for extra rows
-    float extra_rows = 0.0f;
+    f32 extra_rows = 0.0f;
     if (showDepthRange) extra_rows += 1.0f;
     if (state.debugRenderer->enabled) extra_rows += 5.0f;
     min_size.y += extra_rows * ImGui::GetFrameHeightWithSpacing();
@@ -614,7 +638,7 @@ void EditorUI::DrawMainOverlay()
     if (ImGui::Begin("Simple overlay", nullptr, flags))
     {
         // Drag to move only when in Custom mode
-        UpdateAlphaLerp(overlayAlpha, 0.7f, 0.90f, 8.0f);
+        UpdateAlphaLerp(overlayAlpha, 0.6f, 1.0f, 8.0f);
         ClampWindowToViewport();
 
         if (corner == Custom)
@@ -772,17 +796,15 @@ void EditorUI::DrawMainOverlay()
             {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::SeparatorText("Depth Buffer View Options");
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Dummy(ImVec2(0, 0)); // keep layout happy
+                ImGui::SeparatorText("Depth Buffer View");
 
-                // Depth Range row
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("Depth Range");
+
                 ImGui::TableSetColumnIndex(1);
                 ImGui::PushItemWidth(-FLT_MIN);
-                float range = std::clamp(state.debugData->debugDepthRange, 1.0f, 1000.0f);
+                f32 range = std::clamp(state.debugData->debugDepthRange, 1.0f, 1000.0f);
                 if (ImGui::SliderFloat("##DepthRange", &range, 1.0f, 1000.0f, "%.1f", ImGuiSliderFlags_Logarithmic))
                     state.debugData->debugDepthRange = range;
                 ImGui::PopItemWidth();
@@ -801,7 +823,7 @@ void EditorUI::DrawMainOverlay()
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("Depth Bias");
                 ImGui::TableSetColumnIndex(1);
-                static float depthBias = 0.0f;
+                static f32 depthBias = 0.0f;
                 if (ImGui::SliderFloat("##AABBBias", &depthBias, 1e-6f, 1e-2f, "%.6f", ImGuiSliderFlags_Logarithmic))
                 {
                     state.debugRenderer->SetDepthBias(depthBias);
@@ -830,8 +852,8 @@ void EditorUI::DrawMainOverlay()
 
                 // Reset
                 ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                if (ImGui::Button("Reset"))
+                ImGui::TableSetColumnIndex(1);
+                if (ImGui::Button("Reset AABB", ImVec2(-FLT_MIN, 0)))
                 {
                     depthBias = 1e-4f;
                     color = {1.f, 1.f, 0.f, 1.f};
@@ -921,20 +943,18 @@ void EditorUI::DrawEditorTools()
 {
     if (state.noUI) return;
 
-    // 1. Calculate the Default Anchor Position (Top-Right, below Gizmo)
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    constexpr float gizmoSize = 160.0f; // Matches DrawCameraGizmo
-    constexpr float padding = 15.0f;
+    constexpr f32 gizmoSize = 160.0f; // Matches DrawCameraGizmo
+    constexpr f32 padding = 15.0f;
 
     // Tools window width
-    constexpr float windowWidth = 400.0f;
+    constexpr f32 windowWidth = 400.0f;
 
     // Position: X is right-aligned minus window width and padding.
     // Y is top-aligned plus gizmo size and double padding.
-    const float defaultX = viewport->WorkPos.x + viewport->WorkSize.x - windowWidth - padding;
-    const float defaultY = viewport->WorkPos.y + padding + gizmoSize + padding;
+    const f32 defaultX = viewport->WorkPos.x + viewport->WorkSize.x - windowWidth - padding;
+    const f32 defaultY = viewport->WorkPos.y + padding + gizmoSize + padding;
 
-    // Use FirstUseEver so the user can "detach" it by dragging it elsewhere
     ImGui::SetNextWindowPos(ImVec2(defaultX, defaultY), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(windowWidth, 0.0f), ImGuiCond_Always); // 0 height + AutoResize = Snap to content
 
@@ -946,7 +966,7 @@ void EditorUI::DrawEditorTools()
 
     if (ImGui::Begin("Editor Tools", &state.showEditorTools, flags))
     {
-        UpdateAlphaLerp(state.editorAlpha, 0.7f, 1.0f, 8.0f);
+        UpdateAlphaLerp(state.editorAlpha, 0.6f, 1.0f, 8.0f);
 
         // Prevent window from being dragged outside the viewport
         ClampWindowToViewport();
@@ -982,8 +1002,8 @@ static bool ProjectToScreen(const glm::vec3& worldPos, const glm::mat4& view, co
     // Optional: cull if far outside [-1,1]
     if (ndc.x < -1.2f || ndc.x > 1.2f || ndc.y < -1.2f || ndc.y > 1.2f) return false;
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float sx = (ndc.x * 0.5f + 0.5f) * vp->Size.x;
-    const float sy = (ndc.y * 0.5f + 0.5f) * vp->Size.y; // Vulkan-style proj already Y-flipped
+    const f32 sx = (ndc.x * 0.5f + 0.5f) * vp->Size.x;
+    const f32 sy = (ndc.y * 0.5f + 0.5f) * vp->Size.y; // Vulkan-style proj already Y-flipped
     outScreen = {vp->Pos.x + sx, vp->Pos.y + sy};
     return true;
 }
@@ -1026,17 +1046,17 @@ static LightUBO MakeSpot(const glm::vec3& forward, const glm::vec3& position)
     };
 }
 
-void EditorUI::UpdateLights(float deltaTime)
+void EditorUI::UpdateLights(f32 deltaTime)
 {
     auto& lights = *state.lights;
-    CameraComponent& activeCam = state.cameraComponents[state.activeCameraIdx];
+    const CameraComponent& activeCam = state.cameraComponents[state.activeCameraIdx];
 
-    for (int i = 0; i < (int)lights.size(); ++i)
+    for (i32 i = 0; i < static_cast<i32>(lights.size()); ++i)
     {
         auto& L = lights[i];
 
         // Flashlight Logic: Sync spotlight to camera if toggled
-        if (L.type == LightType::Spot && state.followCamera && (u32)i == state.selectedCameraIdx)
+        if (L.type == LightType::Spot && state.followCamera && static_cast<u32>(i) == state.selectedCameraIdx)
         {
             L.position = activeCam.position;
             L.direction = glm::normalize(activeCam.base.forward);
@@ -1046,8 +1066,8 @@ void EditorUI::UpdateLights(float deltaTime)
     // Global Animations (e.g., Spinning lights)
     if (state.spinLights && lights.size() >= 4) {
         state.currentLightTime += deltaTime * state.spinSpeed;
-        for (int i = 0; i < 4; ++i) {
-            const float angle = state.currentLightTime + (i * glm::half_pi<float>());
+        for (i32 i = 0; i < 4; ++i) {
+            const f32 angle = state.currentLightTime + (i * glm::half_pi<f32>());
             lights[i].position = glm::vec3(
                 state.spinCenter.x + (state.spinRadius * std::sin(angle)),
                 state.spinHeight,
@@ -1066,7 +1086,7 @@ void EditorUI::DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam
     const glm::mat4& view = cam.view;
     const glm::mat4& proj = cam.projection;
 
-    for (int i = 0; i < (int)lights.size(); ++i)
+    for (i32 i = 0; i < (i32)lights.size(); ++i)
     {
         const LightUBO& Li = lights[i];
         const bool isSel = (i == selectedIdx);
@@ -1101,8 +1121,7 @@ void EditorUI::DrawLightEditor()
     CameraComponent& activeCam = state.cameraComponents[state.activeCameraIdx];
     auto& lights = *state.lights;
 
-    // --- 1. Add New Lights ---
-    // These helpers (MakeDirectional, etc.) create UBO-compatible structs
+    // Add New Lights
     if (ImGui::Button("+ Directional")) lights.push_back(MakeDirectional());
     ImGui::SameLine();
     if (ImGui::Button("+ Point")) lights.push_back(MakePoint(activeCam.base.forward, activeCam.position));
@@ -1111,10 +1130,10 @@ void EditorUI::DrawLightEditor()
 
     ImGui::Separator();
 
-    // --- 2. Light Selection and Removal ---
+    // Light Selection and Removal
     if (ImGui::BeginListBox("##LightsList", ImVec2(-FLT_MIN, 150)))
     {
-        for (int i = 0; i < (int)lights.size(); ++i)
+        for (i32 i = 0; i < (i32)lights.size(); ++i)
         {
             const bool isSelected = (state.selectedLightIdx == (u32)i);
             const char* typeIcon = (lights[i].type == 0) ? "[D]" : (lights[i].type == 1) ? "[P]" : "[S]";
@@ -1143,7 +1162,7 @@ void EditorUI::DrawLightEditor()
 
     ImGui::Separator();
 
-    // --- 3. Property Editing ---
+    // Property Editing
     if (!lights.empty() && state.selectedLightIdx < (u32)lights.size())
     {
         LightUBO& L = lights[state.selectedLightIdx];

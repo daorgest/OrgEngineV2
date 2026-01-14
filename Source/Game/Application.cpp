@@ -32,7 +32,7 @@ bool Application::Init()
 		ZoneScopedN("Init Vulkan Instance, Device, Swapchain, Editor UI, and Command Buffers");
 		instance.Init();
 		device.Init(&instance);
-		swapchain.Init(&device, windowContext.handle);
+		CHECK_RESULT(swapchain.Init(&device, windowContext.handle));
 		renderer.Init(&device, &swapchain);
 
 		editorUI.state.wc            = &windowContext;
@@ -71,24 +71,23 @@ bool Application::Init()
 	}
 
 	// Texture Defaults
-
 	texDefaults.Init(&device);
 
-	// // Main model
-	// {
-	// 	ZoneScopedN("LoadModel From Source!");
-	// 	DrawLoadingSplash("Loading OBJ Model...");
-	// 	LOG(Debug, "Loading main model: Sponza/sponza.obj");
-	//
-	// 	auto result = Assets::MeshLoader::LoadModelFromSource(MeshSourceType::OBJ, "Sponza/sponza.obj");
-	// 	modelInst = std::make_unique<Renderer::VulkanModel>(&device, *result, globalDescriptorAlloc, texDefaults);
-	// 	Renderer::ModelComponent comp = {
-	//
-	// 		.model = modelInst.get(),
-	// 		.transform = glm::scale(glm::vec3(0.02f))
-	// 	};
-	// 	models.push_back(comp);
-	// }
+	// Main model
+	{
+		ZoneScopedN("LoadModel From Source!");
+		DrawLoadingSplash("Loading OBJ Model...");
+		LOG(Debug, "Loading main model: Sponza/sponza.obj");
+
+		auto result = Assets::MeshLoader::LoadModelFromSource(MeshSourceType::OBJ, "Assets/Sponza/sponza.obj");
+		modelInst = std::make_unique<Renderer::VulkanModel>(&device, *result, globalDescriptorAlloc, texDefaults);
+		Renderer::ModelComponent comp = {
+
+			.model = modelInst.get(),
+			.transform = glm::scale(glm::vec3(0.01f)),
+		};
+		models.push_back(comp);
+	}
 
 	// DrawLoadingSplash("Building Skybox...");
 
@@ -99,17 +98,16 @@ bool Application::Init()
 
 	// DrawLoadingSplash("Creating PBR Sphere Grid...");
 
-	CreatePBRSphereGrid();
+	// CreatePBRSphereGrid();
 
-	DrawLoadingSplash("Compiling Shaders...");
+	// DrawLoadingSplash("Compiling Shaders...");
 	auto codeResult = Renderer::VulkanShader::ReadShaderFile("Shaders/scene.spv");
 	if (!codeResult)
 	{
 		LOG(Error, "Failed to load shader: Shaders/scene.spv ({})", static_cast<i32>(codeResult.error()));
 		return false;
 	}
-
-	sceneShader.Init(&device, codeResult.value());
+    CHECK_RESULT(sceneShader.Init(&device, codeResult.value()));
 
 	// DrawLoadingSplash("Initializing Debug Renderer...");
 	if (!debugRenderer.Initialize(&device, &renderArena, sceneUBO.get(), &globalDescriptorAlloc, true, false))
@@ -152,9 +150,9 @@ bool Application::Init()
     }
 
     camMode = CameraMode::FreeFly;
-    activeIdx = 0;
+    activeCamIdx = 0;
     editorUI.state.cameraComponents = std::span(sceneCameras.data(), MAX_SCENE_CAMERAS);
-    editorUI.state.activeCameraIdx = activeIdx;
+    editorUI.state.activeCameraIdx = activeCamIdx;
 
 	// Create 4 point lights surrounding the sphere grid (grid is at z=-10, centered at y=5)
 	constexpr f32 gridCenterZ = -10.0f;   // Grid depth position
@@ -209,11 +207,41 @@ bool Application::Init()
 
 	lightMeta.count = static_cast<u32>(lights.size());
 
+    InitDefaultBindings();
+
 	debugData.debugMode = DebugView::Material;
 	Platform::ShowWindow(windowContext);
 	return true;
 }
 
+void Application::InitDefaultBindings()
+{
+    // --- Rebindable Movement (Keyboard + Gamepad) ---
+    input.BindAction(Action::MoveForward,  Keyboard::W);
+    input.BindAction(Action::MoveBackward, Keyboard::S);
+    input.BindAction(Action::MoveLeft,     Keyboard::A);
+    input.BindAction(Action::MoveRight,    Keyboard::D);
+    input.BindAction(Action::MoveUp,       Keyboard::E);
+    input.BindAction(Action::MoveDown,     Keyboard::Q);
+
+    // Additive Gamepad bindings for movement
+    input.BindAction(Action::MoveForward,  Gamepad::Button::DpadUp);
+    input.BindAction(Action::MoveBackward, Gamepad::Button::DpadDown);
+    input.BindAction(Action::MoveLeft,     Gamepad::Button::DpadLeft);
+    input.BindAction(Action::MoveRight,    Gamepad::Button::DpadRight);
+
+    // --- Strict Keyboard System Keys (F1–F9) ---
+    input.BindAction(Action::ToggleFPS,      Keyboard::F1);
+    input.BindAction(Action::ToggleDebug,    Keyboard::F2);
+    input.BindAction(Action::ToggleMenuBar,  Keyboard::F3);
+    input.BindAction(Action::ToggleGPUInfo,  Keyboard::F4);
+    input.BindAction(Action::ToggleVSync,    Keyboard::F5);
+    input.BindAction(Action::ToggleUI,       Keyboard::F6);
+    input.BindAction(Action::ToggleFrustum,  Keyboard::F7);
+    input.BindAction(Action::CycleCamera,    Keyboard::F8);
+    input.BindAction(Action::CycleDebugView, Keyboard::F9);
+
+}
 
 void Application::Run()
 {
@@ -267,54 +295,82 @@ void Application::Run()
 	}
 }
 
-void Application::Cleanup() const
+void Application::Cleanup()
 {
-	vkDeviceWaitIdle(device.device);
+	device.WaitIdle();
 }
 
 
 void Application::UpdateCamera()
 {
-    const f32 dt = windowContext.GetDeltaTime();
     if (!windowContext.displayState.isFocused) return;
 
-    const ImGuiIO& io = ImGui::GetIO();
-    input.mouseLookActive = !io.WantCaptureMouse;
+    activeCamIdx = editorUI.state.activeCameraIdx;
+    const f32 dt = windowContext.GetDeltaTime();
 
-    CameraComponent& activeCam = sceneCameras[activeIdx];
+    CameraComponent& activeCam = sceneCameras[activeCamIdx];
 
-    if (input.usingKeyboard)
+    // F1: Toggle between FPS and FreeFly mode
+    if (input.IsActionDown(Action::ToggleFPS))
     {
-        // F1: Toggle between FPS and FreeFly mode
-        if (input.IsKeyDown(Keyboard::F1))
+        const bool toFPS = (camMode == CameraMode::FreeFly);
+        camMode = toFPS ? CameraMode::FPS : CameraMode::FreeFly;
+
+        // When switching to FPS, we "drop" the foot position to the ground
+        // When switching to FreeFly, we "lift" the position back to head-level
+        const f32 offset = activeCam.controller.eyeHeight;
+        activeCam.position.y += toFPS ? -offset : offset;
+
+        if (camMode == CameraMode::FPS)
         {
-            const bool toFPS = (camMode == CameraMode::FreeFly);
-            camMode = toFPS ? CameraMode::FPS : CameraMode::FreeFly;
+            activeCam.controller.velocity = glm::vec3(0.0f);
+            activeCam.controller.grounded = false; // Force re-check of collision
+        }
+    }
 
-            // When switching to FPS, we "drop" the foot position to the ground
-            // When switching to FreeFly, we "lift" the position back to head-level
-            const float offset = activeCam.controller.eyeHeight;
-            activeCam.position.y += toFPS ? -offset : offset;
+    // F2-F6: System toggles
+    if (input.IsActionDown(Action::ToggleDebug)) debugRenderer.enabled = !debugRenderer.enabled;
+    if (input.IsActionDown(Action::ToggleMenuBar)) editorUI.state.showMenuBar = !editorUI.state.showMenuBar;
+    if (input.IsActionDown(Action::ToggleGPUInfo)) editorUI.state.showGPUInfo = !editorUI.state.showGPUInfo;
+    if (input.IsActionDown(Action::ToggleVSync))
+    {
+        swapchain.presentMode = (swapchain.presentMode == PresentMode::VSyncOn)
+                                    ? PresentMode::VSyncOff
+                                    : PresentMode::VSyncOn;
+        swapchain.needsRecreation = true;
+    }
+    if (input.IsActionDown(Action::ToggleUI)) editorUI.state.noUI = !editorUI.state.noUI;
+    if (input.IsActionDown(Action::ToggleFrustum)) freezeFrustum = !freezeFrustum;
+    if (input.IsActionDown(Action::CycleCamera))
+    {
+        activeCamIdx = (activeCamIdx + 1) % MAX_SCENE_CAMERAS;
+        selectedCameraIdx = activeCamIdx;
+        editorUI.state.selectedCameraIdx = selectedCameraIdx;
+        editorUI.state.activeCameraIdx = activeCamIdx;
+    }
+    if (input.IsActionDown(Action::CycleDebugView))
+    {
+        // 1. Calculate the number of elements in your array
+        constexpr i32 viewCount = std::size(kDebugViews);
 
-            if (camMode == CameraMode::FPS) {
-                activeCam.controller.velocity = glm::vec3(0.0f);
-                activeCam.controller.grounded = false; // Force re-check of collision
+        // 2. Find current index
+        i32 currentIdx = 0;
+        for (i32 i = 0; i < viewCount; i++)
+        {
+            if (kDebugViews[i].value == debugData.debugMode)
+            {
+                currentIdx = i;
+                break;
             }
         }
 
-        // F2-F6: System toggles
-        if (input.IsKeyDown(Keyboard::F2)) debugRenderer.enabled = !debugRenderer.enabled;
-        if (input.IsKeyDown(Keyboard::F3)) showMenuBar = !showMenuBar;
-        if (input.IsKeyDown(Keyboard::F4)) showGPUInfo = !showGPUInfo;
-        if (input.IsKeyDown(Keyboard::F5)) {
-            swapchain.presentMode = (swapchain.presentMode == PresentMode::VSyncOn) ? PresentMode::VSyncOff : PresentMode::VSyncOn;
-            swapchain.needsRecreation = true;
-        }
-        if (input.IsKeyDown(Keyboard::F6)) editorUI.state.noUI = !editorUI.state.noUI;
-        if (input.IsKeyDown(Keyboard::F7)) freezeFrustum = !freezeFrustum;
-        if (input.IsKeyDown(Keyboard::F8)) activeIdx = (activeIdx + 1) % MAX_SCENE_CAMERAS;
+        // 3. Modulo math to cycle
+        i32 nextIdx = (currentIdx + 1) % viewCount;
 
+        // 4. Update the actual engine state
+        debugData.debugMode = kDebugViews[nextIdx].value;
     }
+
 
     const bool altHeld = input.IsKeyHeld(Keyboard::Alt);
     const bool shouldLock = camMode == CameraMode::FPS && !altHeld;
@@ -329,8 +385,8 @@ void Application::UpdateCamera()
         activeCam.controller.Update(activeCam, dt);
 
         // 2. Apply Bobbing to the eye offset
-        const float s = std::sin(activeCam.controller.headTimer * glm::two_pi<float>());
-        const float c = std::cos(activeCam.controller.headTimer * glm::two_pi<float>());
+        const f32 s = std::sin(activeCam.controller.headTimer * glm::two_pi<f32>());
+        const f32 c = std::cos(activeCam.controller.headTimer * glm::two_pi<f32>());
 
         glm::vec3 bobOffset = activeCam.base.right * (s * activeCam.controller.tune.bobHorizAmp);
         bobOffset.y = std::abs(c * activeCam.controller.tune.bobVertAmp);
@@ -342,24 +398,22 @@ void Application::UpdateCamera()
     }
     else
     {
-        ApplyFreeFlyMovement(activeIdx, dt);
+        ApplyFreeFlyMovement(activeCamIdx, dt);
         renderPos = activeCam.position;
     }
 
-
-    if (input.scrollY != 0 && !io.WantCaptureMouse)
+    if (input.scrollY != 0)
     {
         cameraSpeed = std::clamp(cameraSpeed * ((input.scrollY > 0) ? 1.1f : 0.9f), 0.1f, 500.0f);
+        editorUI.state.cameraSpeed = cameraSpeed;
         cameraSpeedPopupTime = 1.5f;
     }
     cameraSpeedPopupTime = std::max(0.0f, cameraSpeedPopupTime - dt);
 
-    if (!freezeFrustum) frustumIdx = activeIdx;
-
     activeCam.base.UpdateVecAndMat(renderPos, aspectRatio);
 
-    editorUI.state.activeCameraIdx = activeIdx;
-    editorUI.state.selectedCameraIdx = selectedCameraIdx;
+    if (!freezeFrustum) frustumIdx = activeCamIdx;
+    selectedCameraIdx = editorUI.state.selectedCameraIdx;
 }
 
 void Application::ApplyFreeFlyMovement(const u32 idx, const f32 dt)
@@ -368,30 +422,45 @@ void Application::ApplyFreeFlyMovement(const u32 idx, const f32 dt)
     Camera& cam = camComp.base;
     glm::vec3& worldPos = camComp.position;
 
-    const bool altHeld = input.IsKeyHeld(Keyboard::Alt);
-    const bool allowLook = input.mouseLookActive && !altHeld;
+    f32 deltaYaw = 0.0f;
+    f32 deltaPitch = 0.0f;
 
-    // 1. Rotation (Mouse)
-    if (allowLook && (input.mouseButtons[Mouse::Right].held || input.mouseButtons[Mouse::Middle].held))
+    if (input.IsKeyHeld(Keyboard::Alt) && input.IsMouseHeld(Mouse::Middle))
     {
-        if (altHeld && input.mouseButtons[Mouse::Middle].held) {
-            // Pan world position relative to camera vectors
-            worldPos += (cam.right * (float)-input.xrel + cam.up * (float)input.yrel) * 0.04f;
-        } else {
-            cam.yaw -= (float)input.xrel * 0.1f;
-            cam.pitch = std::clamp(cam.pitch - (float)input.yrel * 0.1f, -89.0f, 89.0f);
-            Platform::WrapCursorToOppositeEdge(&windowContext);
-        }
+        worldPos += (cam.right * static_cast<f32>(-input.xrel) + cam.up * static_cast<f32>(input.yrel)) * 0.02f;
+        input.scrollY = 0; // no cam speed happening here
     }
 
-    // 2. Translation (Keyboard)
+    if ((input.IsMouseHeld(Mouse::Right)))
+    {
+        deltaYaw   -= static_cast<f32>(input.xrel) * 0.1f;
+        deltaPitch -= static_cast<f32>(input.yrel) * 0.1f;
+        Platform::WrapCursorToOppositeEdge(&windowContext);
+    }
+
+    // Controller movement
+    if (input.controllers[0].connected)
+    {
+        deltaYaw   -= input.GetRightStickX() * 150.0f * dt;
+        deltaPitch += input.GetRightStickY() * 150.0f * dt;
+    }
+
+    cam.yaw += deltaYaw;
+    cam.pitch = std::clamp(cam.pitch + deltaPitch, -89.0f, 89.0f);
+
     glm::vec3 move{0.0f};
-    if (input.IsKeyHeld(Keyboard::W)) move += cam.forward;
-    if (input.IsKeyHeld(Keyboard::S)) move -= cam.forward;
-    if (input.IsKeyHeld(Keyboard::A)) move -= cam.right;
-    if (input.IsKeyHeld(Keyboard::D)) move += cam.right;
-    if (input.IsKeyHeld(Keyboard::Q)) move -= cam.up;
-    if (input.IsKeyHeld(Keyboard::E)) move += cam.up;
+    if (input.IsActionHeld(Action::MoveForward))  move += cam.forward;
+    if (input.IsActionHeld(Action::MoveBackward)) move -= cam.forward;
+    if (input.IsActionHeld(Action::MoveLeft))     move -= cam.right;
+    if (input.IsActionHeld(Action::MoveRight))    move += cam.right;
+    if (input.IsActionHeld(Action::MoveUp))       move += cam.up;
+    if (input.IsActionHeld(Action::MoveDown))     move -= cam.up;
+
+    if (input.controllers[0].connected)
+    {
+        move += cam.forward * input.GetLeftStickY();
+        move += cam.right   * input.GetLeftStickX();
+    }
 
     if (glm::length2(move) > 1e-6f) {
         worldPos += glm::normalize(move) * cameraSpeed * dt;
@@ -403,7 +472,7 @@ void Application::UpdateSceneUBO()
 {
     ZoneScopedN("UpdateSceneUBO");
     const u32 frameIndex = renderer.GetFrameIndex();
-    const CameraComponent& activeCam = sceneCameras[activeIdx];
+    const CameraComponent& activeCam = sceneCameras[activeCamIdx];
 
     glm::vec3 finalEyePos = activeCam.position;
     if (camMode == CameraMode::FPS)
@@ -417,16 +486,6 @@ void Application::UpdateSceneUBO()
     camUBO.position = finalEyePos;
     camUBO.nearPlane = activeCam.base.nearPlane;
     camUBO.farPlane = activeCam.base.farPlane;
-
-    // Frustum Visualizers
-    for (u32 i = 0; i < MAX_SCENE_CAMERAS; i++)
-    {
-        if (i == activeIdx) continue;
-        if (i == frustumIdx || i == selectedCameraIdx)
-        {
-            QueueFrustumVisualizer(i, (i == frustumIdx) ? glm::vec4(0, 1, 1, 1) : glm::vec4(1, 1, 0, 1));
-        }
-    }
 
     lightMeta.count = static_cast<u32>(lights.size());
 
@@ -447,16 +506,18 @@ void Application::UpdateSceneUBO()
 void Application::QueueFrustumVisualizer(u32 camIdx, const glm::vec4& color)
 {
     if (!debugRenderer.enabled) return;
+    // if (camIdx == activeIdx && !freezeFrustum) return;
 
     const Camera& cam = sceneCameras[camIdx].base;
-    const glm::mat4 invVP = glm::inverse(cam.projection * cam.view);
 
-    static constexpr AABB ndcVolume = []() {
-        AABB box;
-        box.center  = glm::vec3(0.0f, 0.0f, 0.5f);
-        box.extents = glm::vec3(1.0f, 1.0f, 0.5f);
-        return box;
-    }();
+    constexpr f32 visualFar = 15.0f;
+    const glm::mat4 visualProj = glm::perspective(cam.fov, aspectRatio, cam.nearPlane, visualFar);
+    const glm::mat4 invVP = glm::inverse(visualProj * cam.view);
+    // VULKAN NDC REQUIREMENT:
+    // X: [-1, 1], Y: [-1, 1], Z: [0, 1]
+    AABB ndcVolume;
+    ndcVolume.center  = glm::vec3(0.0f, 0.0f, 0.5f); // Center of 0 and 1 is 0.5
+    ndcVolume.extents = glm::vec3(1.0f, 1.0f, 0.5f); // Extent from 0.5 to 0 or 1 is 0.5
 
     debugRenderer.SetColor(color);
     debugRenderer.QueueBox(invVP, ndcVolume);
@@ -472,22 +533,22 @@ void Application::RenderScene(u32 imageIndex)
 	Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
 	Renderer::GPUTexture* depthImage = &swapchain.depthTexture;
 
-	frame->queryPool.Reset(&cmd);
 
 #ifdef ENABLE_GPU_TIMING
-	if (frame.frameData->queryPool.FetchResults())
-	{
-		sceneStats.gpuDrawTime = frame.frameData->queryPool.DeltaMs(0, 1); // Total GPU time (all stages)
-	}
+
+	// Hold on, wait till we complete the double buffering
+    if (frameIndex >= MAX_FRAME_OVERLAP)
+    {
+        // Store scene time from slots 0 and 1
+        sceneStats.gpuDrawTime = frame->queryPool.GetDeltaMs(0, 1);
+        // Store UI time from slots 2 and 3
+        sceneStats.gpuDrawTime += frame->queryPool.GetDeltaMs(2, 3);
+    }
 #endif
 
-	// Transition attachments
-	{
-		cmd.BeginDebugLabel("Scene/Transitions", 0.0f, 0.7f, 1.0f);
-		cmd.TransitionLayout(colorImage, TextureLayout::ColorWrite);
-		cmd.TransitionLayout(depthImage, TextureLayout::DepthWrite);
-		cmd.EndDebugLabel();
-	}
+    cmd.TransitionLayout(colorImage, TextureLayout::ColorWrite);
+    cmd.TransitionLayout(depthImage, TextureLayout::DepthWrite);
+
 
 	auto colorAttach = Renderer::RenderAttachment::Color(colorImage, LoadOP::Clear, {0.1f, 0.1f, 0.1f, 1.0f});
 	auto depthAttach = Renderer::RenderAttachment::Depth(depthImage, LoadOP::Clear, 0.0);
@@ -497,43 +558,52 @@ void Application::RenderScene(u32 imageIndex)
 		.colorAttachments = SPAN_ONE(colorAttach),
 		.depthAttachment = &depthAttach
 	};
+    cmd.BeginDebugLabel("Scene", 0.2f, 0.8f, 0.2f);
 	cmd.BeginRendering(renderInfo);
 
-	cmd.SetViewport({0.0f, 0.0f, (f32)extent.width, (f32)extent.height, 0.0f, 1.0f});
+	cmd.SetViewport({0.0f, 0.0f, static_cast<f32>(extent.width), static_cast<f32>(extent.height), 0.0f, 1.0f});
 	cmd.SetScissor(0, 0, extent.width, extent.height);
 
 	const auto cpuStart = std::chrono::high_resolution_clock::now();
-#ifdef ENABLE_GPU_TIMING
-	frame.frameData->queryPool.WriteTimestamp(rawCmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0);
-#endif
 
-    CameraComponent& activeCam = sceneCameras[activeIdx];
+    CameraComponent& activeCam = sceneCameras[activeCamIdx];
+
+    cmd.BeginDebugLabel("Models", 0.4f, 0.4f, 0.9f);
+
+#ifdef ENABLE_GPU_TIMING
+    frame->queryPool.WriteTimestamp(&cmd, 0);
+#endif
 
     sceneRenderer.PrepareFrame(&windowContext, &activeCam.base, freezeFrustum);
     sceneRenderer.RenderModels(frame->GetCommandBuffer(), frameIndex, sceneStats);
+    cmd.EndDebugLabel();
 
+    cmd.BeginDebugLabel("Skybox", 0.6f, 0.3f, 0.6f);
     skybox.Render(&cmd, activeCam.base, aspectRatio);
+    cmd.EndDebugLabel();
 
+    cmd.BeginDebugLabel("DebugGizmos", 1.0f, 1.0f, 0.0f);
+    QueueFrustumVisualizer(frustumIdx, glm::vec4(0.0f, 1.0f, 1.0f, 1.0f));
 	if (debugRenderer.enabled)
 	{
 		debugRenderer.Flush(&cmd, frameIndex);
 	}
-
+    cmd.EndDebugLabel();
 #ifdef ENABLE_GPU_TIMING
-	frame.frameData->queryPool.WriteTimestamp(rawCmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 1);
+	frame->queryPool.WriteTimestamp(&cmd, 1);
 #endif
 
 	const auto cpuEnd = std::chrono::high_resolution_clock::now();
-	sceneStats.cpuDrawTime = static_cast<f32>(std::chrono::duration<double, std::milli>(cpuEnd - cpuStart).count());
+	sceneStats.cpuDrawTime = static_cast<f32>(std::chrono::duration<f64, std::milli>(cpuEnd - cpuStart).count());
 
 	cmd.EndRendering();
+    cmd.EndDebugLabel();
 }
 
 void Application::RenderImGui(u32 imageIndex)
 {
 	auto* frame = static_cast<Renderer::VulkanFrameData*>(renderer.GetCurrentFrameData());
 	auto& cmd = frame->commandBuffer;
-	VkCommandBuffer vkCmd = cmd.GetVkHandle();
 
 	TracyVkZone(cmd.tracyCtx, vkCmd, "ImGui");
 
@@ -546,45 +616,50 @@ void Application::RenderImGui(u32 imageIndex)
 		.extent = extent,
 		.colorAttachments = SPAN_ONE(colorAttach),
 	};
-
+    cmd.BeginDebugLabel("UI/ImGui", 0.6f, 0.3f, 0.6f);
 	cmd.BeginRendering(renderInfo);
 
-    CameraComponent& activeCam = sceneCameras[activeIdx];
+#ifdef ENABLE_GPU_TIMING
+    frame->queryPool.WriteTimestamp(&cmd, 2);
+#endif
 
-	// if (editorUI->state.showDemoWindow) ImGui::ShowDemoWindow();
+    if (!editorUI.state.noUI)
+    {
+        CameraComponent& activeCam = sceneCameras[activeCamIdx];
 
-	if (showMenuBar)
-	{
-		if (editorUI.DrawMainMenuBar())
-		{
-			Cleanup();
-			return;
-		}
-	}
+        if (editorUI.state.showMenuBar)
+        {
+            if (editorUI.DrawMainMenuBar())
+            {
+                Cleanup();
+                return;
+            }
+        }
 
-	// Camera gizmo (move/rotate arrows, frustum, etc.)
-	editorUI.DrawCameraGizmo(activeCam);
+        editorUI.DrawCameraGizmo(activeCam);
 
-	// Main overlay (GPU info, FPS, stats)
-	if (showGPUInfo || debugRenderer.enabled)
-	{
-		editorUI.DrawMainOverlay();
-	}
+        editorUI.DrawMainOverlay();
 
-	// Light editor + 2D gizmos
-	if (showEditorTools)
-	{
-	    editorUI.DrawEditorTools();
-	}
+        if (editorUI.state.showEditorTools)
+        {
+            editorUI.DrawEditorTools();
+        }
+
+        // --- Transient UI ---
+        editorUI.DrawCameraSpeedPopup(cameraSpeedPopupTime);
+    }
 
     editorUI.UpdateLights(windowContext.GetDeltaTime());
-	// Camera speed popup
-	editorUI.DrawCameraSpeedPopup(cameraSpeedPopupTime);
 
 	EditorUI::EndFrame();
 	EditorUI::Render(frame->GetCommandBuffer());
 
+#ifdef ENABLE_GPU_TIMING
+    frame->queryPool.WriteTimestamp(&cmd, 3);
+#endif
+
 	cmd.EndRendering();
+    cmd.EndDebugLabel();
 	cmd.TransitionLayout(colorImage, TextureLayout::Present);
 
 	// Compute GPU busy percentage
@@ -622,8 +697,8 @@ void Application::DrawLoadingSplash(const char* text)
 		   ImGuiWindowFlags_NoBackground;
 		if (ImGui::Begin("##LoadingSplash", nullptr, flags))
 		{
-			ImVec2 win = ImGui::GetWindowSize();
-			ImVec2 sz = ImGui::CalcTextSize(text);
+			const ImVec2 win = ImGui::GetWindowSize();
+			const ImVec2 sz = ImGui::CalcTextSize(text);
 			ImGui::SetCursorPos({(win.x - sz.x) * 0.5f, (win.y - sz.y) * 0.5f});
 			ImGui::TextUnformatted(text);
 		}
@@ -640,11 +715,9 @@ void Application::DrawLoadingSplash(const char* text)
 	cmd->BeginRendering(renderInfo);
 
 	editorUI.EndFrame();
-
 	editorUI.Render(cmd);
 
 	cmd->EndRendering();
-
 	cmd->TransitionLayout(colorImage, TextureLayout::Present);
 
 	renderer.EndFrame(frameIndex, imageIndex);
@@ -686,17 +759,17 @@ void Application::CreatePBRSphereGrid()
 		{
 			for (i32 x = 0; x < dimX; ++x)
 			{
-				f32 posX = (x * spacing) - offsetX;
-				f32 posY = (y * spacing) - offsetY + 10.0f;
-				f32 posZ = (z * spacing) - offsetZ - 20.0f; // Push away from camera
+				const f32 posX = (x * spacing) - offsetX;
+				const f32 posY = (y * spacing) - offsetY + 10.0f;
+				const f32 posZ = (z * spacing) - offsetZ - 20.0f; // Push away from camera
 
 				models.push_back(Renderer::ModelComponent{
 					.model = sphereMesh.get(),
 					.transform = glm::translate(glm::mat4(1.0f), glm::vec3(posX, posY, posZ)),
-					.path = Renderer::RenderPath::Standard,
+					.path = Renderer::RenderPath::Instance,
 					// Map Roughness to Y-axis, Metallic to X-axis
-					.roughness = glm::clamp(static_cast<f32>(y) / (dimY - 1), 0.05f, 1.0f),
-					.metallic = static_cast<f32>(x) / (dimX - 1)
+					.roughness = std::clamp(static_cast<f32>(y) / (dimY - 1), 0.05f, 1.0f),
+					.metallic = std::clamp(static_cast<f32>(x) / (dimX - 1), 0.05f, 1.0f),
 				});
 			}
 		}

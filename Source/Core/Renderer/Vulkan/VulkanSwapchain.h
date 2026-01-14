@@ -39,7 +39,7 @@ namespace Renderer
         void CreateImages();
         void DestroyImageViews();
         void CreateDepthImage();
-        void DestroyDepthImage() const;
+        void DestroyDepthImage();
         void SetVsyncMode(PresentMode mode) override;
         void SetBufferingMode(BufferingMode mode) override;
         bool Recreate();

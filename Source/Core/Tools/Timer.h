@@ -17,8 +17,8 @@ struct Timer
 	{
 #ifdef ENABLE_TIMING
 		const auto end = Clock::now();
-		const double ms =
-			std::chrono::duration<double, std::milli>(end - start).count();
+		const f64 ms =
+			std::chrono::duration<f64, std::milli>(end - start).count();
 		LOG(Info, "{} took {:.2f} ms", name, ms);
 #endif
 	}

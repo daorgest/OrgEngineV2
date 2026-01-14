@@ -27,6 +27,11 @@ void Input::ProcessEventButton(ButtonState& state, const bool isPressed)
 // Resetting
 void Input::EndFrameInputUpdate()
 {
+    input.xrel = 0.0;
+    input.yrel = 0.0;
+    input.scrollX = 0;
+    input.scrollY = 0;
+
     for (auto& key : input.keyboard)
     {
         key.pressed = false;
@@ -52,7 +57,9 @@ void Input::EndFrameInputUpdate()
 // Reset all input state (used when focus is lost)
 void Input::ResetInputOnFocusLoss()
 {
-    Input temp{}; // clears EVERYTHING
+    Input temp{};
+
+    temp.bindings = input.bindings;
 
     temp.cursorX = input.cursorX;
     temp.cursorY = input.cursorY;
@@ -61,12 +68,6 @@ void Input::ResetInputOnFocusLoss()
 
     // Preserve raw input mode (we're not using this for now)
     temp.useRawInput = input.useRawInput;
-
-    // Deltas must be zeroed explicitly to avoid ghost movement on refocus
-    temp.xrel = 0.0f;
-    temp.yrel = 0.0f;
-    temp.scrollX = 0;
-    temp.scrollY = 0;
 
     std::swap(input, temp);
 }

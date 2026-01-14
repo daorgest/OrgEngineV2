@@ -84,11 +84,11 @@ struct EditorUI
 
     void DrawEditorTools();
 
-    void UpdateLights(float deltaTime);
+    void UpdateLights(f32 deltaTime);
     void DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam) const;
     void DrawLightEditor();
 
-    static void UpdateAlphaLerp(float& currentAlpha, float minAlpha, float maxAlpha, float speed);
+    static void UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f32 speed);
     static void HoverToolTip(const char* tooltip);
     void ClampWindowToViewport();
 

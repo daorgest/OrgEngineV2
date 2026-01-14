@@ -12,7 +12,7 @@ constexpr f32 NORM_THUMB_VALUE = 1.0f / 32767.0f;
 
 namespace Mouse
 {
-    enum Button : u8
+    enum Button : u32
     {
         Left = 0,
         Right,
@@ -25,7 +25,7 @@ namespace Mouse
 
 namespace Gamepad
 {
-    enum Button : u16
+    enum Button : u32
     {
         A, B, X, Y,
         Start, Select,
@@ -41,7 +41,7 @@ namespace Gamepad
 
 namespace Keyboard
 {
-    enum Key : u16
+    enum Key : u32
     {
         Unknown = 0,
 
@@ -95,11 +95,69 @@ struct ControllerState
     bool connected;
 };
 
+struct ActionBinding
+{
+    Keyboard::Key key = Keyboard::Unknown;
+    Gamepad::Button button = Gamepad::Button::ButtonCount;
+    Mouse::Button mouse = Mouse::ButtonCount;
+};
+
+enum class Action : u32
+{
+    MoveForward,
+    MoveBackward,
+    MoveLeft,
+    MoveRight,
+    MoveUp,
+    MoveDown,
+    Jump,
+
+    ToggleFPS,
+    ToggleDebug,
+    ToggleMenuBar,
+    ToggleGPUInfo,
+    ToggleVSync,
+    ToggleUI,
+    ToggleFrustum,
+    CycleCamera,
+    CycleDebugView,
+
+    ActionCount
+};
+
 struct Input
 {
     Array<ButtonState, Keyboard::Key::ButtonCount> keyboard;
     Array<ButtonState, Mouse::Button::ButtonCount> mouseButtons;
     Array<ControllerState, CONTROLLER_COUNT> controllers;
+
+    Array<ActionBinding, static_cast<size_t>(Action::ActionCount)> bindings;
+
+    void BindAction(Action act, Keyboard::Key k) { bindings[static_cast<u32>(act)].key = k; }
+    void BindAction(Action act, Gamepad::Button b) { bindings[static_cast<u32>(act)].button = b; }
+
+    // Logic Helpers
+    [[nodiscard]] bool IsActionDown(Action act) const {
+        const auto& b = bindings[static_cast<u32>(act)];
+
+        bool active = false;
+        if (b.key != Keyboard::Unknown) active |= IsKeyDown(b.key);
+        if (b.button < Gamepad::Button::ButtonCount) active |= IsControllerDown(b.button);
+        if (b.mouse < Mouse::Button::ButtonCount) active |= IsMouseDown(b.mouse);
+
+        return active;
+    }
+
+    [[nodiscard]] bool IsActionHeld(Action act) const {
+        const auto& b = bindings[static_cast<u32>(act)];
+
+        bool active = false;
+        if (b.key != Keyboard::Unknown) active |= IsKeyHeld(b.key);
+        if (b.button < Gamepad::Button::ButtonCount) active |= IsControllerHeld(b.button);
+        if (b.mouse < Mouse::Button::ButtonCount) active |= IsMouseHeld(b.mouse);
+
+        return active;
+    }
 
     f32 cursorX = 0.0f;
     f32 cursorY = 0.0f;
@@ -124,6 +182,26 @@ struct Input
     [[nodiscard]] bool IsKeyDown(Keyboard::Key k) const { return keyboard[k].pressed; }
     [[nodiscard]] bool IsKeyHeld(Keyboard::Key k) const { return keyboard[k].held; }
     [[nodiscard]] bool IsKeyReleased(Keyboard::Key k) const { return keyboard[k].released; }
+
+    [[nodiscard]] bool IsMouseDown(Mouse::Button button) const { return mouseButtons[button].pressed; }
+    [[nodiscard]] bool IsMouseHeld(Mouse::Button button) const { return mouseButtons[button].held; }
+    [[nodiscard]] bool IsMouseReleased(Mouse::Button button) const { return mouseButtons[button].pressed; }
+
+    [[nodiscard]] bool IsControllerDown(Gamepad::Button b, u32 idx = 0) const {
+        return controllers[idx].buttons[b].pressed;
+    }
+    [[nodiscard]] bool IsControllerHeld(Gamepad::Button b, u32 idx = 0) const {
+        return controllers[idx].buttons[b].held;
+    }
+
+    [[nodiscard]] f32 GetLeftStickX(u32 idx = 0) const { return controllers[idx].leftX; }
+    [[nodiscard]] f32 GetLeftStickY(u32 idx = 0) const { return controllers[idx].leftY; }
+    [[nodiscard]] f32 GetRightStickX(u32 idx = 0) const { return controllers[idx].rightX; }
+    [[nodiscard]] f32 GetRightStickY(u32 idx = 0) const { return controllers[idx].rightY; }
+
+    [[nodiscard]] f32 GetLeftTrigger(u32 idx = 0) const { return controllers[idx].leftTrigger; }
+    [[nodiscard]] f64 GetRightTrigger(u32 idx = 0) const { return controllers[idx].rightTrigger; }
+
 };
 
 inline Input input;

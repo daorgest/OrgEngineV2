@@ -57,7 +57,7 @@ struct Application
 
 	// model and cube
 	std::unique_ptr<Renderer::VulkanModel> modelInst;
-	std::unique_ptr<Renderer::VulkanModel> cubeMesh;
+	// std::unique_ptr<Renderer::VulkanModel> cubeMesh; // not used
 	std::unique_ptr<Renderer::VulkanModel> sphereMesh;
 	Vector<Renderer::ModelComponent> models;
 	Vector<LightUBO> lights;
@@ -68,9 +68,9 @@ struct Application
     CameraMode camMode = CameraMode::FreeFly;
     Array<CameraComponent, MAX_SCENE_CAMERAS> sceneCameras;
 
-    int activeIdx = 0;
+    u32 activeCamIdx = 0;
     u32 selectedCameraIdx = 0;
-    int frustumIdx = 0;
+    u32 frustumIdx = 0;
     bool freezeFrustum = false;
 
 	// Plain Old Data (POD) structs
@@ -80,7 +80,7 @@ struct Application
 	LightUBOCount lightMeta;
 	SceneStats sceneStats;
 
-	float aspectRatio;
+	f32 aspectRatio;
 	f32 cameraSpeed = 5;
 	f32 cameraSpeedPopupTime = 0.0;
 	f32 lastFrameMs = 0.0f;
@@ -89,8 +89,9 @@ struct Application
 	bool showEditorTools = true;
 
 	bool Init();
-	void Run();
-	void Cleanup() const;
+    static void InitDefaultBindings();
+    void Run();
+	void Cleanup();
 	void UpdateCamera();
     void QueueFrustumVisualizer(u32 camIdx, const glm::vec4& color);
     void ApplyFreeFlyMovement(u32 idx, f32 dt);

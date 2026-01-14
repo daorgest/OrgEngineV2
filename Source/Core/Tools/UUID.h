@@ -64,7 +64,7 @@ public:
 		std::stringstream ss;
 		ss << std::hex << std::setfill('0');
 
-		for (int i = 0; i < 16; i++)
+		for (i32 i = 0; i < 16; i++)
 		{
 			ss << std::setw(2) << static_cast<int>(data[i]);
 			if (i == 3 || i == 5 || i == 7 || i == 9)

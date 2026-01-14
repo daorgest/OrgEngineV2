@@ -24,7 +24,6 @@ struct MaterialProperties
 	u32 normalIndex = 0;
 
 	MaterialType type = MaterialType::Opaque;
-	uint32_t _pad[3];
 };
 
 struct PushConstants
@@ -32,7 +31,7 @@ struct PushConstants
 	glm::mat4 model;
 	glm::mat3 normalMatrix;
 	u32 vertexOffset = 0; // For dynamic vertex indexing
-	u64 deviceAddress = 0;
+	u64 vertexBufferAddress = 0;
 	u32 isInstanced = 0;
 	f32 instRoughness = 1.0f;
 	f32 instMetallic = 1.0f;
@@ -58,13 +57,13 @@ ENUM_CLASS_BITOPS(LightType)
 struct LightUBO
 {
 	glm::vec3 position;
-	float range;
+	f32 range;
 	glm::vec3 direction;
-	float innerCone;
+	f32 innerCone;
 	glm::vec3 color;
-	float intensity;
+	f32 intensity;
 	LightType type;
-	float outerCone;
+	f32 outerCone;
 };
 
 struct DebugUBO

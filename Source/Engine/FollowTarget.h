@@ -12,15 +12,15 @@ struct FollowTargetComponent
 	glm::vec3* target;
 	glm::vec3 velocity;
 
-	float maxSpeed;
-	float maxAcceleration;
+	f32 maxSpeed;
+	f32 maxAcceleration;
 
 	void Update(glm::vec3 position, const f32 dt)
 	{
 		if (!target) return;
 
 		const glm::vec3 direction = *target - position;
-		const float distance = glm::length(direction);
+		const f32 distance = glm::length(direction);
 
 		if (distance > 0.000f) return;
 
@@ -28,7 +28,7 @@ struct FollowTargetComponent
 
 		velocity += directionNormal * maxAcceleration * dt;
 
-		const float speed = glm::length(velocity);
+		const f32 speed = glm::length(velocity);
 		if (speed > maxSpeed)
 		{
 			velocity = glm::normalize(velocity) * maxSpeed;

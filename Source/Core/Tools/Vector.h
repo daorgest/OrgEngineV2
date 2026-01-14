@@ -411,7 +411,7 @@ public:
 
     void clear()
     {
-        if constexpr (!std::is_trivially_destructible_v<T>)
+        if constexpr (!std::is_trivially_destructible_v<T>) // could be just m_size = 0...feelin experiemental
         {
             for (vecSizeType i = 0; i < m_size; ++i)
             {

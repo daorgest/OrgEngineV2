@@ -20,8 +20,8 @@ namespace Platform
 		u8 isFocused : 1;
 		u8 isResized : 1;
 		u8 isMinimized : 1;
-		u8 isAudioPlaying : 1;
 		u8 isResizing : 1;
+	    u8 isMaximized : 1;
 	};
 
 	struct OSVersion
@@ -54,6 +54,8 @@ namespace Platform
 		// Window dimensions and positioning
 		i32 windowWidth = 0;
 		i32 windowHeight = 0;
+	    i32 lastWindowWidth = 0;
+	    i32 lastWindowHeight = 0;
 		i32 monitorWidth = 0;
 		i32 monitorHeight = 0;
 		i32 positionX = 0;
@@ -125,6 +127,7 @@ namespace Platform
 	// Some utils that might work lmao
 	ORGAPI bool IsMusicPlayerPlaying();
 	ORGAPI BatteryState GetBatteryState();
+    ORGAPI bool IsResizeSafe(WindowContext* window);
 	ORGAPI void CenterMouse(const WindowContext* window);
     ORGAPI void SetCursorVisible(bool show);
     ORGAPI void SetCursorLocked(const WindowContext* wc, bool locked);

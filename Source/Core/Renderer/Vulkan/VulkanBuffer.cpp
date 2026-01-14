@@ -59,6 +59,7 @@ void VulkanBuffer::Init(GPUDevice* inputDevice, const BufferInfo& inputInfo)
     // Memory behavior based on heap type
     VmaAllocationCreateInfo allocInfo{};
     allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    allocInfo.flags = VMA_ALLOCATION_CREATE_CAN_ALIAS_BIT; // for Nsight
 
     switch (inputInfo.heapType)
     {

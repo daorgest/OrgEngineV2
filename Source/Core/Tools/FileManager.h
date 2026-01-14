@@ -67,7 +67,7 @@ struct FileManager
 			return std::fwrite(src, size, count, mFile);
 		}
 
-		void seek(i32 offset, int origin) const noexcept { std::fseek(mFile, offset, origin); }
+		void seek(i32 offset, i32 origin) const noexcept { std::fseek(mFile, offset, origin); }
 		[[nodiscard]] i32 tell() const noexcept { return std::ftell(mFile); }
 		[[nodiscard]] Result<void> rewind() const noexcept
 		{

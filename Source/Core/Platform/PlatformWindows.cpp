@@ -242,7 +242,6 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
 
     ApplyModernTheme(static_cast<HWND>(window->handle));
 
-    // for laptops/double-checking
     HMONITOR hMonitor = MonitorFromWindow(window->GetHandle<HWND>(), MONITOR_DEFAULTTONEAREST);
     MONITORINFOEX monitorInfo = {};
     monitorInfo.cbSize = sizeof(MONITORINFOEX);
@@ -258,7 +257,7 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
     }
 
     // Dpi!!
-    window->dpiScale = static_cast<float>(GetDpiForWindow(window->GetHandle<HWND>())) / USER_DEFAULT_SCREEN_DPI;
+    window->dpiScale = static_cast<f32>(GetDpiForWindow(window->GetHandle<HWND>())) / USER_DEFAULT_SCREEN_DPI;
 
     // GameInput!!
     gameInput.Init();
@@ -372,7 +371,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_DPICHANGED:
         if (window)
-            window->dpiScale = static_cast<float>(GetDpiForWindow(static_cast<HWND>(window->handle))) /
+            window->dpiScale = static_cast<f32>(GetDpiForWindow(static_cast<HWND>(window->handle))) /
                 USER_DEFAULT_SCREEN_DPI;
         break;
     case WM_SETFOCUS:
@@ -605,13 +604,12 @@ void Platform::StartFrame(WindowContext& window)
     window.frameBufferIndex = (window.frameBufferIndex + 1) % 60;
 
     // Calculate Average
-    f32 totalTime = 0;
-    for (int i = 0; i < 60; i++)
+    f32 totalTime = 0.0f;
+    for (i32 i = 0; i < 60; i++)
     {
         totalTime += window.frameTimeBuffer[i];
     }
     const f32 averageFrameTime = totalTime / 60.0f;
-
     window.fps = (averageFrameTime > 0.0f) ? (1000.0f / averageFrameTime) : 0.0f;
 
     window.lastFrameTime = currentTicks;

@@ -12,24 +12,6 @@ std::condition_variable Logger::gLogCondition;
 std::thread Logger::logThread;
 bool Logger::gRunning = false;
 
-void Logger::LogResultError(std::string_view expr, const OrgErrCode err, const std::source_location& loc)
-{
-    std::string detail = fmt::format(
-        "[Result Error]\n"
-        "  Expr:   {}\n"
-        "  Func:   {}\n"
-        "  File:   {}\n"
-        "  Line:   {}\n"
-        "  Error:  {}",
-        expr,
-        loc.function_name(),
-        loc.file_name(),
-        loc.line(),
-        static_cast<int>(err)
-    );
-    Logger::Write(LogType::Error, loc, "{}", detail);
-}
-
 const char* Logger::ToString(const LogType type)
 {
     switch (type)
@@ -83,7 +65,6 @@ void Logger::LoggerThreadWork()
             std::string fileLine = fmt::format("[{:02}:{:02}:{:02}] [{}] {}\n",
                                                entry.timeStamp.tm_hour, entry.timeStamp.tm_min,
                                                entry.timeStamp.tm_sec, ToString(entry.type), entry.message);
-            logFile.write(fileLine.c_str(), 1, fileLine.size());
         }
     }
     if (fileOpen) logFile.close();
@@ -96,7 +77,7 @@ void Logger::Init()
     {
         FileManager::Handle f("engine_log.txt", "w");
     }
-    logThread = std::thread(Logger::LoggerThreadWork);
+    logThread = std::thread(LoggerThreadWork);
 }
 
 void Logger::Shutdown()
@@ -107,4 +88,46 @@ void Logger::Shutdown()
     }
     gLogCondition.notify_all();
     if (logThread.joinable()) logThread.join();
+}
+
+void Logger::WriteInternal(LogType type, std::string&& message, const std::source_location& loc)
+{
+#ifdef NDEBUG
+    if (type == LogType::Debug || type == LogType::Info) return;
+#endif
+
+    const std::time_t now = std::time(nullptr);
+    std::tm tm{};
+    localtime_s(&tm, &now);
+
+    std::string finalMessage;
+    if (type == LogType::Error || type == LogType::Warning)
+    {
+        finalMessage = fmt::format("[{}:{}] {}", loc.file_name(), loc.line(), message);
+    }
+    else
+    {
+        finalMessage = std::move(message);
+    }
+
+    {
+        std::lock_guard lock(gLogMutex);
+        LogEntry entry;
+        entry.type = type;
+        entry.timeStamp = tm;
+        entry.message = std::move(finalMessage);
+
+        gLogEntries.push_back(std::move(entry));
+    }
+    gLogCondition.notify_one();
+
+    if (type == LogType::Error)
+    {
+        Platform::ShowMessageBox(message, "Critical Error", Platform::MessageBoxType::Error);
+    }
+}
+void Logger::LogResultError(std::string_view expr, i32 err, const std::source_location& loc)
+{
+    // Reuse the internal logic
+    Logger::Write(LogType::Error, loc, "[Result Error] Expr: {} | Error Code: {}", expr, err);
 }

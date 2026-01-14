@@ -71,10 +71,10 @@ struct Material
 
 	// PBR material properties (fallback values if no textures)
 	glm::vec3 baseColor = glm::vec3(1.0f);  // Base albedo color (Kd in MTL)
-	float roughness = 0.5f;      // Surface roughness [0=smooth, 1=rough] (Pr in MTL)
-	float metallic = 0.0f;       // Metallic factor [0=dielectric, 1=metal] (Pm in MTL)
-	float ior = 1.5f;            // Index of refraction (Ni in MTL)
-	float opacity = 1.0f;        // Opacity/transparency (d in MTL)
+	f32 roughness = 0.5f;      // Surface roughness [0=smooth, 1=rough] (Pr in MTL)
+	f32 metallic = 0.0f;       // Metallic factor [0=dielectric, 1=metal] (Pm in MTL)
+	f32 ior = 1.5f;            // Index of refraction (Ni in MTL)
+	f32 opacity = 1.0f;        // Opacity/transparency (d in MTL)
 	glm::vec3 emissive = glm::vec3(0.0f); // Emissive color (Ke in MTL)
 };
 

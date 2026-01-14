@@ -31,14 +31,14 @@ void FPSCamera::Update(CameraComponent& comp, f32 deltaTime)
 
     // 2. Vertical Physics (Gravity/Jumping)
     if (!grounded) velocity.y -= tune.gravity * deltaTime;
-    if (grounded && input.keyboard[Keyboard::Space].pressed) {
+    if (grounded && input.IsActionDown(Action::Jump)) {
         velocity.y = tune.jumpForce;
         grounded = false;
     }
 
     // 3. Movement State
-    const int side = int(input.keyboard[Keyboard::D].held) - int(input.keyboard[Keyboard::A].held);
-    const int fwd  = int(input.keyboard[Keyboard::W].held) - int(input.keyboard[Keyboard::S].held);
+    const i32 side = i32(input.IsActionHeld(Action::MoveRight)) - i32(input.IsActionHeld(Action::MoveLeft));
+    const i32 fwd  = i32(input.IsActionHeld(Action::MoveForward)) - i32(input.IsActionHeld(Action::MoveBackward));
     const bool moving = (fwd != 0 || side != 0);
     const bool crouching = input.keyboard[Keyboard::Ctrl].held;
     const bool sprinting = input.keyboard[Keyboard::Shift].held && !crouching;
@@ -55,8 +55,8 @@ void FPSCamera::Update(CameraComponent& comp, f32 deltaTime)
     const f32 damping = 1.0f - ((1.0f - (grounded ? tune.friction : tune.airDrag)) * (deltaTime * 60.0f));
     hvel *= std::max(0.0f, damping);
 
-    const float maxSpeed = crouching ? tune.crouchSpeed : (sprinting ? tune.maxSpeed * tune.sprintSpeed : tune.maxSpeed);
-    const float accel = std::clamp(maxSpeed - glm::dot(hvel, desireDir), 0.f, tune.maxAccel * deltaTime);
+    const f32 maxSpeed = crouching ? tune.crouchSpeed : (sprinting ? tune.maxSpeed * tune.sprintSpeed : tune.maxSpeed);
+    const f32 accel = std::clamp(maxSpeed - glm::dot(hvel, desireDir), 0.f, tune.maxAccel * deltaTime);
 
     hvel += desireDir * accel;
     velocity.x = hvel.x;
@@ -71,11 +71,11 @@ void FPSCamera::Update(CameraComponent& comp, f32 deltaTime)
     }
 
     // 6. Dynamic Eye Height & Bobbing Timer
-    const float targetEye = crouching ? tune.crouchEye : tune.standEye;
+    const f32 targetEye = crouching ? tune.crouchEye : tune.standEye;
     eyeHeight = std::lerp(eyeHeight, targetEye, k);
 
     if (moving && grounded) {
-        float bobSpeed = tune.bobFreq * (sprinting ? 1.4f : 1.0f);
+        f32 bobSpeed = tune.bobFreq * (sprinting ? 1.4f : 1.0f);
         headTimer = std::fmod(headTimer + deltaTime * bobSpeed, 1.0f);
     } else {
         // Slowly reset timer to 0 when standing still to avoid "frozen" head tilt

@@ -2,6 +2,7 @@
 // Created by Orgest on 11/21/2025.
 //
 #include "Platform.h"
+#include "RendererTypes.h"
 #include "fmt/format.h"
 #include "Input/InputSystemSDL.h"
 #include "SDL3/SDL_hints.h"
@@ -11,9 +12,11 @@
 #include "Tools/Arena.h"
 #include "Tools/Logger.h"
 
+#define SDL_HINT_MOUSE_RELATIVE_WARP_MOTION "SDL_MOUSE_RELATIVE_WARP_MOTION"
 
 void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mode)
 {
+    window->platformName = "SDL3";
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
     {
         LOG(Error, "[SDL3] SDL_Init failed: {}", SDL_GetError());
@@ -21,28 +24,14 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
     }
 
     SDL_SetHint(SDL_HINT_APP_NAME, ENGINE_NAME);
-    window->platformName = "SDL3";
-
 
     const SDL_DisplayID displayID = SDL_GetPrimaryDisplay();
     const SDL_DisplayMode* currentMode = SDL_GetCurrentDisplayMode(displayID);
+    window->monitorWidth = currentMode->w;
+    window->monitorHeight = currentMode->h;
 
-    // Default Fallback
-    i32 monitorW = 1280;
-    i32 monitorH = 720;
-
-    if (currentMode)
-    {
-        monitorW = currentMode->w;
-        monitorH = currentMode->h;
-    }
-
-    window->monitorWidth = monitorW;
-    window->monitorHeight = monitorH;
-
-    // 2. Set default to Half Resolution if no dimensions provided
-    window->windowWidth = (width == 0) ? (monitorW / 2) : width;
-    window->windowHeight = (height == 0) ? (monitorH / 2) : height;
+    window->windowWidth = (width == 0) ? window->monitorWidth : width;
+    window->windowHeight = (height == 0) ? window->monitorHeight : height;
 
     const std::string title = fmt::format("{} - {} - {} - {} - {} - {}",
                                           ENGINE_NAME,
@@ -54,50 +43,35 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
     );
 
 
-    const SDL_PropertiesID props = SDL_CreateProperties();
-    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title.c_str());
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, window->windowWidth);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, window->windowHeight);
+    SDL_WindowFlags windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE;
 
-    // Position
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
-
-    // Base Flags
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
-
-    switch (mode)
+    if (mode == DisplayMode::BorderlessFullscreen)
     {
-    case DisplayMode::Windowed:
-        // Standard windowed - no extra properties needed
-        break;
-
-    case DisplayMode::BorderlessFullscreen:
-        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, true);
-        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true);
-        break;
-
-    case DisplayMode::Fullscreen:
-        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, true);
-        break;
+        // WS_POPUP | WS_VISIBLE equivalent
+        windowFlags |= SDL_WINDOW_BORDERLESS | SDL_WINDOW_MAXIMIZED;
     }
 
-
-    SDL_Window* win = SDL_CreateWindowWithProperties(props);
-    SDL_DestroyProperties(props);
-
-    if (!win)
+    SDL_Window* sdlWindow = SDL_CreateWindow(title.c_str(), window->monitorWidth, window->monitorHeight, windowFlags);
+    if (!sdlWindow)
     {
         LOG(Error, "[SDL3] SDL_CreateWindow FAILED: {}", SDL_GetError());
-        std::abort();
+        SDL_Quit();
+        return;
     }
 
-    window->handle = win;
+    if (mode == DisplayMode::Windowed)
+    {
+        SDL_SetWindowPosition(sdlWindow, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    }
+
+    window->handle = sdlWindow;
     window->displayMode = mode;
 
     window->perfCountFrequency = static_cast<i64>(SDL_GetPerformanceFrequency());
     window->lastFrameTime = static_cast<f64>(SDL_GetPerformanceCounter());
+
+    SDL_MaximizeWindow(sdlWindow);
+    SDL_ShowWindow(sdlWindow);
 }
 
 bool Platform::GetWindowSize(const WindowHandle& handle, u32& width, u32& height)
@@ -107,61 +81,67 @@ bool Platform::GetWindowSize(const WindowHandle& handle, u32& width, u32& height
         return false;
 
     i32 w = 0, h = 0;
-    SDL_GetWindowSize(win, &w, &h);
+    SDL_GetWindowSizeInPixels(win, &w, &h);
 
     width = static_cast<u32>(w);
     height = static_cast<u32>(h);
     return true;
 }
 
-void Platform::SetDisplayMode(WindowContext& window, DisplayMode mode)
+void Platform::SetDisplayMode(WindowContext& window, const DisplayMode mode)
 {
     const auto win = static_cast<SDL_Window*>(window.handle);
     if (!win)
         return;
 
-    window.displayMode = mode;
+    if (window.displayMode == DisplayMode::Windowed && !window.displayState.isMaximized)
+    {
+        SDL_GetWindowSize(win, &window.lastWindowWidth, &window.lastWindowHeight);
+    }
 
     switch (mode)
     {
     case DisplayMode::Windowed:
-        SDL_SetWindowFullscreenMode(win, nullptr);
-        SDL_SetWindowBordered(win, true);
-        window.displayState.isBorderless = 0;
-        window.displayState.isExclusiveFullscreen = 0;
-        break;
+        {
+            SDL_SetWindowFullscreen(win, false);
+            SDL_SetWindowBordered(win, true);
+            SDL_SetWindowResizable(win, true);
 
+            if (window.displayState.isMaximized)
+            {
+                SDL_MaximizeWindow(win);
+                SDL_RestoreWindow(win);
+            }
+            else
+            {
+                SDL_SetWindowSize(win, window.lastWindowWidth, window.lastWindowHeight);
+                SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+                SDL_RestoreWindow(win);
+            }
+
+            window.displayState.isBorderless = 0;
+            window.displayState.isExclusiveFullscreen = 0;
+            break;
+        }
     case DisplayMode::BorderlessFullscreen:
         {
-            SDL_DisplayID display = SDL_GetPrimaryDisplay();
-            const SDL_DisplayMode* dm = SDL_GetDesktopDisplayMode(display);
-
-            SDL_SetWindowFullscreenMode(win, dm);
-            SDL_SetWindowBordered(win, false);
+            SDL_SetWindowFullscreenMode(win, nullptr);
+            SDL_SetWindowFullscreen(win, true);
 
             window.displayState.isBorderless = 1;
             window.displayState.isExclusiveFullscreen = 0;
             break;
         }
-
-    case DisplayMode::Fullscreen:
-        {
-            SDL_DisplayID display = SDL_GetPrimaryDisplay();
-            const SDL_DisplayMode* dm = SDL_GetCurrentDisplayMode(display);
-
-            SDL_SetWindowFullscreenMode(win, dm);
-
-            window.displayState.isExclusiveFullscreen = 1;
-            window.displayState.isBorderless = 0;
-            break;
-        }
+    default:
+        break;
     }
 
-    // Update cached values
-    i32 w, h;
-    SDL_GetWindowSize(win, &w, &h);
-    window.windowWidth = w;
-    window.windowHeight = h;
+    window.displayMode = mode;
+
+    // i32 w, h;
+    // SDL_GetWindowSize(win, &w, &h);
+    // window.windowWidth = w;
+    // window.windowHeight = h;
 }
 
 void Platform::UpdateScreenDimensions(WindowContext& window)
@@ -225,14 +205,42 @@ Platform::WindowHandle Platform::GetNativeWindowHandle(const WindowContext& wind
 
 void Platform::StartFrame(WindowContext& window)
 {
-    const Uint64 now = SDL_GetPerformanceCounter();
+    Uint64 now = SDL_GetPerformanceCounter();
+    const f64 perfFreq = static_cast<f64>(SDL_GetPerformanceFrequency());
+
+    if (!window.displayState.isFocused)
+    {
+        const f64 elapsedMs = ((static_cast<f64>(now) - window.lastFrameTime) / perfFreq) * 1000.0;
+
+        if (elapsedMs < static_cast<f64>(BACKGROUND_FRAME_TIME))
+        {
+            const f64 sleepMs = static_cast<f64>(BACKGROUND_FRAME_TIME) - elapsedMs;
+            SDL_Delay(static_cast<Uint32>(sleepMs));
+
+            // Re-sample time after sleeping
+            now = SDL_GetPerformanceCounter();
+        }
+    }
 
     const f64 deltaTicks = static_cast<f64>(now) - window.lastFrameTime;
-    window.deltaTime = deltaTicks / static_cast<f64>(window.perfCountFrequency);
+    window.deltaTime = deltaTicks / perfFreq;
+
     window.elapsedTime += window.deltaTime;
 
-    window.frameTime = window.deltaTime * 1000.0;
-    window.fps = (window.deltaTime > 0.0) ? 1.0 / window.deltaTime : 0.0f;
+    window.frameTime = static_cast<f32>(window.deltaTime * 1000.0);
+
+    // Store current frame time in the circular buffer
+    window.frameTimeBuffer[window.frameBufferIndex] = window.frameTime;
+    window.frameBufferIndex = (window.frameBufferIndex + 1) % 60;
+
+    // Calculate Average
+    f32 totalTime = 0.0f;
+    for (i32 i = 0; i < 60; i++)
+    {
+        totalTime += window.frameTimeBuffer[i];
+    }
+    const f32 averageFrameTimeMs = totalTime / 60.0f;
+    window.fps = (averageFrameTimeMs > 0.0f) ? (1000.0f / averageFrameTimeMs) : 0.0f;
 
     window.lastFrameTime = static_cast<f64>(now);
 }
@@ -256,15 +264,13 @@ bool Platform::ProcessMessages(WindowContext* window)
         {
         case SDL_EVENT_QUIT:
             return false;
-
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
             if (window)
             {
                 window->displayState.isFocused = 1;
-                window->lastFrameTime = (double)SDL_GetPerformanceCounter();
+                window->lastFrameTime = static_cast<f64>(SDL_GetPerformanceCounter());
             }
             break;
-
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             if (window)
             {
@@ -279,24 +285,62 @@ bool Platform::ProcessMessages(WindowContext* window)
                 window->displayState.isResized = 0;
             }
             break;
-
         case SDL_EVENT_WINDOW_RESTORED:
+            if (window)
+            {
+                if (window->displayMode == DisplayMode::Windowed) {
+                    window->displayState.isMaximized = 0;
+                }
+                window->displayState.isMinimized = 0;
+            }
+            break;
         case SDL_EVENT_WINDOW_MAXIMIZED:
             if (window)
             {
+                window->displayState.isMaximized = 1;
                 window->displayState.isMinimized = 0;
-                window->displayState.isResized = 1;
-                window->lastFrameTime = static_cast<double>(SDL_GetPerformanceCounter());
             }
             break;
-
         case SDL_EVENT_WINDOW_RESIZED:
             if (window)
             {
+                if (e.type == SDL_EVENT_WINDOW_MINIMIZED)
+                {
+                    window->displayState.isMinimized = true;
+                    window->displayState.isResized = false;
+                }
+                else
+                {
+                    window->displayState.isMinimized = false;
+                    window->displayState.isResized = true;
+                }
+
                 window->windowWidth = e.window.data1;
                 window->windowHeight = e.window.data2;
-                window->displayState.isResized = 1;
             }
+            break;
+
+        case SDL_EVENT_KEY_DOWN: // System keys
+            {
+                if (e.key.scancode == SDL_SCANCODE_ESCAPE)
+                {
+                    return false;
+                }
+
+                if (e.key.scancode == SDL_SCANCODE_F11)
+                {
+                    if (window->displayMode == DisplayMode::Windowed)
+                    {
+                        SetDisplayMode(*window, DisplayMode::BorderlessFullscreen);
+                    }
+                    else
+                    {
+                        SetDisplayMode(*window, DisplayMode::Windowed);
+                    }
+                }
+            }
+            break;
+        default:
             break;
         }
 
@@ -356,70 +400,68 @@ void Platform::CenterMouse(const WindowContext* window)
     SDL_WarpMouseInWindow(win, w / 2, h / 2);
 }
 
-void Platform::LockCursor(const WindowContext& window, bool enable)
+void Platform::SetCursorVisible(bool show)
 {
-    auto* win = static_cast<SDL_Window*>(window.handle);
-    if (!win) return;
-
-    if (enable)
+    if (show)
     {
-        SDL_SetWindowRelativeMouseMode(win, true);
-        SDL_CaptureMouse(true);
+        SDL_ShowCursor();
     }
     else
     {
-        SDL_SetWindowRelativeMouseMode(win, false);
-        SDL_CaptureMouse(false);
+        SDL_HideCursor();
     }
+}
+
+void Platform::SetCursorLocked(const WindowContext* window, bool enable)
+{
+    auto* win = static_cast<SDL_Window*>(window->handle);
+    if (!win) return;
+
+    SDL_SetWindowRelativeMouseMode(win, enable);
 }
 
 bool Platform::WrapCursorToOppositeEdge(const WindowContext* window, i32 margin)
 {
+    if (!window || !window->handle) return false;
     const auto win = static_cast<SDL_Window*>(window->handle);
-    if (!win) return false;
 
-    // Get current cursor pos relative to window
-    f32 fx, fy;
-    if (SDL_GetMouseState(&fx, &fy) <= 0)
-        return false;
-
-    const i32 x = static_cast<i32>(fx);
-    const i32 y = static_cast<i32>(fy);
-
+    f32 x, y;
     i32 w, h;
+    SDL_GetMouseState(&x, &y);
     SDL_GetWindowSize(win, &w, &h);
 
-    i32 newX = x;
-    i32 newY = y;
-    bool wrap = false;
+    f32 nx = x, ny = y;
+    bool wrapped = false;
 
-    if (x < margin)
-    {
-        newX = w - margin - 1;
-        wrap = true;
-    }
-    else if (x > w - margin)
-    {
-        newX = margin + 1;
-        wrap = true;
-    }
+    const f32 fMargin = static_cast<f32>(margin);
+    const f32 fW = static_cast<f32>(w);
+    const f32 fH = static_cast<f32>(h);
 
-    if (y < margin)
+    if (x < fMargin)
     {
-        newY = h - margin - 1;
-        wrap = true;
+        nx = fW - fMargin - 1.0f;
+        wrapped = true;
     }
-    else if (y > h - margin)
+    else if (x > fW - fMargin)
     {
-        newY = margin + 1;
-        wrap = true;
+        nx = fMargin + 1.0f;
+        wrapped = true;
     }
 
-    if (wrap)
+    if (y < fMargin)
     {
-        SDL_WarpMouseInWindow(win, newX, newY);
-        return true;
+        ny = fH - fMargin - 1.0f;
+        wrapped = true;
+    }
+    else if (y > fH - fMargin)
+    {
+        ny = fMargin + 1.0f;
+        wrapped = true;
     }
 
-    return false;
+    if (wrapped)
+    {
+        SDL_WarpMouseInWindow(win, nx, ny);
+    }
+    return wrapped;
 }

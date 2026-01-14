@@ -617,14 +617,14 @@ inline std::string ToString(ShaderStage stage)
     if (stage == ShaderStage::All) return "All";
 
     Vector<const char*> parts;
-    if (uint32_t(stage) & uint32_t(ShaderStage::Vertex)) parts.push_back("Vertex");
-    if (uint32_t(stage) & uint32_t(ShaderStage::Fragment)) parts.push_back("Fragment");
-    if (uint32_t(stage) & uint32_t(ShaderStage::Compute)) parts.push_back("Compute");
-    if (uint32_t(stage) & uint32_t(ShaderStage::RayGen)) parts.push_back("RayGen");
-    if (uint32_t(stage) & uint32_t(ShaderStage::AnyHit)) parts.push_back("AnyHit");
-    if (uint32_t(stage) & uint32_t(ShaderStage::ClosestHit)) parts.push_back("ClosestHit");
-    if (uint32_t(stage) & uint32_t(ShaderStage::Miss)) parts.push_back("Miss");
-    if (uint32_t(stage) & uint32_t(ShaderStage::Callable)) parts.push_back("Callable");
+    if (u32(stage) & u32(ShaderStage::Vertex)) parts.push_back("Vertex");
+    if (u32(stage) & u32(ShaderStage::Fragment)) parts.push_back("Fragment");
+    if (u32(stage) & u32(ShaderStage::Compute)) parts.push_back("Compute");
+    if (u32(stage) & u32(ShaderStage::RayGen)) parts.push_back("RayGen");
+    if (u32(stage) & u32(ShaderStage::AnyHit)) parts.push_back("AnyHit");
+    if (u32(stage) & u32(ShaderStage::ClosestHit)) parts.push_back("ClosestHit");
+    if (u32(stage) & u32(ShaderStage::Miss)) parts.push_back("Miss");
+    if (u32(stage) & u32(ShaderStage::Callable)) parts.push_back("Callable");
 
     std::string result;
     for (size_t i = 0; i < parts.size(); ++i)
@@ -793,10 +793,6 @@ struct VertexAttributeDescription
     // Vulkan-centric
     u32 location = 0;
 
-    // DX12/HLSL-centric
-    const char* semanticName = nullptr; // e.g., "POSITION"
-    u32 semanticIndex = 0; // e.g., 0 for "TEXCOORD0"
-
     // Common
     u32 binding = 0;
     TextureFormat format = TextureFormat::UNKNOWN;
@@ -812,12 +808,13 @@ struct VertexInputLayout
 enum class DebugView : i32
 {
     Material = 0,
-    Albedo = 1,
-    Normal = 2,
-    DepthRaw = 3, // hardware depth buffer
-    DepthLin = 4, // linearized depth (world units)
-    DepthLog = 5, // log-mapped depth for visualization
-    UVs = 6,
+    Albedo,
+    Normal,
+    Depth,          // Reconstructed Linear Depth from Reverse-Z
+    Roughness,      // Check for "shiny" vs "matte" bugs
+    Metallic,       // Identify dielectric vs conductor issues
+    WorldPos,       // Useful for debugging world-space effects/lighting
+    UVs,
 };
 
 struct DebugViewMode
@@ -827,15 +824,15 @@ struct DebugViewMode
 };
 
 inline constexpr DebugViewMode kDebugViews[] = {
-    {DebugView::Material, "Material"},
-    {DebugView::Albedo, "Albedo"},
-    {DebugView::Normal, "Normals (mapped)"},
-    {DebugView::DepthRaw, "Depth (raw)"},
-    {DebugView::DepthLin, "Depth (linear)"},
-    {DebugView::DepthLog, "Depth (log)"},
-    {DebugView::UVs, "UVs"},
+    {DebugView::Material,  "Material (Lit)"},
+    {DebugView::Albedo,    "Albedo (Unlit)"},
+    {DebugView::Normal,    "Normals (World Space)"},
+    {DebugView::Depth,     "Depth (Linearized)"},
+    {DebugView::Roughness, "Roughness"},
+    {DebugView::Metallic,  "Metallic"},
+    {DebugView::WorldPos,  "World Position"},
+    {DebugView::UVs,       "UV Coordinates"},
 };
-
 inline const char* DebugViewToString(DebugView v)
 {
     for (const auto& [value, label] : kDebugViews) if (value == v) return label;

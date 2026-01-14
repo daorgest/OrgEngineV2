@@ -193,8 +193,8 @@ namespace Renderer
             return ra;
         }
 
-        static RenderAttachment Depth(GPUTexture* tex, LoadOP load = LoadOP::Clear, float depth = 0.0f,
-                                      uint32_t stencil = 0)
+        static RenderAttachment Depth(GPUTexture* tex, LoadOP load = LoadOP::Clear, f32 depth = 0.0f,
+                                      u32 stencil = 0)
         {
             RenderAttachment ra = {
                 .texture = tex,

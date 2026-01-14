@@ -8,10 +8,9 @@
 #include "Tools/Vector.h"
 #include "Tools/Logger.h"
 
-#ifdef VULKAN_DEBUG_MODE
 
 // Ripped from vulkan enum helper :3
-static const char* VkResultToString(VkResult input) {
+inline const char* VkResultToString(VkResult input) {
     switch (input) {
         case VK_SUCCESS:
             return "VK_SUCCESS";
@@ -116,19 +115,14 @@ static const char* VkResultToString(VkResult input) {
     }
 }
 
-#define VK_CHECK(expr)                                                          \
-    do {                                                                        \
-        VkResult __result = (expr);                                             \
-        if (__result != VK_SUCCESS) {                                           \
-            LOG(Error, "[VK_CHECK] '{}' failed in {}:{} with {} ({})",          \
-                #expr, __FILE__, __LINE__,                                      \
-                VkResultToString(__result), static_cast<int>(__result));        \
-            assert(false && "Vulkan API call failed");                          \
-        }                                                                       \
+
+#define VK_CHECK(expr)                                                                         \
+    do {                                                                                       \
+        VkResult result = (expr);                                                              \
+        if (result != VK_SUCCESS) {                                                            \
+            LOG(Error, "[VK_CHECK] '{}' failed with result: {}", #expr, (i32)result);          \
+        }                                                                                      \
     } while (0)
-#else
-#define VK_CHECK(expr) (expr)
-#endif
 
 // Funny code for validation layer checking
 template <typename T>

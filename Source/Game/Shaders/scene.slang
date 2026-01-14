@@ -35,8 +35,6 @@ struct MaterialProperties
 	uint normalIndex = 0;
 
 	MaterialType type = MaterialType::Opaque;
-
-	uint32_t _pad[3];
 };
 
 enum LightTypes { Directional, Point, Spot };
@@ -223,7 +221,7 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
     {
         GPUInstanceData data = instanceBuffer[instanceID];
         worldMatrix  = data.worldMatrix;
-        matIdx       = data.materialIndex;
+        matIdx = data.materialIndex + pc.materialIndex;
 
         roughness  = data.roughness;
         metallic   = data.metalic;
@@ -267,35 +265,33 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
 
     MaterialProperties mat = materialBuffer[input.materialIndex];
 
-    // Debug Views
+
+    // Normal Mapping using the centralized normal index
+    float3 N = normalize(input.worldNormal);
+    float3 V = normalize(cameraUBO.camPosition - input.worldPosition);
+    float roughness = clamp(input.instRoughness, 0.025, 1.0);
+    float metallic  = saturate(input.instMetallic);
+    float alpha     = roughness * roughness;
+
+    float3 albedo = globalTextures[mat.albedoIndex].Sample(input.texCoord).rgb * mat.baseColor.rgb;
+
     switch (debugUBO.debugViewMode)
     {
-        case 3: return float4(fragCoord.zzz, 1.0);
-
-        case 4:
+        case 1: return float4(albedo, 1.0);                       // Albedo
+        case 2: return float4(N * 0.5 + 0.5, 1.0);                // Normals
+        case 3: // Consolidated Depth (Linearized Reverse-Z)
         {
             float dLin = LinearizeDepth(fragCoord.z, cameraUBO.nearPlane, cameraUBO.farPlane);
             float dN = saturate(dLin / max(debugUBO.debugDepthRange, 1e-6));
             return float4(dN.xxx, 1.0);
         }
-        case 5:
-        {
-            float dLin = LinearizeDepth(fragCoord.z, cameraUBO.nearPlane, cameraUBO.farPlane);
-            float dN = log2(1.0 + dLin) / max(log2(1.0 + debugUBO.debugDepthRange), 1e-6);
-            return float4(dN.xxx, 1.0);
-        }
-        case 6:
-        {
-            float2 uvw = frac(input.texCoord);
-            return float4(uvw, 0.0, 1.0);
-        }
+        case 4: return float4(roughness.xxx, 1.0);                // Roughness
+        case 5: return float4(metallic.xxx, 1.0);                 // Metallic
+        case 6: return float4(input.worldPosition * 0.1f, 1.0);          // World Position
+        case 7: return float4(frac(input.texCoord), 0.0, 1.0);    // UVs
 
-        default: break;
+        default: break; // Material (Full Lit)
     }
-
-
-    // Normal Mapping using the centralized normal index
-    float3 N = normalize(input.worldNormal);
     if (debugUBO.disableNormalMap == 0)
     {
         float3 nTex = globalTextures[mat.normalIndex].Sample(input.texCoord).rgb;
@@ -307,17 +303,7 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
             N = normalize(mul(DecodeTangentSpaceNormal(nTex), TBN));
     }
 
-    // PBR Setup
-    float3 V = normalize(cameraUBO.camPosition - input.worldPosition);
-
-    float roughness = clamp(input.instRoughness, 0.025, 1.0);
-    float metallic  = saturate(input.instMetallic);
-    float alpha     = roughness * roughness;
-
-    float3 albedo = globalTextures[mat.albedoIndex].Sample(input.texCoord).rgb * mat.baseColor.rgb;
     float3 F0 = lerp(float3(0.04), albedo, metallic);
-
-
     // Direct Lighting
     float3 Lo = 0.0;
     [loop]

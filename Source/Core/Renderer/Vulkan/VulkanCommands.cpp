@@ -29,7 +29,7 @@ bool VulkanFrameData::Init(GPUDevice* dev)
     // Allocate primary command buffer directly
     commandBuffer.InitInternal(device, commandPool, false);
 
-    queryPool.Init(device, 2);
+    queryPool.Init(device, 4);
     renderFence = std::make_unique<VulkanFence>(device);
     acquireSemaphore = std::make_unique<VulkanSemaphore>(device);
 
@@ -124,6 +124,8 @@ bool VulkanRenderer::BeginFrame(u32& outFrameIndex, u32& outImageIndex)
     outImageIndex = acquireResult.value();
 
     vkFrame->commandBuffer.Begin(nullptr);
+
+    vkFrame->queryPool.Reset(&vkFrame->commandBuffer);
 
     // The GPU is done, collect timestamps!!
     if (tracyCtx)

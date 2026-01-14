@@ -83,7 +83,7 @@ bool VulkanInstance::Init()
         Uint32 extCount = 0;
         const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&extCount);
 
-        if (!sdlExts || extCount == 0)
+        if (!sdlExts)
         {
             LOG(Error, "[SDL3] SDL_Vulkan_GetInstanceExtensions failed: {}", SDL_GetError());
             return false;

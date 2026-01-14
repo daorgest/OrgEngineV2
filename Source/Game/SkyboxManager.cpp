@@ -65,7 +65,7 @@ VulkanTexture SkyboxManager::CreateCubeMapFromFiles(const Array<const char*, 6>&
 	LOG(Debug, "CreateCubeMap: Loading 6 cubemap faces...");
 
 	Array<TextureData, 6> faces;
-	for (int i = 0; i < 6; ++i)
+	for (i32 i = 0; i < 6; ++i)
 	{
 		auto tex = TextureLoader::LoadTextureFromSTB(paths[i], true);
 		if (!tex.has_value())
@@ -220,7 +220,7 @@ bool SkyboxManager::CreateShaderAndPipeline()
 {
 	auto codeResult = VulkanShader::ReadShaderFile("Shaders/skybox.spv");
 	if (!codeResult)
-		LOG(Error, "Skybox: Could not load shader (error {})", static_cast<int>(codeResult.error()));
+		LOG(Error, "Skybox: Could not load shader (error {})", static_cast<i32>(codeResult.error()));
 
 	shader = arena->Emplace<VulkanShader>(devicePtr, codeResult.value());
 

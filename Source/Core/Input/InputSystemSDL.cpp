@@ -18,7 +18,7 @@ void InputSystemSDL::ProcessEvent(const SDL_Event& event)
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
         {
-            if (io.WantCaptureKeyboard) break;
+            // if (!io.WantCaptureKeyboard) break;
             if (event.key.repeat) break;
 
             Keyboard::Key key = MapSDLToEngineKey(event.key.scancode);

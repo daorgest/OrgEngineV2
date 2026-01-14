@@ -3,6 +3,7 @@
 //
 
 #pragma once
+#include "../PrimTypes.h"
 #include <filesystem>
 #include <slang.h>
 

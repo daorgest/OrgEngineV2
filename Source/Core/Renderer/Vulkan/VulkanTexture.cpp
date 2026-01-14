@@ -24,18 +24,23 @@ void VulkanTexture::Init(GPUDevice* gpuDevice, const TextureInfo& info)
 
 void VulkanTexture::Destroy()
 {
-	if (imageView != VK_NULL_HANDLE)
-	{
-		vkDestroyImageView(device->device, imageView, nullptr);
-	}
-	if (owns && image != VK_NULL_HANDLE)
-	{
-		vmaDestroyImage(device->allocator, image, allocation);
-	}
+    if (device && device->device != VK_NULL_HANDLE)
+    {
+        if (imageView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(device->device, imageView, nullptr);
+            imageView = VK_NULL_HANDLE;
+        }
+        if (owns && image != VK_NULL_HANDLE)
+        {
+            vmaDestroyImage(device->allocator, image, allocation);
+            image = VK_NULL_HANDLE;
+            allocation = VK_NULL_HANDLE;
+        }
+    }
 
-	device = nullptr;
-	imageFormat = VK_FORMAT_UNDEFINED;
-	imageLayout = TextureLayout::Unknown;
+    imageLayout = TextureLayout::Unknown;
+    owns = false;
 }
 
 void VulkanTexture::UploadData(const void* data)
@@ -50,28 +55,16 @@ void VulkanTexture::Init(VulkanDevice* device, TextureInfo& info)
 	this->textureInfo = info;
 	this->owns = true;
 
-	const VkFormat vkFormat = ToVkFormat(info.format);
-	const VkImageAspectFlags aspectFlag =
-		vkFormat == VK_FORMAT_D32_SFLOAT ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
 	if (info.mipLevels > 1)
 	{
 		info.usage |= ImageUsage::TransferSrc;
 	}
 
-	subresourceRange = {
-		.aspectMask = aspectFlag,
-		.baseMipLevel = 0,
-		.levelCount = info.mipLevels,
-		.baseArrayLayer = 0,
-		.layerCount = (info.type == ImageType::CubeMap) ? 6u : 1u
-	};
-
 	const VkImageCreateInfo imageInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.flags = (info.type == ImageType::CubeMap) ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u,
 		.imageType = ToVkImageType(info.dimension),
-		.format = vkFormat,
+		.format = ToVkFormat(info.format),
 		.extent = {info.extent.width, info.extent.height, info.extent.depth},
 		.mipLevels = info.mipLevels,
 		.arrayLayers = info.arrayLayers,
@@ -97,7 +90,7 @@ void VulkanTexture::Init(VulkanDevice* device, TextureInfo& info)
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = image,
 		.viewType = ToImgViewType(info.dimension),
-		.format = vkFormat,
+		.format = ToVkFormat(info.format),
 		.subresourceRange = subresourceRange
 	};
 
@@ -170,7 +163,7 @@ void VulkanTexture::FillSubresourceInfo()
 	subresourceRange.baseMipLevel = 0;
 	subresourceRange.levelCount = textureInfo.mipLevels;
 	subresourceRange.baseArrayLayer = 0;
-	subresourceRange.layerCount = textureInfo.arrayLayers;
+	subresourceRange.layerCount = (textureInfo.type == ImageType::CubeMap) ? 6u : 1u;
 }
 
 void VulkanTexture::InitializeLayout(VkCommandBuffer cmd)

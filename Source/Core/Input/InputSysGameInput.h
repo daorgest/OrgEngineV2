@@ -3,6 +3,7 @@
 //
 
 #pragma once
+#ifdef ENGINE_PLATFORM_WIN32
 #include <GameInput.h>
 
 #include "Platform.h"
@@ -21,13 +22,13 @@ struct InputSysGameInput
     GI::IGameInputDispatcher* dispatcher = nullptr;
     GI::GameInputCallbackToken giToken = {};
     Array<GI::IGameInputDevice*, MAX_GAMEPADS> gamepads;
+    i32 connectedCount = 0;
+
 
 private:
-    GI::IGameInputReading* lastMouseReading_ = nullptr;
-    GI::GameInputMouseState lastMouseState_{}; // baseline for deltas
+    GI::IGameInputReading* lastReading_ = nullptr; // Unified bookmark for the buffer
+    GI::GameInputMouseState lastMouseState_ = {};
     bool haveMouseBaseline_ = false;
-    u32 connectedCount = 0;
-    GI::IGameInputReading* lastKeyboardReading_ = nullptr;
 
     static void CALLBACK DeviceCallback(GI::GameInputCallbackToken token, void* context, GI::IGameInputDevice* device,
                                         u64 timestamp,
@@ -36,7 +37,9 @@ private:
     void HandleKeyboard(GI::IGameInputReading* reading);
     void InitialMouseReading(GI::IGameInputReading* reading);
     void HandleMouse(GI::IGameInputReading* reading);
+    i32 GetControllerIndex(GI::IGameInputReading* reading);
     void HandleController(GI::IGameInputReading* reading);
 };
 
 inline InputSysGameInput gameInput;
+#endif
