@@ -166,37 +166,6 @@ void VulkanTexture::FillSubresourceInfo()
 	subresourceRange.layerCount = (textureInfo.type == ImageType::CubeMap) ? 6u : 1u;
 }
 
-void VulkanTexture::InitializeLayout(VkCommandBuffer cmd)
-{
-	// Use the flag we just set up in the device
-	const VkImageLayout targetLayout = device->useUnifiedLayout
-		                                   ? VK_IMAGE_LAYOUT_GENERAL
-		                                   : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-	VkImageMemoryBarrier2 barrier = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-		.srcStageMask = VK_PIPELINE_STAGE_2_NONE,
-		.srcAccessMask = VK_ACCESS_2_NONE,
-		.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.newLayout = targetLayout,
-		.image = this->image,
-		.subresourceRange = this->subresourceRange
-	};
-
-	const VkDependencyInfo dep = {
-		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-		.imageMemoryBarrierCount = 1,
-		.pImageMemoryBarriers = &barrier
-	};
-
-	vkCmdPipelineBarrier2(cmd, &dep);
-	this->imageLayout = device->useUnifiedLayout
-		                    ? TextureLayout::General
-		                    : TextureLayout::ShaderReadOnly;
-}
-
 void VulkanTexture::SetName(const std::string& name)
 {
 #if VULKAN_DEBUG_MODE

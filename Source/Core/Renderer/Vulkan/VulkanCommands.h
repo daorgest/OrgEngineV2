@@ -20,7 +20,6 @@ namespace Renderer
 	/// Per-frame rendering data
 	struct VulkanFrameData final : GPUFrameData
 	{
-		VkCommandPool commandPool = VK_NULL_HANDLE; // Single threaded for now
 		VulkanCommandBuffer commandBuffer;
 		std::unique_ptr<VulkanFence> renderFence;
 		std::unique_ptr<VulkanSemaphore> acquireSemaphore;
@@ -32,9 +31,6 @@ namespace Renderer
 		void Reset() override;
 
 		GPUCommandBuffer* GetCommandBuffer() override { return &commandBuffer; }
-		void* GetRenderFence() override { return &renderFence; }
-		void* GetAcquireSemaphore() override { return &acquireSemaphore; }
-		void* GetPresentSemaphore() override { return nullptr; } // Managed by renderer
 
 	private:
 		VulkanDevice* device = nullptr;
@@ -49,7 +45,6 @@ namespace Renderer
 		void Destroy() override;
 
 		GPUFrameData* GetCurrentFrameData() override { return &frames[frameNumber % framesActive]; }
-		[[nodiscard]] u32 GetFrameNumber() const override { return frameNumber; }
 		u32 GetFrameIndex() const override { return frameNumber % framesActive; }
 
 		TracyVkCtx tracyCtx = nullptr;

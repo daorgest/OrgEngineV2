@@ -14,13 +14,15 @@ void Input::ProcessEventButton(ButtonState& state, const bool isPressed)
         }
 
         state.held = true;
-        state.released = false;
     }
     else
     {
-        state.pressed = false;
+        // If it was held before, this is a "release" event
+        if (state.held)
+        {
+            state.released = true;
+        }
         state.held = false;
-        state.released = true;
     }
 }
 

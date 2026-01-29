@@ -110,6 +110,13 @@ bool VulkanQueryPool::FetchResults()
     return true;
 }
 
+f32 VulkanQueryPool::GetElapsedMs(u32 timerIndex) const
+{
+    const u32 start = timerIndex * 2;
+    const u32 end   = start + 1;
+    return GetDeltaMs(start, end);
+}
+
 f32 VulkanQueryPool::GetDeltaMs(u32 beginIdx, u32 endIdx) const
 {
     // Ensure GPU has finished writing both timestamps before calculating

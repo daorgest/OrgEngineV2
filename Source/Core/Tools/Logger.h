@@ -11,7 +11,6 @@
 
 #include "Platform.h"
 
-
 enum class LogType { Error, Warning, Info, Debug };
 
 class Logger
@@ -35,7 +34,6 @@ public:
 
     static void LogResultError(std::string_view expr, i32 err, const std::source_location& loc = std::source_location::current());
 
-private:
 private:
     static void WriteInternal(LogType type, std::string&& message, const std::source_location& loc);
     static void LoggerThreadWork();

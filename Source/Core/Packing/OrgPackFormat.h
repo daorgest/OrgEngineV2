@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#include "Tools/Array.h"
+
 // barebones for now, will expand as i start to get my model formats/texture formats packable for now
 enum class FileType : uint8_t
 {
@@ -25,23 +27,21 @@ enum class CompressionType : uint8_t
 
 struct File
 {
-	uint64_t offset{};
-	uint64_t uncompressedSize{};
-	uint64_t compressedSize{};
+	uint64_t offset = 0;
+	uint64_t uncompressedSize = 0;
+	uint64_t compressedSize = 0;
 
-	char name[96]{};
-
-	// union
-	// {
-	// 	std::array<uint8_t, 16> guid; // in editor;
-	// 	uint32_t runtimeID; // for runtime stuff
-	// };
+	union
+	{
+		Array<uint8_t, 16> guid; // in editor
+		uint32_t runtimeID; // for runtime stuff
+	};
 
 	FileType type{};
 	CompressionType compression = CompressionType::None;
-	uint8_t padding[6]{};
+	uint8_t padding[18]{};
 };
-static_assert(sizeof(File) == 128, "File size mismatch");
+static_assert(sizeof(File) == 64, "File size mismatch");
 
 struct Header
 {

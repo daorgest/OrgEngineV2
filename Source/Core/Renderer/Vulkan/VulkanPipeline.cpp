@@ -238,12 +238,6 @@ Result<VkPipeline> VulkanPipelineBuilder::BuildGraphicsPipeline(const VulkanDevi
 
 	VK_CHECK(vkCreateGraphicsPipelines(device->device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline));
 
-	// If VK_CHECK is a non-aborting macro in your engine, still check for null
-	if (pipeline == VK_NULL_HANDLE)
-	{
-		return std::unexpected(VulkanPipelineCreationFailed);
-	}
-
 	LogPipelineStages(stages);
 	return pipeline;
 }

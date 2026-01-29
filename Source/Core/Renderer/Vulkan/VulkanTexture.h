@@ -68,7 +68,6 @@ namespace Renderer
 		void UploadTextureToGPU(const void* data, const TextureInfo& texInfo);
 		void CreateImageView(VkFormat format);
 		void FillSubresourceInfo();
-		void InitializeLayout(VkCommandBuffer cmd);
 		void SetName(const std::string& name) override;
 
 		// Public Vulkan handles for compatibility

@@ -132,6 +132,7 @@ target_compile_definitions(OrgEngineV2 PRIVATE
         VOLK_STATIC_DEFINES
         NOMINMAX
         EDITORUI
+        VULKAN_BUILD
         IMGUI_IMPL_VULKAN_USE_VOLK
         _CRT_SECURE_NO_WARNINGS
         ENABLE_GPU_TIMING

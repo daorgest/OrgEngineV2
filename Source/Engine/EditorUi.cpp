@@ -11,9 +11,6 @@
 #include "MathFuncs.h"
 #include "MeshStats.h"
 #include "RendererTypes.h"
-#include "VulkanConvert.h"
-#include "VulkanDevice.h"
-#include "VulkanSwapchain.h"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include "glm/gtx/norm.hpp"
@@ -25,6 +22,7 @@
 #define VOLK_IMPLEMENTATION
 #include <backends/imgui_impl_win32.h>
 #elif ENGINE_PLATFORM_SDL
+#include <SDL3/SDL_version.h>
 #include <backends/imgui_impl_sdl3.h>
 #include "SDL3/SDL_vulkan.h"
 #endif
@@ -152,7 +150,7 @@ void EditorUI::InitEditorStyles()
 
 // For multi-viewport support
 #if ENGINE_PLATFORM_WIN32
-static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc, ImU64* outVkSurface)
+static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc = nullptr, ImU64* outVkSurface = nullptr)
 {
     VkWin32SurfaceCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
@@ -169,11 +167,9 @@ static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const vo
 
 #elif ENGINE_PLATFORM_SDL
 
-static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc, ImU64* outVkSurface)
+static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc = nullptr, ImU64* outVkSurface = nullptr)
 {
-    auto* win = static_cast<SDL_Window*>(vp->PlatformHandleRaw);
-
-    if (!SDL_Vulkan_CreateSurface(win, (VkInstance)vkInst, nullptr, (VkSurfaceKHR*)outVkSurface))
+    if (auto* win = static_cast<SDL_Window*>(vp->PlatformHandleRaw); !SDL_Vulkan_CreateSurface(win, (VkInstance)vkInst, nullptr, (VkSurfaceKHR*)outVkSurface))
         return -1;
 
     return 0;
@@ -181,72 +177,64 @@ static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const vo
 
 #endif
 
-bool EditorUI::Init(const Renderer::VulkanInstance* instance, const Renderer::VulkanDevice* device,
-                    Renderer::VulkanSwapchain* swapchain)
+bool EditorUI::Init(Renderer::GPUInterface* instance, Renderer::GPUDevice* device, Renderer::GPUSwapchain* swapchain)
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     io.ConfigFlags |= ImGuiConfigFlags_IsSRGB;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.ConfigDpiScaleFonts = true;
     io.ConfigDebugHighlightIdConflicts = true;
 
-    ImGui::GetWindowDpiScale();
-
     InitEditorStyles();
 
-#if ENGINE_PLATFORM_WIN32
-
-    // Win32 supports multi-viewports fully
+#if defined(ENGINE_PLATFORM_WIN32)
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-
-    ImGui_ImplWin32_Init(swapchain->handle);
-
-    // Register Vulkan surface creator for platform windows
+    ImGui_ImplWin32_Init(swapchain->GetWindowHandle());
     ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
     platform_io.Platform_CreateVkSurface = CreateVulkanSurfaceForImGui;
-
-#elif ENGINE_PLATFORM_SDL
-
-    // SDL backend does NOT implement platform windows -> must disable viewports
+#elif defined(ENGINE_PLATFORM_SDL)
     io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
-
-    SDL_Window* sdlWin = static_cast<SDL_Window*>(swapchain->handle);
+    auto* sdlWin = static_cast<SDL_Window*>(swapchain->GetWindowHandle());
     ImGui_ImplSDL3_InitForVulkan(sdlWin);
 #endif
 
-    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+#ifdef VULKAN_BUILD
+    auto* vkDev = static_cast<Renderer::VulkanDevice*>(device);
+    auto* vkInst = static_cast<Renderer::VulkanInstance*>(instance);
+
     ImGui_ImplVulkan_InitInfo initInfo = {
-        .ApiVersion = instance->appInfo.apiVersion,
-        .Instance = instance->instance,
-        .PhysicalDevice = device->physicalDevice,
-        .Device = device->device,
-        .QueueFamily = device->graphicsQueueIndex,
-        .Queue = device->graphicsQueue,
-        .DescriptorPool = descriptorPool,
+        .ApiVersion = vkInst->appInfo.apiVersion,
+        .Instance = vkInst->instance,
+        .PhysicalDevice = vkDev->physicalDevice,
+        .Device = vkDev->device,
+        .QueueFamily = vkDev->graphicsQueueIndex,
+        .Queue = vkDev->graphicsQueue,
+        .DescriptorPool = VK_NULL_HANDLE,
         .DescriptorPoolSize = 1000,
-        .MinImageCount = MAX_FRAME_OVERLAP,
+        .MinImageCount = 2,
         .ImageCount = MAX_FRAME_OVERLAP,
         .UseDynamicRendering = true,
     };
+    static constexpr VkFormat swapchainFormat = VK_FORMAT_B8G8R8A8_SRGB;
 
     ImGui_ImplVulkan_PipelineInfo pipelineInfo = {
-        .MSAASamples = Renderer::ToVk(SampleCount::X1),
+        .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
         .PipelineRenderingCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
             .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &swapchain->surfaceFormat.format
+            .pColorAttachmentFormats = &swapchainFormat
         },
     };
 
     ImGui_ImplVulkan_Init(&initInfo);
     ImGui_ImplVulkan_CreateMainPipeline(&pipelineInfo);
-
+#endif
     // Font loading
     ImFontConfig cfg;
     cfg.OversampleH = 1; // less memory, crisper big fonts
@@ -285,6 +273,10 @@ void EditorUI::BeginFrame()
 
 void EditorUI::EndFrame()
 {
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    {
+        ImGui::RenderPlatformWindowsDefault();
+    }
     ImGui::Render();
     ImGui::UpdatePlatformWindows();
 }
@@ -524,6 +516,12 @@ bool EditorUI::DrawMainMenuBar()
                 }
                 ImGui::EndMenu();
             }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Help"))
+        {
+            ImGui::MenuItem("About", nullptr, &state.showAboutPopup);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -937,6 +935,85 @@ void EditorUI::DrawMainOverlay()
         ImGui::End();
     }
     ImGui::PopStyleVar();
+}
+
+void EditorUI::AppInfoPopup()
+{
+    if (!state.showAboutPopup) return;
+
+    if (!ImGui::Begin("System Info", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text(" %s %s - %s", ENGINE_NAME, ENGINE_VERSION, ENGINE_BUILD_DATE);
+    ImGui::SeparatorText("Third-Party Libraries");
+
+    static ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
+
+    if (ImGui::BeginTable("LibraryVersions", 2, flags)) {
+        ImGui::TableSetupColumn("Library");
+        ImGui::TableSetupColumn("Version");
+        ImGui::TableHeadersRow();
+
+        // Single string buffer for all formatted version strings
+        char versionBuffer[64];
+
+        auto AddLibRow = [](const char* name, const char* version) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%s", name);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", version);
+        };
+
+        // Static Getters
+        AddLibRow("Dear ImGui", ImGui::GetVersion());
+
+        // GLM 1.1.0
+        snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
+                 GLM_VERSION_MAJOR, GLM_VERSION_MINOR, GLM_VERSION_PATCH);
+        AddLibRow("GLM", versionBuffer);
+
+        // VMA 3.4.0 (Decoding bitmask)
+        snprintf(versionBuffer, sizeof(versionBuffer), "%u.%u.%u",
+                 (uint32_t)(VMA_VERSION) >> 22U,
+                 ((uint32_t)(VMA_VERSION) >> 12U) & 0x3FFU,
+                 (uint32_t)(VMA_VERSION) & 0xFFFU);
+        AddLibRow("Vulkan Memory", versionBuffer);
+
+        // SDL 3.5.0 Runtime (Linked)
+#if ENGINE_PLATFORM_SDL
+        const int linkedVer = SDL_GetVersion();
+        snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
+                 SDL_VERSIONNUM_MAJOR(linkedVer),
+                 SDL_VERSIONNUM_MINOR(linkedVer),
+                 SDL_VERSIONNUM_MICRO(linkedVer));
+        AddLibRow("SDL3 (Linked)", versionBuffer);
+
+        // SDL 3.5.0 Compile-time (Headers)
+        snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
+                 SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_MICRO_VERSION);
+        AddLibRow("SDL3 (Headers)", versionBuffer);
+
+        // SDL Revision Hash
+        AddLibRow("SDL3 (Revision)", SDL_GetRevision());
+#endif
+
+
+        // Miscellaneous
+        AddLibRow("fastgltf", "v0.11.x");
+        AddLibRow("ufbx", "v0.x");
+        AddLibRow("Tracy", "v0.10.x");
+
+        ImGui::EndTable();
+    }
+
+    if (ImGui::Button("Close")) {
+        // Handle closing logic here (e.g., setting a bool to false)
+    }
+
+    ImGui::End();
 }
 
 void EditorUI::DrawEditorTools()

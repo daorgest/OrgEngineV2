@@ -38,7 +38,7 @@ Result<void> VulkanSwapchain::Init(GPUDevice* device, WindowHandle windowHandle_
     LOG(Info, "Initializing Vulkan swapchain...");
 
 #if ENGINE_PLATFORM_WIN32
-    VkWin32SurfaceCreateInfoKHR surfaceCreateInfo = {
+    const VkWin32SurfaceCreateInfoKHR surfaceCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
         .hinstance = GetModuleHandle(nullptr),
         .hwnd = static_cast<HWND>(handle)
@@ -112,6 +112,7 @@ Result<void> VulkanSwapchain::Init(GPUDevice* device, WindowHandle windowHandle_
 
     CreateImages();
     CreateDepthImage();
+    CreateShadowMap();
 
     LOG(Info, "Swapchain created successfully: {} x {}, format {}", width, height,
         static_cast<i32>(surfaceFormat.format));
@@ -142,14 +143,14 @@ bool VulkanSwapchain::ResizeIfNeeded()
     u32 windowHeight = 0;
     Platform::GetWindowSize(handle, windowWidth, windowHeight);
 
-    // if minimized
+    // if minimized (TODO: Win32 reports it earlier than SDL...)
     if (windowWidth == 0 || windowHeight == 0)
     {
         return false;
     }
 
     // if different
-    if ((windowWidth != width) || (windowHeight != height))
+    if ((swapchain == VK_NULL_HANDLE) || (windowWidth != width) || (windowHeight != height) || needsRecreation)
     {
         Recreate();
         return false;
@@ -242,6 +243,18 @@ void VulkanSwapchain::CreateDepthImage()
                                TextureLayout::DepthWrite;
 }
 
+void VulkanSwapchain::CreateShadowMap()
+{
+    TextureInfo shadowMapInfo = {
+        .extent = { 2048, 2048, 1 },
+        .format = TextureFormat::D32_SFLOAT,
+        // Must include Sampled so it can be read in the lighting pass later
+        .usage = ImageUsage::DepthStencil | ImageUsage::Sampled
+    };
+    shadowTexture.Init(vkDev, shadowMapInfo);
+    shadowTexture.SetName("Shadow Map Storage");
+}
+
 void VulkanSwapchain::DestroyDepthImage()
 {
     depthTexture.Destroy();
@@ -274,18 +287,9 @@ bool VulkanSwapchain::Recreate()
     VkSurfaceCapabilitiesKHR caps = {};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkDev->physicalDevice, surface, &caps);
 
-    if (caps.currentExtent.width != 0xFFFFFFFF)
-    {
-        width = caps.currentExtent.width;
-        height = caps.currentExtent.height;
-    }
-    else
-    {
-        u32 w, h;
-        Platform::GetWindowSize(handle, w, h);
-        width = std::clamp(w, caps.minImageExtent.width, caps.maxImageExtent.width);
-        height = std::clamp(h, caps.minImageExtent.height, caps.maxImageExtent.height);
-    }
+    // Platform::GetWindowSize(handle, width, height);
+    width = std::clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width);
+    height = std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height);
 
     // Query surface formats again (in case monitor settings changed)
     u32 formatCount = 0;
@@ -293,10 +297,13 @@ bool VulkanSwapchain::Recreate()
     Vector<VkSurfaceFormatKHR> formats(formatCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(vkDev->physicalDevice, surface, &formatCount, formats.data());
 
+    // Same for present modes
     u32 presentModeCount = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(vkDev->physicalDevice, surface, &presentModeCount, nullptr);
     Vector<VkPresentModeKHR> presentModes(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(vkDev->physicalDevice, surface, &presentModeCount, presentModes.data());
+
+
     selectedPresentMode = ToVkPresentMode(presentMode, presentModes);
 
     // buffering mode
@@ -339,14 +346,13 @@ GPUTexture* VulkanSwapchain::GetImage(u32 index)
     return &images[index];
 }
 
-Result<u32> VulkanSwapchain::AcquireNextImage(GPUSemaphore* semaphore)
+Result<u32> VulkanSwapchain::AcquireNextImage(GPUSemaphore* semaphore, u32& imageIndex)
 {
     if (!semaphore) return std::unexpected(VulkanInvalidState);
     const auto vkSemaphore = static_cast<VulkanSemaphore*>(semaphore)->semaphore;
-    u32 imageIndex = 0;
 
-    const VkResult result = vkAcquireNextImageKHR(vkDev->device, swapchain, UINT64_MAX,
-                                                  vkSemaphore, VK_NULL_HANDLE, &imageIndex);
+    VkResult result = vkAcquireNextImageKHR(vkDev->device, swapchain, UINT64_MAX,
+                                            vkSemaphore, VK_NULL_HANDLE, &imageIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -366,4 +372,9 @@ Result<u32> VulkanSwapchain::AcquireNextImage(GPUSemaphore* semaphore)
 
     currentImageIndex = imageIndex;
     return imageIndex;
+}
+
+f32 VulkanSwapchain::GetAspectRatio() const
+{
+    return static_cast<f32>(width / height);
 }

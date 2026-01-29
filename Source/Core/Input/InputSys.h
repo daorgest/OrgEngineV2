@@ -35,6 +35,7 @@ namespace Gamepad
         DpadUp, DpadDown, DpadLeft, DpadRight,
         LeftShoulder, RightShoulder,
         LeftThumb, RightThumb,
+        Unknown,
         ButtonCount
     };
 } // namespace Gamepad

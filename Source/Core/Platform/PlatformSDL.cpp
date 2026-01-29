@@ -17,7 +17,7 @@
 void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mode)
 {
     window->platformName = "SDL3";
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD))
     {
         LOG(Error, "[SDL3] SDL_Init failed: {}", SDL_GetError());
         return;
@@ -80,11 +80,8 @@ bool Platform::GetWindowSize(const WindowHandle& handle, u32& width, u32& height
     if (!win)
         return false;
 
-    i32 w = 0, h = 0;
-    SDL_GetWindowSizeInPixels(win, &w, &h);
+    SDL_GetWindowSize(win, reinterpret_cast<i32*>(&width), reinterpret_cast<i32*>(&height));
 
-    width = static_cast<u32>(w);
-    height = static_cast<u32>(h);
     return true;
 }
 
@@ -345,7 +342,7 @@ bool Platform::ProcessMessages(WindowContext* window)
         }
 
 
-        InputSystemSDL::ProcessEvent(e);
+        InputSystemSDL::ProcessEvents(e);
     }
 
     return true;

@@ -39,16 +39,13 @@ namespace Renderer
         void CreateImages();
         void DestroyImageViews();
         void CreateDepthImage();
+        void CreateShadowMap();
         void DestroyDepthImage();
         void SetVsyncMode(PresentMode mode) override;
         void SetBufferingMode(BufferingMode mode) override;
         bool Recreate();
 
-        // Vulkan-specific accessors
         [[nodiscard]] GPUTexture* GetImage(u32 index) override;
-        [[nodiscard]] VkFormat GetVkFormat() const { return surfaceFormat.format; }
-        [[nodiscard]] VkSwapchainKHR GetVkSwapchain() const noexcept { return swapchain; }
-        [[nodiscard]] VkSurfaceKHR GetVkSurface() const noexcept { return surface; }
 
         // C++23: Delete copy, allow move
         VulkanSwapchain() = default;
@@ -59,7 +56,9 @@ namespace Renderer
 
         ~VulkanSwapchain() override { Destroy(); }
         PresentMode GetPresentMode() override { return presentMode; }
-        Result<u32> AcquireNextImage(GPUSemaphore* semaphore) override;
+        Result<u32> AcquireNextImage(GPUSemaphore* semaphore, u32& imageIndex) override;
+        Platform::WindowHandle GetWindowHandle() const override { return handle; }
+        [[nodiscard]] f32 GetAspectRatio() const override;
 
         // Public Vulkan handles for compatibility
         VulkanDevice* vkDev = nullptr;
@@ -74,6 +73,7 @@ namespace Renderer
         };
         Vector<VulkanTexture> images;
         VulkanTexture depthTexture;
+        VulkanTexture shadowTexture;
 
         u32 imageCount = 0;
         u32 width = 0;

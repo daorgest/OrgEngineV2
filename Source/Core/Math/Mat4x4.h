@@ -85,16 +85,20 @@ struct Mat4x4
 		return r;
 	}
 
-	static Mat4x4 Perspective(float fovyRadians, float aspect, float zNear, float zFar)
+    static Mat4x4 Perspective(const float fovY, const float aspect, const float near, const float far)
 	{
-		Mat4x4 r{};
-		float f = 1.0f / std::tan(fovyRadians * 0.5f);
-		r.m[0] = f / aspect;
-		r.m[5] = f;
-		r.m[10] = zFar / (zNear - zFar);
-		r.m[11] = -1.0f;
-		r.m[14] = (zFar * zNear) / (zNear - zFar);
-		return r;
+	    Mat4x4 r;
+
+	    const float fy = 1.0f / std::tan(fovY * 0.5f);
+	    const float range = far - near;
+
+	    r.m[0] = fy / aspect;
+	    r.m[5] = fy;
+	    r.m[10] = far / (near - far);
+	    r.m[11] = -1.0f;
+	    r.m[14] = -(far * near) / range;
+
+	    return r;
 	}
 
 	static Mat4x4 Translation(const Vec3& t)

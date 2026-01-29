@@ -73,21 +73,21 @@ bool Application::Init()
 	// Texture Defaults
 	texDefaults.Init(&device);
 
-	// Main model
-	{
-		ZoneScopedN("LoadModel From Source!");
-		DrawLoadingSplash("Loading OBJ Model...");
-		LOG(Debug, "Loading main model: Sponza/sponza.obj");
-
-		auto result = Assets::MeshLoader::LoadModelFromSource(MeshSourceType::OBJ, "Assets/Sponza/sponza.obj");
-		modelInst = std::make_unique<Renderer::VulkanModel>(&device, *result, globalDescriptorAlloc, texDefaults);
-		Renderer::ModelComponent comp = {
-
-			.model = modelInst.get(),
-			.transform = glm::scale(glm::vec3(0.01f)),
-		};
-		models.push_back(comp);
-	}
+	// // Main model
+	// {
+	// 	ZoneScopedN("LoadModel From Source!");
+	// 	DrawLoadingSplash("Loading OBJ Model...");
+	// 	LOG(Debug, "Loading main model: Sponza/sponza.obj");
+	//
+	// 	auto result = Assets::MeshLoader::LoadModelFromSource(MeshSourceType::OBJ, "Assets/Sponza/sponza.obj");
+	// 	modelInst = std::make_unique<Renderer::VulkanModel>(&device, *result, globalDescriptorAlloc, texDefaults);
+	// 	Renderer::ModelComponent comp = {
+	//
+	// 		.model = modelInst.get(),
+	// 		.transform = glm::scale(glm::vec3(0.01f)),
+	// 	};
+	// 	models.push_back(comp);
+	// }
 
 	// DrawLoadingSplash("Building Skybox...");
 
@@ -98,7 +98,7 @@ bool Application::Init()
 
 	// DrawLoadingSplash("Creating PBR Sphere Grid...");
 
-	// CreatePBRSphereGrid();
+	CreatePBRSphereGrid();
 
 	// DrawLoadingSplash("Compiling Shaders...");
 	auto codeResult = Renderer::VulkanShader::ReadShaderFile("Shaders/scene.spv");
@@ -259,7 +259,7 @@ void Application::Run()
 
 		Platform::StartFrame(windowContext);
 
-		if (!swapchain.ResizeIfNeeded())
+		if (!swapchain.ResizeIfNeeded() || windowContext.displayState.isMinimized)
 		{
 			FrameMarkEnd("Frame");
 			continue;
@@ -285,12 +285,6 @@ void Application::Run()
 
 		Input::EndFrameInputUpdate();
 		renderer.EndFrame(frameIndex, imageIndex);
-#if EDITORUI
-		if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-		{
-			ImGui::RenderPlatformWindowsDefault();
-		}
-#endif
 		FrameMarkEnd("Frame");
 	}
 }
@@ -454,7 +448,7 @@ void Application::ApplyFreeFlyMovement(const u32 idx, const f32 dt)
     if (input.IsActionHeld(Action::MoveLeft))     move -= cam.right;
     if (input.IsActionHeld(Action::MoveRight))    move += cam.right;
     if (input.IsActionHeld(Action::MoveUp))       move += cam.up;
-    if (input.IsActionHeld(Action::MoveDown))     move -= cam.up;
+    if (input. IsActionHeld(Action::MoveDown))     move -= cam.up;
 
     if (input.controllers[0].connected)
     {
@@ -532,23 +526,33 @@ void Application::RenderScene(u32 imageIndex)
 
 	Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
 	Renderer::GPUTexture* depthImage = &swapchain.depthTexture;
+    Renderer::GPUTexture* shadowmap = &swapchain.shadowTexture; // not avaul yet
+
+    cmd.TransitionLayout(shadowmap, TextureLayout::DepthWrite);
+    auto shadowDepthAttach = Renderer::RenderAttachment::Depth(shadowmap, LoadOP::Clear, 1.0f);
+
+    constexpr Extent2D shadowExtent = { 2048, 2048 };
+
+    Renderer::RenderingInfo shadowRenderInfo = {
+        .extent = shadowExtent,
+        .colorAttachments = {}, // Zero color attachments for depth-only pass
+        .depthAttachment = &shadowDepthAttach
+     };
+    cmd.BeginDebugLabel("Shadow Pass", 0.1f, 0.1f, 0.1f);
+    cmd.BeginRendering(shadowRenderInfo);
+    cmd.SetViewport({0.0f, 0.0f, static_cast<f32>(shadowExtent.width), static_cast<f32>(shadowExtent.height), 0.0f, 1.0f});
+    cmd.SetScissor(0, 0, shadowExtent.width, shadowExtent.height);
+    cmd.EndRendering();
+    cmd.EndDebugLabel();
 
 
 #ifdef ENABLE_GPU_TIMING
-
-	// Hold on, wait till we complete the double buffering
-    if (frameIndex >= MAX_FRAME_OVERLAP)
-    {
-        // Store scene time from slots 0 and 1
-        sceneStats.gpuDrawTime = frame->queryPool.GetDeltaMs(0, 1);
-        // Store UI time from slots 2 and 3
-        sceneStats.gpuDrawTime += frame->queryPool.GetDeltaMs(2, 3);
-    }
+    sceneStats.gpuDrawTime = frame->queryPool.GetElapsedMs(0);
+    sceneStats.gpuDrawTime += frame->queryPool.GetElapsedMs(1);
 #endif
 
     cmd.TransitionLayout(colorImage, TextureLayout::ColorWrite);
     cmd.TransitionLayout(depthImage, TextureLayout::DepthWrite);
-
 
 	auto colorAttach = Renderer::RenderAttachment::Color(colorImage, LoadOP::Clear, {0.1f, 0.1f, 0.1f, 1.0f});
 	auto depthAttach = Renderer::RenderAttachment::Depth(depthImage, LoadOP::Clear, 0.0);
@@ -605,7 +609,7 @@ void Application::RenderImGui(u32 imageIndex)
 	auto* frame = static_cast<Renderer::VulkanFrameData*>(renderer.GetCurrentFrameData());
 	auto& cmd = frame->commandBuffer;
 
-	TracyVkZone(cmd.tracyCtx, vkCmd, "ImGui");
+	TracyVkZone(cmd.tracyCtx, cmd.GetVkHandle(), "ImGui");
 
 	const Extent2D extent = swapchain.GetExtent();
 	Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
@@ -643,6 +647,11 @@ void Application::RenderImGui(u32 imageIndex)
         if (editorUI.state.showEditorTools)
         {
             editorUI.DrawEditorTools();
+        }
+
+        if (editorUI.state.showAboutPopup)
+        {
+            editorUI.AppInfoPopup();
         }
 
         // --- Transient UI ---

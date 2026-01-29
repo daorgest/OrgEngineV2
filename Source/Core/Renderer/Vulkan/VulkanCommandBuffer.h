@@ -21,6 +21,8 @@ namespace Renderer
 		VkFence fence = VK_NULL_HANDLE;
 		VulkanDevice* device = nullptr;
 
+	    VulkanFence() = default;
+
 		explicit VulkanFence(VulkanDevice* device);
 		~VulkanFence() override;
 	};
@@ -30,8 +32,7 @@ namespace Renderer
 		VkSemaphore semaphore = VK_NULL_HANDLE;
 		VulkanDevice* device = nullptr;
 
-		template<typename Self>
-		auto Get(this Self&& self) { return self.semaphore; }
+	    VulkanSemaphore() = default;
 
 		explicit VulkanSemaphore(VulkanDevice* device);
 		~VulkanSemaphore() override;
@@ -74,6 +75,7 @@ namespace Renderer
 
 		// Synchronization
 		void PipelineBarrier(const BarrierInfo& info) override;
+	    void WaitForFence(GPUFence* fence) override;
 		void ExecuteCommands(std::span<GPUCommandBuffer*> secondaryBuffers);
 
 		// Viewport/Scissor
@@ -91,12 +93,13 @@ namespace Renderer
 
 
 		// Internal Vulkan-specific methods
-		void InitInternal(VulkanDevice* device, VkCommandPool pool, bool secondary = false);
+		void Init(VulkanDevice* dev, bool secondary = false);
 		void InitFromHandle(VulkanDevice* dev, VkCommandBuffer handle);
-		void DestroyInternal();
+		void Destroy() const;
 
 
 		[[nodiscard]] VkCommandBuffer GetVkHandle() const { return cmd; }
+	    [[nodiscard]] VkCommandPool GetVkPool() const { return cmdPool; }
 		void CopyTexture(GPUTexture* src, GPUTexture* dst) override;
 
 		// Public for VulkanRenderer to set Tracy context
@@ -104,7 +107,7 @@ namespace Renderer
 
 	private:
 		VkCommandBuffer cmd = VK_NULL_HANDLE;
-		VkCommandPool parentPool = VK_NULL_HANDLE;
+		VkCommandPool cmdPool = VK_NULL_HANDLE;
 		VulkanDevice* device = nullptr;
 		bool isSecondary = false;
 	};

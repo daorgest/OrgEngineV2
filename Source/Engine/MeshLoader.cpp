@@ -19,8 +19,6 @@
 
 #include <ufbx.h>
 
-#include "tracy/Tracy.hpp"
-
 static std::string GetBaseDir(const std::string& filepath)
 {
 	const size_t pos = filepath.find_last_of("/\\");
@@ -250,11 +248,7 @@ static void GenerateNormals(Vector<Vertex>& verts, const Vector<u32>& indices)
 		v.normal = glm::normalize(v.normal);
 }
 
-static void BuildMeshPartsFromShape(
-    const tinyobj::attrib_t& attrib,
-    const tinyobj::shape_t& shape,
-    const std::vector<tinyobj::material_t>& materials,
-    Mesh& outMesh)
+static void BuildMeshPartsFromShape(const tinyobj::attrib_t& attrib, const tinyobj::shape_t& shape, Mesh& outMesh)
 {
     std::unordered_map<i32, Vector<u32>> materialGroups;
 
@@ -413,7 +407,7 @@ Result<LoadedModel> MeshLoader::LoadOBJ(const char* filePath)
 	{
 		loaded.meshes.emplace_back(Mesh{ .name = shape.name });
 		Mesh& mesh = loaded.meshes.back();
-		BuildMeshPartsFromShape(attrib, shape, materials, mesh);
+		BuildMeshPartsFromShape(attrib, shape, mesh);
 
 		if (!mesh.unifiedIndices.empty())
 		{

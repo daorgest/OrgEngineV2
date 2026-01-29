@@ -70,7 +70,7 @@ namespace Renderer
         VmaAllocator allocator = nullptr;
         VkQueue graphicsQueue = VK_NULL_HANDLE;
         u32 graphicsQueueIndex = 0;
-        bool useUnifiedLayout = false;
+        bool useUnifiedLayout = true;
         ImmediateSubmitter immediateSubmitter;
     };
 

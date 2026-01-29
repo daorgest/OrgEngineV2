@@ -18,16 +18,8 @@ bool VulkanFrameData::Init(GPUDevice* dev)
 {
     device = static_cast<VulkanDevice*>(dev);
 
-    VkCommandPoolCreateInfo poolInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = device->graphicsQueueIndex
-    };
-
-    VK_CHECK(vkCreateCommandPool(device->device, &poolInfo, nullptr, &commandPool));
-
-    // Allocate primary command buffer directly
-    commandBuffer.InitInternal(device, commandPool, false);
+    // Allocate primary command buffer and pool directly
+    commandBuffer.Init(device, false);
 
     queryPool.Init(device, 4);
     renderFence = std::make_unique<VulkanFence>(device);
@@ -40,21 +32,17 @@ void VulkanFrameData::Destroy()
 {
     if (device)
     {
-        commandBuffer.DestroyInternal();
-        vkDestroyCommandPool(device->device, commandPool, nullptr);
-
+        commandBuffer.Destroy();
         queryPool.Destroy();
-        renderFence.reset();
-        acquireSemaphore.reset();
     }
 }
 
 void VulkanFrameData::Reset()
 {
-    if (device)
-    {
-        vkResetCommandPool(device->device, commandPool, 0);
-    }
+    // if (device)
+    // {
+    //     vkResetCommandPool(device->device, commandBuffer.GetVkPool(), 0);
+    // }
 }
 
 // VulkanRenderer
@@ -110,27 +98,39 @@ void VulkanRenderer::Destroy()
 bool VulkanRenderer::BeginFrame(u32& outFrameIndex, u32& outImageIndex)
 {
     outFrameIndex = frameNumber % framesActive;
-    auto* vkFrame = &frames[outFrameIndex];
 
-    // Wait for this frame's fence
-    vkWaitForFences(device->device, 1, &vkFrame->renderFence->fence, VK_TRUE, UINT64_MAX);
-    vkResetFences(device->device, 1, &vkFrame->renderFence->fence);
+    VulkanFrameData& frame = frames[outFrameIndex];
 
-    vkFrame->Reset();
+    frame.commandBuffer.WaitForFence(frame.renderFence.get());
+    // Only fetch results if this frame slot has been written to before!
+    // If we are on Frame 0 or 1 (in a double-buffered system), this memory is fresh
+    // and reading it causes the validation error.
+    if (frameNumber >= framesActive)
+    {
+        frame.queryPool.FetchResults();
+    }
 
-    auto acquireResult = swapchain->AcquireNextImage(vkFrame->acquireSemaphore.get());
-    if (!acquireResult.has_value()) return false;
+    auto acquireResult = swapchain->AcquireNextImage(frame.acquireSemaphore.get(), outImageIndex);
+    if (!acquireResult.has_value())
+    {
+        if (acquireResult.error() == VulkanSwapchainOutOfDate || Suboptimal)
+        {
+            swapchain->needsRecreation = true;
+        }
+        return false;
+    }
+
 
     outImageIndex = acquireResult.value();
 
-    vkFrame->commandBuffer.Begin(nullptr);
+    frame.commandBuffer.Begin(nullptr);
 
-    vkFrame->queryPool.Reset(&vkFrame->commandBuffer);
+    frame.queryPool.Reset(&frame.commandBuffer);
 
     // The GPU is done, collect timestamps!!
     if (tracyCtx)
     {
-        TracyVkCollect(tracyCtx, vkFrame->commandBuffer.GetVkHandle());
+        TracyVkCollect(tracyCtx, frame.commandBuffer.GetVkHandle());
     }
     return true;
 }
@@ -139,7 +139,7 @@ void VulkanRenderer::EndFrame(u32 frameIndex, u32 imageIndex)
 {
     VulkanFrameData& frame = frames[frameIndex];
 
-    VkSemaphore sem = presentSemaphores[imageIndex]->Get();
+    VkSemaphore sem = presentSemaphores[imageIndex]->semaphore;
     frame.commandBuffer.End();
 
     // Sync2 Submission!
@@ -184,6 +184,10 @@ void VulkanRenderer::EndFrame(u32 frameIndex, u32 imageIndex)
         .pImageIndices = &imageIndex
     };
 
-    VK_CHECK(vkQueuePresentKHR(device->graphicsQueue, &presentInfo));
+    const VkResult result = vkQueuePresentKHR(device->graphicsQueue, &presentInfo);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+    {
+        swapchain->needsRecreation = true;
+    }
     frameNumber++;
 }

@@ -21,23 +21,21 @@ struct InputSysGameInput
     GI::IGameInput* gi = nullptr;
     GI::IGameInputDispatcher* dispatcher = nullptr;
     GI::GameInputCallbackToken giToken = {};
+
     Array<GI::IGameInputDevice*, MAX_GAMEPADS> gamepads;
     i32 connectedCount = 0;
 
 
 private:
-    GI::IGameInputReading* lastReading_ = nullptr; // Unified bookmark for the buffer
-    GI::GameInputMouseState lastMouseState_ = {};
-    bool haveMouseBaseline_ = false;
+    GI::IGameInputReading* prevReading = nullptr; // Unified bookmark for the buffer
+    GI::GameInputMouseState lastState = {};
+    bool hasBaseline = false;
 
     static void CALLBACK DeviceCallback(GI::GameInputCallbackToken token, void* context, GI::IGameInputDevice* device,
                                         u64 timestamp,
                                         GI::GameInputDeviceStatus currentStatus,
                                         GI::GameInputDeviceStatus previousStatus);
-    void HandleKeyboard(GI::IGameInputReading* reading);
-    void InitialMouseReading(GI::IGameInputReading* reading);
     void HandleMouse(GI::IGameInputReading* reading);
-    i32 GetControllerIndex(GI::IGameInputReading* reading);
     void HandleController(GI::IGameInputReading* reading);
 };
 

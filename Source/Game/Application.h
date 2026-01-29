@@ -17,7 +17,6 @@
 #include "VulkanInit.h"
 #include "VulkanMesh.h"
 #include "VulkanPipeline.h"
-#include "VulkanRenderPass.h"
 #include "VulkanShader.h"
 #include "VulkanShaderBuffer.h"
 #include "VulkanSwapchain.h"
@@ -38,7 +37,6 @@ struct Application
 	Renderer::VulkanDevice device;
 	Renderer::VulkanSwapchain swapchain;
 	Renderer::VulkanRenderer renderer;
-	Renderer::VulkanRenderPass renderPass;
 	Renderer::DescriptorAllocatorGrowable globalDescriptorAlloc;
 
 	SkyboxManager skybox;

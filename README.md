@@ -8,6 +8,8 @@
     - A learning experience for getting the grasp of OOP.
  
  - Entity Components (without the System)
+ - Bindless Textures
+ - Standard PBR implementation
  - Slang Support
  - SDL Support (other platforms not tested yet)
  - Model Support
@@ -18,7 +20,7 @@
 ## Want to try it out urself?
  1. Pull this repo with the submodules:
     ```bash
-    git clone --recurse-submodules (this repo url is private lol)
+    git clone --recurse-submodules https://github.com/daorgest/OrgEngineV2.git
     ```
  
     - if you already cloned this repo without the --recursive flag you can do this:
@@ -37,7 +39,12 @@
 ## Some notes for myself and TODOS
  - I'm aware that the platform layer is NOT OOP as its 1 header, n amount of implementation files
  - Audio implementation is still yet to be started on
- - GameInput is a nice API for windows but the documentation is so ASS I had to look at SDL for ref
+ - **Unified Layouts**: While `VK_IMAGE_LAYOUT_GENERAL` is convenient, the RHI must still track the *logical* layout (like for example `TextureLayout::ColorWrite`). If you lose the logical state, barriers will fail validation because they can't transition from "Unknown" to "Present".
+ - **GameInput (Windows)**:
+     - It is a "Time Travel" API. If you stop polling (like alt tabbing), the buffer fills up.
+     - **Rule**: On focus loss, nuke the `lastReading` bookmark. On focus gain, force a `GetCurrentReading` to snap to the present. Otherwise, the engine will process 5 seconds of stale input in 1 frame.
+- **SDL3**:
+    - Coordinates are mostly normalized now, but Y-axis inversion is still required to match GameInput standards for thumbsticks.
  - Order of destruction is still a WIP
 ## Requirements to Run
  - Windows 10 64-Bit (22H2) or newer

@@ -25,8 +25,8 @@ void FPSCamera::Update(CameraComponent& comp, f32 deltaTime)
     glm::vec3& footPos = comp.position;
 
     // 1. Mouse Look: Standard Euler rotation
-    cam.yaw   -= input.xrel * tune.mouseSens;
-    cam.pitch -= input.yrel * tune.mouseSens;
+    cam.yaw   -= (f32)input.xrel * tune.mouseSens;
+    cam.pitch -= (f32)input.yrel * tune.mouseSens;
     cam.pitch = std::clamp(cam.pitch, -89.9f, 89.9f);
 
     // 2. Vertical Physics (Gravity/Jumping)

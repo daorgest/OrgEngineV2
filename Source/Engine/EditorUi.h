@@ -46,6 +46,7 @@ struct State
     bool showGPUInfo = false;
     bool followCamera = false;
     bool showEditorTools = true;
+    bool showAboutPopup = false;
     bool noUI = false;
 
     // Per-frame UI state
@@ -67,8 +68,7 @@ struct EditorUI
     State state;
 
     static void InitEditorStyles();
-    static bool Init(const Renderer::VulkanInstance* instance, const Renderer::VulkanDevice* device,
-                     Renderer::VulkanSwapchain* swapchain);
+    static bool Init(Renderer::GPUInterface* instance, Renderer::GPUDevice* device, Renderer::GPUSwapchain* swapchain);
     static void Destroy();
     static void BeginFrame();
     static void EndFrame();
@@ -81,6 +81,7 @@ struct EditorUI
     void DrawCameraSpeedPopup(f32 camSpeedPopupTime) const;
     bool DrawMainMenuBar();
     void DrawMainOverlay();
+    void AppInfoPopup();
 
     void DrawEditorTools();
 

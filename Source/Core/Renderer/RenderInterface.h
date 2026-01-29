@@ -176,9 +176,9 @@ namespace Renderer
 
             struct
             {
-                f32 depthClear;
-                u32 stencilClear;
-            };
+                f32 depth;
+                u32 stencil;
+            } ds;
         } clearValue;
 
 
@@ -193,15 +193,15 @@ namespace Renderer
             return ra;
         }
 
-        static RenderAttachment Depth(GPUTexture* tex, LoadOP load = LoadOP::Clear, f32 depth = 0.0f,
-                                      u32 stencil = 0)
+        static RenderAttachment Depth(GPUTexture* tex, LoadOP load = LoadOP::Clear, f32 depth = 0.0f, u32 stencil = 0)
         {
-            RenderAttachment ra = {
+            RenderAttachment ra =
+            {
                 .texture = tex,
                 .loadOp = load
             };
-            ra.clearValue.depthClear = depth;
-			ra.clearValue.stencilClear = stencil;
+            ra.clearValue.ds.depth = depth;
+            ra.clearValue.ds.stencil = stencil;
 			return ra;
 		}
 	};
@@ -285,6 +285,7 @@ namespace Renderer
 
 		// Synchronization
 		virtual void PipelineBarrier(const BarrierInfo& info) = 0;
+	    virtual void WaitForFence(GPUFence* fence) = 0;
 
 		// Viewport/Scissor
 		virtual void SetViewport(const Viewport& viewport) = 0;
@@ -296,20 +297,6 @@ namespace Renderer
 		virtual void InsertDebugLabel(const char* name, f32 r, f32 g, f32 b) = 0;
 	};
 
-	/// Command pool for allocating command buffers
-	struct GPUCommandPool
-	{
-		virtual ~GPUCommandPool() = default;
-
-        virtual void Init(GPUDevice* device, u32 queueFamilyIndex, bool transient = false) = 0;
-        virtual void Destroy() = 0;
-        virtual void Reset() = 0;
-
-        virtual GPUCommandBuffer* AllocateBuffer(bool secondary = false) = 0;
-        virtual void FreeBuffer(GPUCommandBuffer* buffer) = 0;
-        virtual void FreeBuffers(std::span<GPUCommandBuffer*> buffers) = 0;
-    };
-
     // Swapchain & Presentation
     /// Abstract swapchain (platform-specific)
     struct GPUSwapchain
@@ -319,14 +306,18 @@ namespace Renderer
         virtual void Destroy() = 0;
 		virtual bool ResizeIfNeeded() = 0;
 
-		virtual Result<u32> AcquireNextImage(GPUSemaphore* semaphore) = 0;
+		virtual Result<u32> AcquireNextImage(GPUSemaphore* semaphore, u32& imageIndex) = 0;
 
 		[[nodiscard]] virtual PresentMode GetPresentMode() = 0;
 		[[nodiscard]] virtual GPUTexture* GetImage(u32 index) = 0;
 		[[nodiscard]] virtual GPUTexture* GetCurrentImage() = 0;
 
 		[[nodiscard]] virtual const Extent2D GetExtent() const = 0;
+        [[nodiscard]] virtual f32 GetAspectRatio() const = 0;
 		[[nodiscard]] virtual TextureFormat GetFormat() const = 0;
+        virtual void* GetNativeFormat() const { return nullptr; }
+
+        virtual Platform::WindowHandle GetWindowHandle() const = 0;
 
 		virtual void SetVsyncMode(PresentMode mode) = 0;
 		virtual void SetBufferingMode(BufferingMode mode) = 0;
@@ -342,9 +333,6 @@ namespace Renderer
 		virtual void Reset() = 0; // Reset per-frame allocators
 
 		virtual GPUCommandBuffer* GetCommandBuffer() = 0;
-		virtual void* GetRenderFence() = 0;
-		virtual void* GetAcquireSemaphore() = 0;
-        virtual void* GetPresentSemaphore() = 0;
     };
 
     /// High-level renderer (manages frames, submission)
@@ -360,7 +348,6 @@ namespace Renderer
 
 
         virtual GPUFrameData* GetCurrentFrameData() = 0;
-        virtual u32 GetFrameNumber() const = 0;
         virtual u32 GetFrameIndex() const = 0;
     };
 
@@ -386,6 +373,12 @@ namespace Renderer
 			return fmt::format("Unknown Driver (0x{:X})", driverVersion);
 		}
 	}
+
+
+    struct FeatureSet
+    {
+        bool useUnifiedLayout = true;
+    };
 
 } // namespace Renderer
 

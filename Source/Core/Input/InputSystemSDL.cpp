@@ -5,10 +5,134 @@
 #include "InputSystemSDL.h"
 
 #include "imgui_impl_sdl3.h"
+#include "tracy/Tracy.hpp"
 
-void InputSystemSDL::ProcessEvent(const SDL_Event& event)
+static Array<SDLGamepadSlot, CONTROLLER_COUNT> gamepads;
+
+i32 InputSystemSDL::GetControllerIndex(const SDL_JoystickID id)
 {
-    // Let ImGui have first dibs
+    for (int i = 0; i < CONTROLLER_COUNT; ++i)
+    {
+        if (gamepads[i].id == id)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void InputSystemSDL::ProcessGamepadEvents(const SDL_Event& event)
+{
+
+    switch (event.type)
+    {
+    case SDL_EVENT_GAMEPAD_ADDED:
+
+        for (i32 i = 0; i < CONTROLLER_COUNT; i++)
+        {
+            SDLGamepadSlot& slot = gamepads[i];
+
+            if (!slot.handle)
+            {
+                if (SDL_Gamepad* newPad = SDL_OpenGamepad(event.gdevice.which))
+                {
+                    slot.handle = newPad;
+                    slot.id = event.gdevice.which;
+                    input.controllers[i].connected = true;
+
+                    input.controllers[i].leftX = 0.0f;
+                    input.controllers[i].leftY = 0.0f;
+                    input.controllers[i].rightX = 0.0f;
+                    input.controllers[i].rightY = 0.0f;
+                    input.controllers[i].leftTrigger = 0.0f;
+                    input.controllers[i].rightTrigger = 0.0f;
+
+                    break; // Found a slot, stop looking
+                }
+            }
+        }
+        break;
+    case SDL_EVENT_GAMEPAD_REMOVED:
+        {
+            i32 idx = GetControllerIndex(event.gdevice.which);
+            if (idx != -1)
+            {
+                SDL_CloseGamepad(gamepads[idx].handle);
+                gamepads[idx] = {};
+                input.controllers[idx].connected = false;
+            }
+            break;
+        }
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        {
+            i32 idx = GetControllerIndex(event.gbutton.which);
+            if (idx != -1)
+            {
+                const Gamepad::Button btn = MapSDLToEngineKey(static_cast<SDL_GamepadButton>(event.gbutton.button));
+
+                if (btn != Gamepad::Unknown && btn != Gamepad::ButtonCount)
+                {
+                    bool isDown = (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+                    Input::ProcessEventButton(input.controllers[idx].buttons[btn], isDown);
+                }
+            }
+            break;
+        }
+    }
+}
+
+void InputSystemSDL::UpdateGamepadAxes()
+{
+    // Define your Deadzone Helper
+    auto ApplyDeadzone = [](const f32 value, const f32 deadzone = 0.15f)
+    {
+        if (fabsf(value) < deadzone) return 0.0f;
+        return (value - (value > 0 ? deadzone : -deadzone)) / (1.0f - deadzone);
+    };
+
+    for (i32 i = 0; i < CONTROLLER_COUNT; ++i)
+    {
+        SDLGamepadSlot& slot = gamepads[i];
+        if (!slot.handle) continue; // Skip disconnected
+
+        auto& ctrl = input.controllers[i];
+
+        // ---------------------------------------------------------
+        // 1. POLL AXES (Super fast, no event queue overhead)
+        // ---------------------------------------------------------
+        const Sint16 rawLX = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_LEFTX);
+        const Sint16 rawLY = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_LEFTY);
+        const Sint16 rawRX = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_RIGHTX);
+        const Sint16 rawRY = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_RIGHTY);
+        const Sint16 rawLT = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+        const Sint16 rawRT = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+
+        ctrl.leftX  = ApplyDeadzone(NORM_THUMB(rawLX));
+        ctrl.leftY  = ApplyDeadzone(-NORM_THUMB(rawLY));
+
+        ctrl.rightX = ApplyDeadzone(NORM_THUMB(rawRX));
+        ctrl.rightY = ApplyDeadzone(-NORM_THUMB(rawRY));
+
+        // Triggers (0..32767 -> 0.0..1.0)
+        // Note: Use 32767.0f to hit exactly 1.0f
+        ctrl.leftTrigger  = (f32)rawLT / 32767.0f;
+        ctrl.rightTrigger = (f32)rawRT / 32767.0f;
+
+
+        const bool moved =
+            fabsf(ctrl.leftX) > 0.0f || fabsf(ctrl.leftY) > 0.0f ||
+            fabsf(ctrl.rightX) > 0.0f || fabsf(ctrl.rightY) > 0.0f ||
+            ctrl.leftTrigger > 0.001f || ctrl.rightTrigger > 0.001f;
+
+        if (moved) input.usingController = true;
+    }
+}
+
+void InputSystemSDL::ProcessEvents(const SDL_Event& event)
+{
+    FrameMark;
+    ZoneScoped;
     ImGui_ImplSDL3_ProcessEvent(&event);
 
     const ImGuiIO& io = ImGui::GetIO();
@@ -65,6 +189,52 @@ void InputSystemSDL::ProcessEvent(const SDL_Event& event)
             input.scrollY = static_cast<i64>(event.wheel.y);
         }
         break;
+    case SDL_EVENT_GAMEPAD_ADDED:
+        {
+            ZoneScopedN("Event: Gamepad Added");
+            ProcessGamepadEvents(event);
+            break;
+        }
+    case SDL_EVENT_GAMEPAD_REMOVED:
+        {
+            ZoneScopedN("Event: Gamepad Removed");
+            ProcessGamepadEvents(event);
+            break;
+        }
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+        {
+            ProcessGamepadEvents(event);
+            break;
+        }
+    }
+
+    {
+        ZoneScopedN("Input::UpdateAxes");
+        UpdateGamepadAxes();
+    }
+}
+
+Gamepad::Button InputSystemSDL::MapSDLToEngineKey(const SDL_GamepadButton button)
+{
+    switch (button)
+    {
+    case SDL_GAMEPAD_BUTTON_SOUTH: return Gamepad::A;
+    case SDL_GAMEPAD_BUTTON_EAST: return Gamepad::B;
+    case SDL_GAMEPAD_BUTTON_WEST: return Gamepad::X;
+    case SDL_GAMEPAD_BUTTON_NORTH: return Gamepad::Y;
+    case SDL_GAMEPAD_BUTTON_BACK: return Gamepad::Select;
+    case SDL_GAMEPAD_BUTTON_GUIDE: return Gamepad::ButtonCount;
+    case SDL_GAMEPAD_BUTTON_START: return Gamepad::Start;
+    case SDL_GAMEPAD_BUTTON_LEFT_STICK: return Gamepad::LeftThumb;
+    case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return Gamepad::RightThumb;
+    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return Gamepad::LeftShoulder;
+    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return Gamepad::RightShoulder;
+    case SDL_GAMEPAD_BUTTON_DPAD_UP: return Gamepad::DpadUp;
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return Gamepad::DpadDown;
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return Gamepad::DpadLeft;
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return Gamepad::DpadRight;
+    default: return Gamepad::Unknown;
     }
 }
 
