@@ -65,6 +65,7 @@ struct Application
 
     CameraMode camMode = CameraMode::FreeFly;
     Array<CameraComponent, MAX_SCENE_CAMERAS> sceneCameras;
+    CameraComponent frozenCamComp;
 
     u32 activeCamIdx = 0;
     u32 selectedCameraIdx = 0;

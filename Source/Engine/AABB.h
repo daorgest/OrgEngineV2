@@ -144,7 +144,7 @@ struct Frustum
 	bool IsBoxInFrustum(const AABB& aabb, const glm::mat4& transform) const
 	{
 		// Transform AABB center to World Space
-		const glm::vec3 globalCenter = glm::vec3(transform * glm::vec4(aabb.center, 1.0f));
+		const auto globalCenter = glm::vec3(transform * glm::vec4(aabb.center, 1.0f));
 
 		// Transform AABB extents to World Space (Radius-on-Plane method)
 		const glm::vec3 right = glm::abs(glm::vec3(transform[0])) * aabb.extents.x;
@@ -158,7 +158,7 @@ struct Frustum
 			const f32 dist = glm::dot(glm::vec3(plane), globalCenter) + plane.w;
 
 			// Maximum radius of the box projected onto the plane normal
-			f32 radius = glm::dot(glm::abs(glm::vec3(plane)), globalExtents);
+			const f32 radius = glm::dot(glm::abs(glm::vec3(plane)), globalExtents);
 
 			// If the box is behind the plane by more than its radius, it is outside
 			if (dist < -radius) return false;

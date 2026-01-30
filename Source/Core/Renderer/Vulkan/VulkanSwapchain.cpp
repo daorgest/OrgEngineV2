@@ -194,6 +194,8 @@ void VulkanSwapchain::CreateImages()
     for (u32 i = 0; i < imageCount; ++i)
     {
         images[i] = {vkDev, vkImages[i]};
+        images[i].imageLayout = TextureLayout::Unknown;
+        images[i].currentLayout = TextureLayout::Unknown;
         images[i].textureInfo.dimension = TextureDimension::Texture2D;
         images[i].textureInfo.extent.width = width;
         images[i].textureInfo.extent.height = height;
@@ -224,12 +226,6 @@ void VulkanSwapchain::DestroyImageViews()
 
 void VulkanSwapchain::CreateDepthImage()
 {
-    if (vkDev == nullptr)
-    {
-        LOG(Error, "VulkanSwapchain: Cannot create depth image, device is nullptr.");
-        return;
-    }
-
     TextureInfo depthInfo = {
         .extent = {width, height, 1},
         .format = TextureFormat::D32_SFLOAT,
@@ -238,9 +234,8 @@ void VulkanSwapchain::CreateDepthImage()
 
     depthTexture.Init(vkDev, depthInfo);
     depthTexture.SetName("Swapchain Depth Image");
-    depthTexture.imageLayout = vkDev->useUnifiedLayout ?
-                               TextureLayout::General :
-                               TextureLayout::DepthWrite;
+    depthTexture.imageLayout = TextureLayout::Unknown;
+    depthTexture.currentLayout = TextureLayout::Unknown;
 }
 
 void VulkanSwapchain::CreateShadowMap()

@@ -56,7 +56,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityF
     else if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
         typeStr = "PERFORMANCE";
 
-    Logger::Write(type, std::source_location::current(), "[Vulkan] [{}] ({}): {}",
+    Logger::Write(type, {}, "[Vulkan] [{}] ({}): {}",
                 typeStr,
                 callbackData->pMessageIdName ? callbackData->pMessageIdName : "None",
                 callbackData->pMessage ? callbackData->pMessage : "No message");

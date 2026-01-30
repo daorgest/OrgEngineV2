@@ -150,19 +150,16 @@ void EditorUI::InitEditorStyles()
 
 // For multi-viewport support
 #if ENGINE_PLATFORM_WIN32
-static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc = nullptr, ImU64* outVkSurface = nullptr)
+static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const void* vkAlloc = nullptr,
+                                       ImU64* outVkSurface = nullptr)
 {
     VkWin32SurfaceCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
     createInfo.hwnd = (HWND)vp->PlatformHandleRaw;
     createInfo.hinstance = ::GetModuleHandle(nullptr);
 
-    return vkCreateWin32SurfaceKHR(
-        (VkInstance)vkInst,
-        &createInfo,
-        (const VkAllocationCallbacks*)vkAlloc,
-        (VkSurfaceKHR*)outVkSurface
-    );
+    return vkCreateWin32SurfaceKHR((VkInstance)vkInst, &createInfo, (const VkAllocationCallbacks*)vkAlloc,
+                                   (VkSurfaceKHR*)outVkSurface);
 }
 
 #elif ENGINE_PLATFORM_SDL
@@ -187,21 +184,23 @@ bool EditorUI::Init(Renderer::GPUInterface* instance, Renderer::GPUDevice* devic
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_IsSRGB;
+    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
-    io.ConfigDpiScaleFonts = true;
     io.ConfigDebugHighlightIdConflicts = true;
+    io.ConfigDpiScaleFonts = true;
+    io.ConfigDpiScaleViewports = true;
 
     InitEditorStyles();
 
 #if defined(ENGINE_PLATFORM_WIN32)
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     ImGui_ImplWin32_Init(swapchain->GetWindowHandle());
     ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
     platform_io.Platform_CreateVkSurface = CreateVulkanSurfaceForImGui;
 #elif defined(ENGINE_PLATFORM_SDL)
-    io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
     auto* sdlWin = static_cast<SDL_Window*>(swapchain->GetWindowHandle());
     ImGui_ImplSDL3_InitForVulkan(sdlWin);
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    platform_io.Platform_CreateVkSurface = CreateVulkanSurfaceForImGui;
 #endif
 
 #ifdef VULKAN_BUILD
@@ -273,12 +272,13 @@ void EditorUI::BeginFrame()
 
 void EditorUI::EndFrame()
 {
+    ImGui::Render();
+
     if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
     {
+        ImGui::UpdatePlatformWindows();
         ImGui::RenderPlatformWindowsDefault();
     }
-    ImGui::Render();
-    ImGui::UpdatePlatformWindows();
 }
 
 void EditorUI::Render(Renderer::GPUCommandBuffer* cmd)
@@ -313,7 +313,75 @@ void EditorUI::DrawCameraGizmo(CameraComponent& camComp)
 
 void EditorUI::DrawCameraEditor()
 {
-    // 1. Selection List using the span in state
+    if (state.freezeFrustum && state.frozenCam)
+    {
+        ImGui::SeparatorText("Frustum Debugger");
+
+        bool isFrozen = *state.freezeFrustum;
+
+        if (ImGui::Checkbox("Freeze Frustum in Place (F7)", &isFrozen))
+        {
+            *state.freezeFrustum = isFrozen;
+
+            // If turning ON, snapshot the live camera immediately
+            if (isFrozen)
+            {
+                *state.frozenCam = state.cameraComponents[state.activeCameraIdx];
+            }
+        }
+
+        if (isFrozen)
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), " [EDITING GHOST]");
+
+            CameraComponent* ghost = state.frozenCam;
+            bool changed = false;
+
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.3f, 0.1f, 0.1f, 1.0f));
+
+            // --- Position Edit ---
+            if (ImGui::DragFloat3("Ghost Pos", glm::value_ptr(ghost->position), 0.1f))
+                changed = true;
+
+            // --- Rotation Edit ---
+            if (ImGui::SliderFloat("Ghost Yaw", &ghost->base.yaw, -180.0f, 180.0f))
+                changed = true;
+
+            if (ImGui::SliderFloat("Ghost Pitch", &ghost->base.pitch, -89.0f, 89.0f))
+                changed = true;
+
+            // --- FOV Edit (Fun for testing culling) ---
+            if (ImGui::SliderFloat("Ghost FOV", &ghost->base.fov, 10.0f, 160.0f))
+                changed = true;
+
+            ImGui::PopStyleColor();
+
+            // If we moved the sliders, we MUST rebuild the view/projection matrix
+            if (changed)
+            {
+                const ImGuiViewport* vp = ImGui::GetMainViewport();
+                const f32 aspect = vp->WorkSize.x / vp->WorkSize.y;
+                ghost->base.UpdateVecAndMat(ghost->position, aspect);
+            }
+
+            if (ImGui::Button("Teleport Real Cam to Ghost"))
+            {
+                CameraComponent& active = state.cameraComponents[state.activeCameraIdx];
+                active.position = ghost->position;
+                active.base.yaw = ghost->base.yaw;
+                active.base.pitch = ghost->base.pitch;
+                active.base.fov = ghost->base.fov;
+
+                // Snap the real camera's matrices too
+                const ImGuiViewport* vp = ImGui::GetMainViewport();
+                active.base.UpdateVecAndMat(active.position, vp->WorkSize.x / vp->WorkSize.y);
+            }
+        }
+        ImGui::Separator();
+    }
+
+
     if (ImGui::BeginListBox("##SceneCameras", ImVec2(-FLT_MIN, 120)))
     {
         for (u32 i = 0; i < state.cameraComponents.size(); ++i)
@@ -356,7 +424,9 @@ void EditorUI::DrawCameraEditor()
             targetComp.base.yaw = activeComp.base.yaw;
             targetComp.base.pitch = activeComp.base.pitch;
 
-            targetComp.base.UpdateVecAndMat(targetComp.position, 1.67777777); // yeah ikik
+            const ImGuiViewport* vp = ImGui::GetMainViewport();
+            const f32 aspect = vp->WorkSize.x / vp->WorkSize.y;
+            targetComp.base.UpdateVecAndMat(targetComp.position, aspect);
         }
 
         DrawCameraProperties(targetComp);
@@ -537,11 +607,10 @@ void EditorUI::UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f3
     const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 
     const f32 target = hovered ? maxAlpha : minAlpha;
-    const f32 dt = io.DeltaTime;
 
     if (std::abs(currentAlpha - target) > 0.001f)
     {
-        currentAlpha = std::lerp(currentAlpha, target, std::clamp(speed * dt, 0.0f, 1.0f));
+        currentAlpha = std::lerp(currentAlpha, target, std::clamp(speed * io.DeltaTime, 0.0f, 1.0f));
     }
     else
     {
@@ -549,7 +618,7 @@ void EditorUI::UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f3
     }
 }
 
-void EditorUI::DrawMainOverlay()
+void EditorUI::DrawMainOverlay() const
 {
     if (state.noUI || !state.showMainOverlay) return;
     using namespace ImGui;
@@ -683,7 +752,8 @@ void EditorUI::DrawMainOverlay()
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("Resolution");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%u x %u", state.swapchain->width, state.swapchain->height);
+                const Extent2D resolution = state.swapchain->GetExtent();
+                ImGui::Text("%u x %u", resolution.width, resolution.height);
                 EditorUI::HoverToolTip("Current swapchain/backbuffer resolution");
 
                 ImGui::EndTable();
@@ -699,7 +769,7 @@ void EditorUI::DrawMainOverlay()
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted("Meshes");
+                ImGui::TextUnformatted("Visible Meshes");
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%u", state.sceneStats->totalMeshCount);
 
@@ -709,15 +779,10 @@ void EditorUI::DrawMainOverlay()
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%u", state.sceneStats->drawCallCount);
 
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted("Vertices");
-                ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%u", state.sceneStats->totalVerts);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted("Triangles");
+                ImGui::TextUnformatted("Triangles Rendered");
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%u", state.sceneStats->totalTris);
 
@@ -757,28 +822,28 @@ void EditorUI::DrawMainOverlay()
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("GPU");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%s", state.device->deviceDesc.name.c_str());
+                ImGui::Text("%s", state.device->GetDeviceDesc().name.c_str());
 
                 // Driver Version
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("Driver Ver");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%s", state.device->deviceDesc.driverVersionString.c_str());
+                ImGui::Text("%s", state.device->GetDeviceDesc().driverVersionString.c_str());
 
                 // API Version
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("API");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%s", state.device->deviceDesc.apiName.c_str());
+                ImGui::Text("%s", state.device->GetDeviceDesc().apiName.c_str());
 
                 // VRAM
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("VRAM");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%.1f GB", state.device->deviceDesc.dedicatedVideoMemory / (1024.0f * 1024.0f * 1024.0f));
+                ImGui::Text("%.1f GB", state.device->GetDeviceDesc().dedicatedVideoMemory / Gigabyte);
 
                 ImGui::EndTable();
             }
@@ -1157,7 +1222,7 @@ void EditorUI::UpdateLights(f32 deltaTime)
 void EditorUI::DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam) const
 {
     auto& lights = *state.lights;
-    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList(ImGui::GetMainViewport());
 
     const Camera& cam = activeCam.base;
     const glm::mat4& view = cam.view;

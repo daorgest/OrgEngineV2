@@ -159,22 +159,45 @@ void VulkanCommandBuffer::Reset()
 
 void VulkanCommandBuffer::BeginRendering(const RenderingInfo& info)
 {
+	if (device->useUnifiedLayout)
+	{
+		VkMemoryBarrier2 barrier = {
+			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+			.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+			.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+							VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+							VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+			.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+							 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+							 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+		 };
+
+		VkDependencyInfo dep = {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.memoryBarrierCount = 1,
+			.pMemoryBarriers = &barrier
+		 };
+		vkCmdPipelineBarrier2(cmd, &dep);
+	}
+
 	const u32 actualAttachmentCount = static_cast<u32>(info.colorAttachments.size());
 	Array<VkRenderingAttachmentInfo, MAX_RENDER_TARGETS> colorAttachments = {};
 
 	for (u32 i = 0; i < actualAttachmentCount; i++)
 	{
 		const auto& attachment = info.colorAttachments[i];
-	    auto* vkTex = static_cast<VulkanTexture*>(attachment.texture);
 
+		// Map clear colors from our RenderAttachment structure
 		VkClearValue clear;
+		// The compiler will turn this into a single SIMD instruction in Release
 		std::memcpy(&clear.color.float32, &attachment.clearValue.color, 16);
 
 		colorAttachments[i] = {
 			.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
 			.pNext       = nullptr,
 			.imageView   = static_cast<VulkanTexture*>(attachment.texture)->imageView,
-			.imageLayout = ToVk(vkTex->imageLayout),
+			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 			.loadOp      = ToVk(attachment.loadOp),
 			.storeOp     = ToVk(attachment.storeOp),
 			.clearValue  = clear
@@ -184,13 +207,13 @@ void VulkanCommandBuffer::BeginRendering(const RenderingInfo& info)
 	VkRenderingAttachmentInfo depthAttachment = {};
 	if (info.depthAttachment)
 	{
-		const auto* vkDepth = static_cast<VulkanTexture*>(info.depthAttachment->texture);
+		auto* vkDepth = static_cast<VulkanTexture*>(info.depthAttachment->texture);
 
-		VkClearValue clearValue;
-		clearValue.depthStencil = {
-			info.depthAttachment->clearValue.ds.depth,
-			info.depthAttachment->clearValue.ds.stencil
-		};
+        VkClearValue clearValue;
+        clearValue.depthStencil = {
+            info.depthAttachment->clearValue.ds.depth,
+            info.depthAttachment->clearValue.ds.stencil
+        };
 
 		depthAttachment = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -202,7 +225,7 @@ void VulkanCommandBuffer::BeginRendering(const RenderingInfo& info)
 		};
 	}
 
-	const VkRenderingInfo renderInfo = {
+	VkRenderingInfo renderInfo = {
 		.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
 		.renderArea = {.offset = {0, 0}, .extent = {info.extent.width, info.extent.height}},
 		.layerCount = 1,
@@ -240,21 +263,17 @@ void VulkanCommandBuffer::PushConstants(GPUPipeline* pipeline, ShaderStageFlags 
 	VkShaderStageFlags vkStages = ToVk(stages);
 	vkCmdPushConstants(cmd, vkPipeline->vkLayout, vkStages, offset, size, data);
 }
-// li
+// Internal
 static VkImageLayout ResolveLayout(VkImageLayout layout, bool useUnified)
 {
     // If Unified is OFF, trust the explicit layout.
     if (!useUnified) return layout;
 
-    if (layout == VK_IMAGE_LAYOUT_UNDEFINED ||
-        layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ||
-        layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL ||
-        layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
-    {
-        return layout;
-    }
+    if (layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-    // Collapse everything else (Color, Transfer, ShaderRead) to GENERAL.
+    if (layout == VK_IMAGE_LAYOUT_UNDEFINED) return VK_IMAGE_LAYOUT_UNDEFINED;
+
     return VK_IMAGE_LAYOUT_GENERAL;
 }
 

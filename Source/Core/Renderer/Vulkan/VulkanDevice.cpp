@@ -104,6 +104,8 @@ bool VulkanDevice::Init(VulkanInstance* inst)
                 bestDevice = dev;
                 bestQueueIndex = gfxComputeIndex;
 
+                LOG(Info, "GPU Selected: {}", props.deviceName);
+
                 // Fill descriptor for UI
                 deviceDesc.name = props.deviceName;
                 deviceDesc.vendor = static_cast<GPUVendor>(props.vendorID);

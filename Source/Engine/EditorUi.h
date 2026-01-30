@@ -3,8 +3,11 @@
 //
 
 #pragma once
-#include "VulkanInit.h"
+#include <span>
+
+#include "RenderInterface.h"
 #include "glm/vec3.hpp"
+#include "Tools/Vector.h"
 
 struct CameraComponent;
 
@@ -14,29 +17,24 @@ namespace Platform
 }
 
 class DebugRenderer;
-
-namespace Renderer
-{
-    struct VulkanDevice;
-    struct VulkanSwapchain;
-}
-
 struct DebugUBO;
-struct Extent2D;
 struct LightUBO;
 struct SceneStats;
-struct Camera;
 
 struct State
 {
     Platform::WindowContext* wc = nullptr;
-    Renderer::VulkanDevice* device = nullptr;
-    Renderer::VulkanSwapchain* swapchain = nullptr;
+    Renderer::GPUDevice* device = nullptr;
+    Renderer::GPUSwapchain* swapchain = nullptr;
     DebugRenderer* debugRenderer = nullptr;
     DebugUBO* debugData = nullptr;
     SceneStats* sceneStats = nullptr;
     Vector<LightUBO>* lights;
     std::span<CameraComponent> cameraComponents;
+    bool* freezeFrustum = nullptr;
+    CameraComponent* frozenCam = nullptr;
+    f32* aspectRatio = nullptr;
+
     u32 activeCameraIdx = 0;
     u32 selectedCameraIdx = 0;
     u32 selectedLightIdx = 0;
@@ -80,7 +78,7 @@ struct EditorUI
     static void DrawCameraProperties(CameraComponent& camComp);
     void DrawCameraSpeedPopup(f32 camSpeedPopupTime) const;
     bool DrawMainMenuBar();
-    void DrawMainOverlay();
+    void DrawMainOverlay() const;
     void AppInfoPopup();
 
     void DrawEditorTools();
@@ -89,8 +87,9 @@ struct EditorUI
     void DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam) const;
     void DrawLightEditor();
 
+    // Helpers
     static void UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f32 speed);
     static void HoverToolTip(const char* tooltip);
-    void ClampWindowToViewport();
+    static void ClampWindowToViewport();
 
 };

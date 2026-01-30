@@ -150,7 +150,7 @@ void ApplyModernTheme(HWND hwnd)
     // Custom Title Bar Color (Win11 only)
     if (isDark)
     {
-        COLORREF captionColor = RGB(20, 20, 20); // Match your engine's dark UI
+        COLORREF captionColor = RGB(20, 20, 20);
         DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &captionColor, sizeof(captionColor));
     }
 
@@ -161,6 +161,7 @@ void ApplyModernTheme(HWND hwnd)
 void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mode)
 {
     ZoneScopedN("Init Win32 Platform");
+    ImGui_ImplWin32_EnableDpiAwareness();
     window->windowWidth = width;
     window->windowHeight = height;
     window->monitorWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -371,8 +372,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_DPICHANGED:
         if (window)
-            window->dpiScale = static_cast<f32>(GetDpiForWindow(static_cast<HWND>(window->handle))) /
-                USER_DEFAULT_SCREEN_DPI;
+        {
+            window->dpiScale = static_cast<f32>(GetDpiForWindow(hwnd)) / USER_DEFAULT_SCREEN_DPI;
+
+            const auto* suggestedRect = reinterpret_cast<RECT*>(lParam);
+
+            SetWindowPos(hwnd,
+                         nullptr,
+                         suggestedRect->left,
+                         suggestedRect->top,
+                         suggestedRect->right - suggestedRect->left,
+                         suggestedRect->bottom - suggestedRect->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
         break;
     case WM_SETFOCUS:
         if (window)
@@ -509,9 +521,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_SIZE:
         {
             if (window == nullptr) break;
+            const u32 w = LOWORD(lParam);
+            const u32 h = HIWORD(lParam);
 
-
-            if (wParam == SIZE_MINIMIZED)
+            if (wParam == SIZE_MINIMIZED || w == 0 || h == 0)
             {
                 window->displayState.isMinimized = true;
                 window->displayState.isResized = false;
@@ -519,14 +532,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             else
             {
                 window->displayState.isMinimized = false;
-                window->displayState.isResized = true;
+                // Only flag resize if actual dimensions changed
+                if (window->windowWidth != w || window->windowHeight != h)
+                {
+                    window->displayState.isResized = true;
+                    window->windowWidth = w;
+                    window->windowHeight = h;
+                }
             }
-
-            window->windowWidth = LOWORD(lParam);
-            window->windowHeight = HIWORD(lParam);
             return 0;
         }
-
+    case WM_GETMINMAXINFO:
+        {
+            auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+            info->ptMinTrackSize.x = 320;
+            info->ptMinTrackSize.y = 240;
+            return 0;
+        }
     default:
         return DefWindowProc(hwnd, msg, wParam, lParam);
     }

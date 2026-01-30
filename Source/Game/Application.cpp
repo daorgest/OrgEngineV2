@@ -42,6 +42,8 @@ bool Application::Init()
 		editorUI.state.sceneStats    = &sceneStats;
 		editorUI.state.lights        = &lights;
 		editorUI.state.debugData     = &debugData;
+	    editorUI.state.freezeFrustum = &freezeFrustum;
+	    editorUI.state.frozenCam     = &frozenCamComp;
 		editorUI.state.cameraSpeed   = cameraSpeed;
 
 		editorUI.Init(&instance, &device, &swapchain);
@@ -334,7 +336,18 @@ void Application::UpdateCamera()
         swapchain.needsRecreation = true;
     }
     if (input.IsActionDown(Action::ToggleUI)) editorUI.state.noUI = !editorUI.state.noUI;
-    if (input.IsActionDown(Action::ToggleFrustum)) freezeFrustum = !freezeFrustum;
+    if (input.IsActionDown(Action::ToggleFrustum))
+    {
+        freezeFrustum = !freezeFrustum;
+
+        if (freezeFrustum)
+        {
+            // Now we can move the active camera freely without dragging the frustum box with us.
+            frozenCamComp = sceneCameras[activeCamIdx];
+
+            frustumIdx = activeCamIdx;
+        }
+    }
     if (input.IsActionDown(Action::CycleCamera))
     {
         activeCamIdx = (activeCamIdx + 1) % MAX_SCENE_CAMERAS;
@@ -475,6 +488,7 @@ void Application::UpdateSceneUBO()
     }
 
     aspectRatio = static_cast<f32>(swapchain.width) / static_cast<f32>(swapchain.height);
+
     sceneData.view = activeCam.base.view;
     sceneData.proj = activeCam.base.projection;
     camUBO.position = finalEyePos;
@@ -500,12 +514,12 @@ void Application::UpdateSceneUBO()
 void Application::QueueFrustumVisualizer(u32 camIdx, const glm::vec4& color)
 {
     if (!debugRenderer.enabled) return;
-    // if (camIdx == activeIdx && !freezeFrustum) return;
+    if (camIdx == activeCamIdx && !freezeFrustum) return;
 
-    const Camera& cam = sceneCameras[camIdx].base;
+    const Camera& cam = freezeFrustum ? frozenCamComp.base : sceneCameras[camIdx].base;
 
-    constexpr f32 visualFar = 15.0f;
-    const glm::mat4 visualProj = glm::perspective(cam.fov, aspectRatio, cam.nearPlane, visualFar);
+    constexpr f32 visualFar = 25.0f;
+    const glm::mat4 visualProj = glm::perspectiveRH_ZO(Radians(cam.fov), aspectRatio, cam.nearPlane, visualFar);
     const glm::mat4 invVP = glm::inverse(visualProj * cam.view);
     // VULKAN NDC REQUIREMENT:
     // X: [-1, 1], Y: [-1, 1], Z: [0, 1]
@@ -570,7 +584,8 @@ void Application::RenderScene(u32 imageIndex)
 
 	const auto cpuStart = std::chrono::high_resolution_clock::now();
 
-    CameraComponent& activeCam = sceneCameras[activeCamIdx];
+    const CameraComponent& activeCam = sceneCameras[activeCamIdx];
+    const Camera& cullingCam = freezeFrustum ? frozenCamComp.base : activeCam.base;
 
     cmd.BeginDebugLabel("Models", 0.4f, 0.4f, 0.9f);
 
@@ -578,7 +593,7 @@ void Application::RenderScene(u32 imageIndex)
     frame->queryPool.WriteTimestamp(&cmd, 0);
 #endif
 
-    sceneRenderer.PrepareFrame(&windowContext, &activeCam.base, freezeFrustum);
+    sceneRenderer.PrepareFrame(&windowContext, &cullingCam, aspectRatio);
     sceneRenderer.RenderModels(frame->GetCommandBuffer(), frameIndex, sceneStats);
     cmd.EndDebugLabel();
 
@@ -588,10 +603,11 @@ void Application::RenderScene(u32 imageIndex)
 
     cmd.BeginDebugLabel("DebugGizmos", 1.0f, 1.0f, 0.0f);
     QueueFrustumVisualizer(frustumIdx, glm::vec4(0.0f, 1.0f, 1.0f, 1.0f));
-	if (debugRenderer.enabled)
-	{
-		debugRenderer.Flush(&cmd, frameIndex);
-	}
+    if (debugRenderer.enabled)
+    {
+        debugRenderer.Flush(&cmd, frameIndex);
+    }
+
     cmd.EndDebugLabel();
 #ifdef ENABLE_GPU_TIMING
 	frame->queryPool.WriteTimestamp(&cmd, 1);

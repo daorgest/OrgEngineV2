@@ -68,9 +68,9 @@ void SceneRenderer::Init(SceneRenderConfig& cfg)
 }
 
 
-void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Camera* camera, bool freeze)
+void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Camera* camera, f32 aspectRatio)
 {
-    if (!window || !camera) return;
+    if (!window) return;
 
     standardBucket.clear();
     transparentBucket.clear();
@@ -81,11 +81,9 @@ void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Ca
         batch.instanceData.clear();
     }
 
-    if (!freeze)
-    {
-        const f32 aspect = static_cast<f32>(window->windowWidth) / static_cast<f32>(window->windowHeight);
-        frustum.Update(camera->GetViewProjectionMatrix(aspect));
-    }
+    // Calculate what the matrix SHOULD be for this frame
+    const glm::mat4 newVP = camera->projection * camera->view;
+    frustum.Update(newVP);
 
     // Sorting models to their respective buckets before presentation :3
     for (const auto& inst : *config.models)
@@ -153,7 +151,6 @@ void SceneRenderer::DrawStandardObject(const Renderer::ModelComponent* inst, Ren
         dc.cmd->BindDescriptorSet(&materialSet, 1, dc.activePipeline);
         dc.lastMaterialSet = materialSet;
     }
-    // 2. Skip redundant Index Buffer Binding
     if (model->indexBuffer.buffer != (dc.lastIndexBuffer ? dc.lastIndexBuffer->buffer : nullptr))
     {
         dc.cmd->BindIndexBuffer(&model->indexBuffer, 0);
@@ -231,21 +228,26 @@ void SceneRenderer::DrawInstancedBatch(Renderer::VulkanModel* model, u32 count, 
 
 void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 frameIndex, SceneStats& stats)
 {
-    if (!config.models || (standardBucket.empty() && transparentBucket.empty() && totalVisibleInstances == 0)) return;
-
-    const u32 resIdx = frameIndex % MAX_FRAME_OVERLAP;
     stats.drawCallCount = 0;
     stats.totalTris = 0;
+    stats.totalMeshCount = 0;
+
+    if (!config.models || (standardBucket.empty() && transparentBucket.empty() && totalVisibleInstances == 0)) return;
+
+    stats.totalMeshCount = static_cast<u32>(standardBucket.size() + transparentBucket.size() + totalVisibleInstances);
+
+    const u32 resIdx = frameIndex % MAX_FRAME_OVERLAP;
 
     megaStagingData.clear();
     megaStagingData.resize(totalVisibleInstances);
 
     size_t offset = 0;
-    for (const auto& batch : instanceBucket) {
+    for (const auto& batch : instanceBucket)
+    {
         if (batch.instanceData.empty()) continue;
 
         const size_t batchSize = batch.instanceData.size();
-        std::memcpy(megaStagingData.data() + offset,batch.instanceData.data(), batchSize * sizeof(GPUInstanceSSBO));
+        std::memcpy(megaStagingData.data() + offset, batch.instanceData.data(), batchSize * sizeof(GPUInstanceSSBO));
         offset += batchSize;
     }
 
@@ -258,11 +260,14 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
         .frameIndex = resIdx
     };
 
-    if (!megaStagingData.empty()) {
-        instanceBuffer->UpdateBinding(resIdx, 0, megaStagingData.data(), megaStagingData.size() * sizeof(GPUInstanceSSBO));
+    if (!megaStagingData.empty())
+    {
+        instanceBuffer->UpdateBinding(resIdx, 0, megaStagingData.data(),
+                                      megaStagingData.size() * sizeof(GPUInstanceSSBO));
     }
 
-    auto BindGlobalSets = [&](Renderer::VulkanPipeline* pipeline) {
+    auto BindGlobalSets = [&](Renderer::VulkanPipeline* pipeline)
+    {
         cmd->BindPipeline(pipeline);
         dc.activePipeline = pipeline;
 
@@ -270,7 +275,8 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
         cmd->BindDescriptorSet(&config.sceneUBO->descriptorSets[resIdx], 0, pipeline);
 
         // Set 2: Environment/Skybox
-        if (config.skybox) {
+        if (config.skybox)
+        {
             auto skySet = config.skybox->GetDescriptorSet();
             if (skySet) cmd->BindDescriptorSet(&skySet, 2, pipeline);
         }
@@ -279,7 +285,7 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
         instanceBuffer->Bind(cmd, *pipeline, resIdx);
 
         // Set 1 is NOT bound here because it is model-specific!
-        dc.lastMaterialSet = { VK_NULL_HANDLE };
+        dc.lastMaterialSet = {VK_NULL_HANDLE};
         dc.lastIndexBuffer = nullptr;
     };
 
@@ -290,15 +296,18 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
 
     // Draw Instanced Mega-Buffer
     u32 globalInstanceOffset = 0;
-    for (const auto& batch : instanceBucket) {
+    for (const auto& batch : instanceBucket)
+    {
         const u32 instanceCount = static_cast<u32>(batch.instanceData.size());
         if (instanceCount == 0) continue;
 
-    	if (config.debugRenderer && config.debugRenderer->enabled) {
-    		for (const auto& data : batch.instanceData) {
-    			config.debugRenderer->QueueBox(data.worldMatrix, batch.model->modelBounds);
-    		}
-    	}
+        if (config.debugRenderer && config.debugRenderer->enabled)
+        {
+            for (const auto& data : batch.instanceData)
+            {
+                config.debugRenderer->QueueBox(data.worldMatrix, batch.model->modelBounds);
+            }
+        }
 
         // Pass the starting index in the SSBO to the draw call
         DrawInstancedBatch(batch.model, instanceCount, globalInstanceOffset, dc);
@@ -306,7 +315,8 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
         globalInstanceOffset += instanceCount;
     }
 
-    if (!transparentBucket.empty()) {
+    if (!transparentBucket.empty())
+    {
         BindGlobalSets(transparentPipeline.get());
         for (const auto* inst : transparentBucket) DrawStandardObject(inst, dc);
     }
