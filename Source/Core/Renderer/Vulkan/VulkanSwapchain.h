@@ -32,9 +32,6 @@ namespace Renderer
         {
             return {width, height};
         }
-
-        [[nodiscard]] TextureFormat GetFormat() const override;
-
         // Vulkan-specific methods
         void CreateImages();
         void DestroyImageViews();

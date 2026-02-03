@@ -77,6 +77,7 @@ struct EditorUI
     void DrawCameraEditor();
     static void DrawCameraProperties(CameraComponent& camComp);
     void DrawCameraSpeedPopup(f32 camSpeedPopupTime) const;
+    static void DrawDebugViewPopup(f32 debugViewPopupTime, DebugView currentView);
     bool DrawMainMenuBar();
     void DrawMainOverlay() const;
     void AppInfoPopup();

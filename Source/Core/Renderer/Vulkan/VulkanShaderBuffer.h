@@ -7,6 +7,7 @@
 
 #include "RendererTypes.h"
 #include "VulkanDescriptors.h"
+#include "VulkanBuffer.h"
 #include "Tools/Array.h"
 #include "Tools/Vector.h"
 

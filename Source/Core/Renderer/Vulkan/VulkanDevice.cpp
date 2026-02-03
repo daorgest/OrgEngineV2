@@ -5,8 +5,11 @@
 #include "VulkanDevice.h"
 
 #include "VulkanBuffer.h"
+#include "VulkanCommandBuffer.h"
 #include "VulkanInit.h"
+#include "VulkanShader.h"
 #include "Tools/Array.h"
+#include "Tools/FileManager.h"
 
 static Array requiredDeviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -290,6 +293,15 @@ bool VulkanDevice::Init(VulkanInstance* inst)
     return true;
 }
 
+void VulkanDevice::ImmediateSubmit(const std::function<void(GPUCommandBuffer*)> func)
+{
+    immediateSubmitter.Submit([&](VkCommandBuffer vkCmd) {
+        VulkanCommandBuffer wrapper;
+        wrapper.InitFromHandle(this, vkCmd);
+        func(&wrapper);
+    }, "RHI Immediate");
+}
+
 std::unique_ptr<GPUTexture> VulkanDevice::CreateTexture(TextureInfo& info)
 {
     return std::make_unique<VulkanTexture>(this, info);
@@ -303,6 +315,23 @@ std::unique_ptr<GPUSampler> VulkanDevice::CreateSampler(SamplerInfo& info)
 std::unique_ptr<GPUBuffer> VulkanDevice::CreateBuffer(BufferInfo& info)
 {
     return std::make_unique<VulkanBuffer>(this, info);
+}
+
+std::unique_ptr<GPUShader> VulkanDevice::CreateShader(std::span<const u32> code)
+{
+    return std::make_unique<VulkanShader>(this, code);
+}
+
+std::unique_ptr<GPUShader> VulkanDevice::CreateShaderPath(const char* path)
+{
+    auto code = FileManager::LoadSPV(path);
+
+    if (!code) {
+        LOG(Error, "Failed to create shader from path: {}", path);
+        return nullptr;
+    }
+
+    return CreateShader(*code);
 }
 
 void ImmediateSubmitter::Init(VulkanDevice* device)

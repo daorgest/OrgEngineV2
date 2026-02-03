@@ -34,4 +34,7 @@ namespace Constants
         {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics}
     };
 
+    inline Array<Binding, 1> Compute = {
+        {0, DescriptorType::StorageImage, ShaderStage::Compute, 0, 1, false}
+    };
 }

@@ -5,12 +5,20 @@
 #pragma once
 #ifdef ENGINE_PLATFORM_WIN32
 #include <GameInput.h>
+#ifndef GAMEINPUT_API_VERSION
+#define GAMEINPUT_API_VERSION 0
+#endif
 
 #include "Platform.h"
 #include "Tools/Array.h"
-struct Input;
 
+#if GAMEINPUT_API_VERSION == 1
+namespace GI = GameInput::v1;
+#elif GAMEINPUT_API_VERSION == 2
 namespace GI = GameInput::v2;
+#elif GAMEINPUT_API_VERSION == 3
+namespace GI = GameInput::v3;
+#endif
 
 struct InputSysGameInput
 {

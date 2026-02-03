@@ -18,13 +18,10 @@ struct BBoxPush
 };
 static_assert(sizeof(BBoxPush) == 112, "Unexpected padding in BBoxPush!");
 
-struct ArenaAllocator;
-
-
 class DebugRenderer
 {
 public:
-	bool Initialize(Renderer::VulkanDevice* dev, ArenaAllocator* arena, Renderer::VulkanShaderBuffer* sceneUBO, Renderer::DescriptorAllocatorGrowable* globalDescriptorAllocator, bool depthTest = true, bool alwaysOnTop = false);
+	bool Initialize(Renderer::GPUDevice* dev, Renderer::VulkanShaderBuffer* sceneUBO, Renderer::DescriptorAllocatorGrowable* globalDescriptorAllocator, bool depthTest = true, bool alwaysOnTop = false);
 	void QueueBox(const glm::mat4& model, const AABB& aabb);
 	void Flush(Renderer::GPUCommandBuffer* cmd, u32 frameIndex);
 	void ClearQueue() { drawQueue.clear(); }
@@ -35,9 +32,8 @@ public:
 	void SetDepthBias(f32 bias) { depthBias = bias; }
 	void SetFlags(u32 f) { flags = f; }
 
-	Renderer::VulkanDevice* device = nullptr;
-	Renderer::VulkanShader* shader = nullptr;
-	Renderer::VulkanShaderBuffer* instanceBuffer = nullptr;    // arena-owned
+	std::unique_ptr<Renderer::GPUShader> shader;
+	std::unique_ptr<Renderer::VulkanShaderBuffer> instanceBuffer;    // internal
 	Renderer::VulkanShaderBuffer* sceneUBO = nullptr;          // external
 	Renderer::VulkanPipeline pipeline;
 

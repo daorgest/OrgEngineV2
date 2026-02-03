@@ -28,7 +28,7 @@ struct SphericalHarmonics
 class SkyboxManager
 {
 public:
-	bool Initialize(Renderer::VulkanDevice* device, ArenaAllocator* arena);
+	bool Initialize(Renderer::VulkanDevice* device);
 
 	[[nodiscard]] Renderer::VulkanTexture CreateCubeMapFromSource(CubeSource source);
 	Renderer::VulkanTexture               CreateHDRTexture(const char* path) const;
@@ -43,17 +43,16 @@ public:
 	Renderer::VulkanTexture& GetCubemap() { return cubemap; }
 
 private:
-	auto CreateCubemap() -> bool;
+	bool CreateCubemap();
 	void CreateSampler();
 	bool CreateShaderAndPipeline();
 
 	Renderer::VulkanDevice* devicePtr = nullptr;
-	ArenaAllocator* arena = nullptr;
 
 	// Skybox resources
 	Renderer::VulkanTexture cubemap;
 	Renderer::VulkanSampler sampler;
-	Renderer::VulkanShader* shader = nullptr;
+	std::unique_ptr<Renderer::GPUShader> shader;
 	Renderer::VulkanPipeline pipeline;
 	Renderer::DescriptorLayout layout;
 	Renderer::DescriptorSet descriptorSet;

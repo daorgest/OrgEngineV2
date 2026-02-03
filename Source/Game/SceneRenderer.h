@@ -25,8 +25,6 @@ class SkyboxManager;
 struct SceneRenderConfig
 {
 	Renderer::VulkanDevice* device = nullptr; // will abstract soon, but vulkan pipeline depends on it
-	Renderer::GPUShader* vertexShader = nullptr;
-	Renderer::GPUShader* fragmentShader = nullptr;
 	Renderer::DescriptorAllocatorGrowable* descriptorAllocator;
 	Renderer::VulkanShaderBuffer* sceneUBO = nullptr;
 	SkyboxManager* skybox = nullptr;
@@ -63,6 +61,8 @@ private:
 
 	Frustum frustum;
 	SceneRenderConfig config;
+
+    std::unique_ptr<Renderer::GPUShader> sceneShader;
 
     // Pipelines for the render states
 	std::unique_ptr<Renderer::VulkanPipeline> opaquePipeline;

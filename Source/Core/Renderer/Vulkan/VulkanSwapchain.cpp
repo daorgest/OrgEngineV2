@@ -169,19 +169,6 @@ GPUTexture* VulkanSwapchain::GetCurrentImage()
 }
 
 
-TextureFormat VulkanSwapchain::GetFormat() const
-{
-    // Convert VkFormat to TextureFormat
-    switch (surfaceFormat.format)
-    {
-    case VK_FORMAT_B8G8R8A8_SRGB: return TextureFormat::BGRA8_SRGB;
-    case VK_FORMAT_B8G8R8A8_UNORM: return TextureFormat::BGRA8_UNORM;
-    case VK_FORMAT_R8G8B8A8_SRGB: return TextureFormat::RGBA8_SRGB;
-    case VK_FORMAT_R8G8B8A8_UNORM: return TextureFormat::RGBA8_UNORM;
-    default: return TextureFormat::RGBA8_SRGB;
-    }
-}
-
 void VulkanSwapchain::CreateImages()
 {
     imageCount = 0;
@@ -346,7 +333,7 @@ Result<u32> VulkanSwapchain::AcquireNextImage(GPUSemaphore* semaphore, u32& imag
     if (!semaphore) return std::unexpected(VulkanInvalidState);
     const auto vkSemaphore = static_cast<VulkanSemaphore*>(semaphore)->semaphore;
 
-    VkResult result = vkAcquireNextImageKHR(vkDev->device, swapchain, UINT64_MAX,
+    const VkResult result = vkAcquireNextImageKHR(vkDev->device, swapchain, UINT64_MAX,
                                             vkSemaphore, VK_NULL_HANDLE, &imageIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR)

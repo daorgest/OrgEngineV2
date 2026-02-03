@@ -45,8 +45,10 @@ namespace Renderer
         bool Init(VulkanInstance* inst);
 
         // Immediate command submission (RHI template in GPUDevice)
+        void ImmediateSubmit(std::function<void(GPUCommandBuffer*)> func) override;
+
         template <typename Func>
-        void ImmediateSubmit(Func&& function, const char* debugLabel = nullptr)
+        void InternalImmediateSubmit(Func&& function, const char* debugLabel = nullptr)
         {
             immediateSubmitter.Submit(std::forward<Func>(function), debugLabel);
         }
@@ -60,6 +62,8 @@ namespace Renderer
         std::unique_ptr<GPUTexture> CreateTexture(TextureInfo& info) override;
         std::unique_ptr<GPUSampler> CreateSampler(SamplerInfo& info) override;
         std::unique_ptr<GPUBuffer> CreateBuffer(BufferInfo& info) override;
+        std::unique_ptr<GPUShader> CreateShader(std::span<const u32> code) override;
+        std::unique_ptr<GPUShader> CreateShaderPath(const char* path) override;
 
         // Public Vulkan handles for compatibility
         VkDevice device = VK_NULL_HANDLE;

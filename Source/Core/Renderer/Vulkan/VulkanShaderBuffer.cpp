@@ -16,12 +16,13 @@
 
 using namespace Renderer;
 
-static auto SortBindingsByBinding(std::span<Binding> bindings) -> void
+// Insertion sort :3
+template<typename T>
+static auto SortBindingsByBinding(std::span<T> bindings) -> void
 {
-	const u32 n = bindings.size();
-	for (u32 i = 1; i < n; ++i)
+	for (u32 i = 1; i < bindings.size(); ++i)
 	{
-		const Binding key = bindings[i];
+		const T key = bindings[i];
 		u32 j = i;
 		while (j > 0 && bindings[j - 1].binding > key.binding)
 		{
@@ -32,8 +33,7 @@ static auto SortBindingsByBinding(std::span<Binding> bindings) -> void
 	}
 }
 
-VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc,
-                                       const DescriptorSetLayoutDesc& desc)
+VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc)
 {
 	this->device = dev;
 	this->allocator = alloc;
@@ -44,8 +44,6 @@ VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGro
 
 	DescriptorLayoutBuilder layoutBuilder;
 	u32 maxBinding = 0;
-	Vector<Binding> bufferOnlyBindings;
-
 	for (const auto& b : desc.bindings)
 	{
 		layoutBuilder.AddBinding(b);
@@ -54,37 +52,40 @@ VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGro
 		// ONLY allocate buffers for actual buffer types
 		if (b.type == DescriptorType::UniformBuffer || b.type == DescriptorType::StorageBuffer)
 		{
-			bufferOnlyBindings.push_back(b);
+		    slotCount++;
 		}
 	}
 
 	// Builder now handles internal binding flags (bindless, stageFlags, etc.)
 	layout = layoutBuilder.Build(device);
 
-	// 2. Slot Mapping
-	slotCount = static_cast<u32>(bufferOnlyBindings.size());
-	const u32 bindingTableSize = maxBinding + 1;
-	bindingToSlot.resize(bindingTableSize);
-	for (u32 i = 0; i < bindingTableSize; ++i) bindingToSlot[i] = UINT32_MAX;
-
-	for (u32 slot = 0; slot < slotCount; ++slot)
-	{
-		bindingToSlot[bufferOnlyBindings[slot].binding] = slot;
-	}
+    // 2. Initialize Mapping Table
+    const u32 bindingTableSize = maxBinding + 1;
+    bindingToSlot.resize(bindingTableSize);
+    for (u32 i = 0; i < bindingTableSize; ++i)
+    {
+        bindingToSlot[i] = UINT32_MAX;
+    }
 
 	// 3. Resource Allocation
 	const u32 totalBufferCount = MAX_FRAME_OVERLAP * slotCount;
 	buffers.resize(totalBufferCount);
 
-	for (u32 f = 0; f < MAX_FRAME_OVERLAP; ++f)
+    u32 currentSlot = 0;
+	for (const auto& b : desc.bindings)
 	{
-		for (u32 slot = 0; slot < slotCount; ++slot)
-		{
-			const Binding& b = desc.bindings[slot];
-			const u32 linearIndex = (f * slotCount) + slot;
+	    if (b.type == DescriptorType::UniformBuffer || b.type == DescriptorType::StorageBuffer)
+	    {
+	        bindingToSlot[b.binding] = currentSlot;
 
-			buffers[linearIndex] = VulkanBuffer(device, ToPreset(b.type), b.size);
-		}
+	        for (u32 f = 0; f < MAX_FRAME_OVERLAP; ++f)
+	        {
+	            // Note: index() uses currentSlot via bindingToSlot
+	            const u32 linearIndex = (f * slotCount) + currentSlot;
+	            buffers[linearIndex] = VulkanBuffer(device, ToPreset(b.type), b.size);
+	        }
+	        currentSlot++;
+	    }
 	}
 }
 

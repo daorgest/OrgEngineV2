@@ -362,7 +362,6 @@ struct GpuRasterDesc
     SampleCount sampleCount = SampleCount::X1;
     bool alphaToCoverage = false;
 
-
     Vector<TextureFormat> colorFormats;
 
     // Presets
@@ -833,6 +832,8 @@ inline constexpr DebugViewMode kDebugViews[] = {
     {DebugView::WorldPos,  "World Position"},
     {DebugView::UVs,       "UV Coordinates"},
 };
+constexpr i32 debugViewCount = std::size(kDebugViews);
+
 inline const char* DebugViewToString(DebugView v)
 {
     for (const auto& [value, label] : kDebugViews) if (value == v) return label;

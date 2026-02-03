@@ -88,7 +88,6 @@ namespace Renderer
 	struct GPUShader
 	{
 		virtual ~GPUShader() = default;
-		virtual Result<void> Init(GPUDevice* device, std::span<const u32> code, ShaderFormat format) = 0;
 	};
 
 	/// Shader hot-reload manager (optional feature)
@@ -140,9 +139,15 @@ namespace Renderer
         virtual void Destroy() = 0;
         virtual void WaitIdle() = 0;
 
+
+        // Funny Immediate submit
+        virtual void ImmediateSubmit(std::function<void(GPUCommandBuffer*)> func) = 0;
+
         // creations
         virtual std::unique_ptr<GPUTexture> CreateTexture(TextureInfo& info) = 0;
         virtual std::unique_ptr<GPUSampler> CreateSampler(SamplerInfo& info) = 0;
+        virtual std::unique_ptr<GPUShader> CreateShader(std::span<const u32> code) = 0;
+        virtual std::unique_ptr<GPUShader> CreateShaderPath(const char* path) = 0;
         virtual std::unique_ptr<GPUBuffer> CreateBuffer(BufferInfo& info) = 0;
 
         [[nodiscard]] virtual const GPUDeviceDesc& GetDeviceDesc() const = 0;
@@ -314,7 +319,6 @@ namespace Renderer
 
 		[[nodiscard]] virtual const Extent2D GetExtent() const = 0;
         [[nodiscard]] virtual f32 GetAspectRatio() const = 0;
-		[[nodiscard]] virtual TextureFormat GetFormat() const = 0;
         virtual void* GetNativeFormat() const { return nullptr; }
 
         virtual Platform::WindowHandle GetWindowHandle() const = 0;

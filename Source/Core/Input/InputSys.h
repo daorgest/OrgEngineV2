@@ -21,7 +21,7 @@ namespace Mouse
         Button5,
         ButtonCount
     };
-}
+} // namespace Mouse
 
 namespace Gamepad
 {
@@ -160,8 +160,7 @@ struct Input
         return active;
     }
 
-    f32 cursorX = 0.0f;
-    f32 cursorY = 0.0f;
+    f32 cursorX = 0.0f, cursorY = 0.0f;
     f64 xrel = 0.0f, yrel = 0.0f;
     f64 lastX = 0.0f, lastY = 0.0f;
     i64 scrollX = 0, scrollY = 0;

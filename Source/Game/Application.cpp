@@ -75,6 +75,9 @@ bool Application::Init()
 	// Texture Defaults
 	texDefaults.Init(&device);
 
+    // Debug Renderer
+    debugRenderer.Initialize(&device, sceneUBO.get(), &globalDescriptorAlloc);
+
 	// // Main model
 	// {
 	// 	ZoneScopedN("LoadModel From Source!");
@@ -93,36 +96,17 @@ bool Application::Init()
 
 	// DrawLoadingSplash("Building Skybox...");
 
-	if (!skybox.Initialize(&device, &renderArena))
+	if (!skybox.Initialize(&device))
 	{
 		LOG(Warning, "Skybox initialization failed - Skybox will not be rendered");
 	}
 
 	// DrawLoadingSplash("Creating PBR Sphere Grid...");
-
 	CreatePBRSphereGrid();
 
-	// DrawLoadingSplash("Compiling Shaders...");
-	auto codeResult = Renderer::VulkanShader::ReadShaderFile("Shaders/scene.spv");
-	if (!codeResult)
-	{
-		LOG(Error, "Failed to load shader: Shaders/scene.spv ({})", static_cast<i32>(codeResult.error()));
-		return false;
-	}
-    CHECK_RESULT(sceneShader.Init(&device, codeResult.value()));
-
-	// DrawLoadingSplash("Initializing Debug Renderer...");
-	if (!debugRenderer.Initialize(&device, &renderArena, sceneUBO.get(), &globalDescriptorAlloc, true, false))
-	{
-		LOG(Warning, "Debug renderer initialization failed - AABB debugging disabled");
-	}
-
 	// Initialize Scene Renderer - abstracts all model rendering logic
-
 	SceneRenderConfig renderConfig = {
 		.device = &device,
-		.vertexShader = &sceneShader,
-		.fragmentShader = &sceneShader,
 		.descriptorAllocator = &globalDescriptorAlloc,
 		.sceneUBO = sceneUBO.get(),
 		.skybox = &skybox,
@@ -357,25 +341,8 @@ void Application::UpdateCamera()
     }
     if (input.IsActionDown(Action::CycleDebugView))
     {
-        // 1. Calculate the number of elements in your array
-        constexpr i32 viewCount = std::size(kDebugViews);
-
-        // 2. Find current index
-        i32 currentIdx = 0;
-        for (i32 i = 0; i < viewCount; i++)
-        {
-            if (kDebugViews[i].value == debugData.debugMode)
-            {
-                currentIdx = i;
-                break;
-            }
-        }
-
-        // 3. Modulo math to cycle
-        i32 nextIdx = (currentIdx + 1) % viewCount;
-
-        // 4. Update the actual engine state
-        debugData.debugMode = kDebugViews[nextIdx].value;
+        debugData.debugMode = static_cast<DebugView>((static_cast<i32>(debugData.debugMode) + 1) % debugViewCount);
+        debugViewPopupTime = 1.5f;
     }
 
 
@@ -416,6 +383,7 @@ void Application::UpdateCamera()
         cameraSpeedPopupTime = 1.5f;
     }
     cameraSpeedPopupTime = std::max(0.0f, cameraSpeedPopupTime - dt);
+    debugViewPopupTime  = std::max(0.0f, debugViewPopupTime - dt);
 
     activeCam.base.UpdateVecAndMat(renderPos, aspectRatio);
 
@@ -540,24 +508,27 @@ void Application::RenderScene(u32 imageIndex)
 
 	Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
 	Renderer::GPUTexture* depthImage = &swapchain.depthTexture;
-    Renderer::GPUTexture* shadowmap = &swapchain.shadowTexture; // not avaul yet
 
-    cmd.TransitionLayout(shadowmap, TextureLayout::DepthWrite);
-    auto shadowDepthAttach = Renderer::RenderAttachment::Depth(shadowmap, LoadOP::Clear, 1.0f);
+	// {
+	//     Renderer::GPUTexture* shadowMap = &swapchain.shadowTexture; // not available yet
+	//     cmd.TransitionLayout(shadowMap, TextureLayout::DepthWrite);
+ //        auto shadowDepthAttach = Renderer::RenderAttachment::Depth(shadowMap, LoadOP::Clear, 1.0f);
+ //
+ //        constexpr Extent2D shadowExtent = { 2048, 2048 };
+ //
+ //        Renderer::RenderingInfo shadowRenderInfo = {
+ //            .extent = shadowExtent,
+ //            .colorAttachments = {}, // Zero color attachments for depth-only pass
+ //            .depthAttachment = &shadowDepthAttach
+ //         };
+ //        cmd.BeginDebugLabel("Shadow Pass", 0.1f, 0.1f, 0.1f);
+ //        cmd.BeginRendering(shadowRenderInfo);
+ //        cmd.SetViewport({0.0f, 0.0f, static_cast<f32>(shadowExtent.width), static_cast<f32>(shadowExtent.height), 0.0f, 1.0f});
+ //        cmd.SetScissor(0, 0, shadowExtent.width, shadowExtent.height);
+ //        cmd.EndRendering();
+ //        cmd.EndDebugLabel();
+	// }
 
-    constexpr Extent2D shadowExtent = { 2048, 2048 };
-
-    Renderer::RenderingInfo shadowRenderInfo = {
-        .extent = shadowExtent,
-        .colorAttachments = {}, // Zero color attachments for depth-only pass
-        .depthAttachment = &shadowDepthAttach
-     };
-    cmd.BeginDebugLabel("Shadow Pass", 0.1f, 0.1f, 0.1f);
-    cmd.BeginRendering(shadowRenderInfo);
-    cmd.SetViewport({0.0f, 0.0f, static_cast<f32>(shadowExtent.width), static_cast<f32>(shadowExtent.height), 0.0f, 1.0f});
-    cmd.SetScissor(0, 0, shadowExtent.width, shadowExtent.height);
-    cmd.EndRendering();
-    cmd.EndDebugLabel();
 
 
 #ifdef ENABLE_GPU_TIMING
@@ -671,6 +642,7 @@ void Application::RenderImGui(u32 imageIndex)
         }
 
         // --- Transient UI ---
+        editorUI.DrawDebugViewPopup(debugViewPopupTime, debugData.debugMode);
         editorUI.DrawCameraSpeedPopup(cameraSpeedPopupTime);
     }
 

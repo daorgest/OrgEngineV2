@@ -262,36 +262,31 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Target
 {
-
     MaterialProperties mat = materialBuffer[input.materialIndex];
-
-
-    // Normal Mapping using the centralized normal index
-    float3 N = normalize(input.worldNormal);
-    float3 V = normalize(cameraUBO.camPosition - input.worldPosition);
+    float3 albedo    = globalTextures[mat.albedoIndex].Sample(input.texCoord).rgb * mat.baseColor.rgb;
     float roughness = clamp(input.instRoughness, 0.025, 1.0);
     float metallic  = saturate(input.instMetallic);
     float alpha     = roughness * roughness;
 
-    float3 albedo = globalTextures[mat.albedoIndex].Sample(input.texCoord).rgb * mat.baseColor.rgb;
+    float3 N = normalize(input.worldNormal);
+    float3 V = normalize(cameraUBO.camPosition - input.worldPosition);
 
     switch (debugUBO.debugViewMode)
     {
-        case 1: return float4(albedo, 1.0);                       // Albedo
-        case 2: return float4(N * 0.5 + 0.5, 1.0);                // Normals
-        case 3: // Consolidated Depth (Linearized Reverse-Z)
+        case 1: return float4(albedo, 1.0);
+        case 3:
         {
             float dLin = LinearizeDepth(fragCoord.z, cameraUBO.nearPlane, cameraUBO.farPlane);
             float dN = saturate(dLin / max(debugUBO.debugDepthRange, 1e-6));
             return float4(dN.xxx, 1.0);
         }
-        case 4: return float4(roughness.xxx, 1.0);                // Roughness
-        case 5: return float4(metallic.xxx, 1.0);                 // Metallic
-        case 6: return float4(input.worldPosition * 0.1f, 1.0);          // World Position
-        case 7: return float4(frac(input.texCoord), 0.0, 1.0);    // UVs
-
-        default: break; // Material (Full Lit)
+        case 4: return float4(roughness.xxx, 1.0);
+        case 5: return float4(metallic.xxx, 1.0);
+        case 6: return float4(input.worldPosition * 0.1f, 1.0);
+        case 7: return float4(frac(input.texCoord), 0.0, 1.0);
+        default: break;
     }
+
     if (debugUBO.disableNormalMap == 0)
     {
         float3 nTex = globalTextures[mat.normalIndex].Sample(input.texCoord).rgb;
@@ -303,9 +298,12 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
             N = normalize(mul(DecodeTangentSpaceNormal(nTex), TBN));
     }
 
-    float3 F0 = lerp(float3(0.04), albedo, metallic);
+    if (debugUBO.debugViewMode == 2) return float4(N * 0.6 + 0.5, 1.0);
+
     // Direct Lighting
+    float3 F0 = lerp(float3(0.04), albedo, metallic);
     float3 Lo = 0.0;
+
     [loop]
     for (uint i = 0; i < lightMeta.lightCount; i++)
     {
@@ -332,56 +330,36 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
                 float theta = dot(L, -spotDir);
                 float epsilon = light.innerCone - light.outerCone;
                 float intensity = saturate((theta - light.outerCone) / max(epsilon, 1e-5));
-                intensity = intensity * intensity * (3.0 - 2.0 * intensity);
-                attenuation *= intensity;
+                attenuation *= intensity * intensity * (3.0 - 2.0 * intensity);
             }
         }
 
         float3 H = normalize(V + L);
         float3 radiance = light.color * light.intensity * attenuation;
 
-        // Cook-Torrance BRDF
         float NDF = DistributionGGX(N, H, alpha);
-        float G = GeometrySmith(N, V, L, roughness);
-        float3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+        float G   = GeometrySmith(N, V, L, roughness);
+        float3 F  = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
-        float3 numerator = NDF * G * F;
-        float NdotV = max(dot(N, V), 0.0);
-        float NdotL = max(dot(N, L), 0.0);
-        float denominator = 4.0 * NdotV * NdotL + 0.0001;
-        float3 specular = numerator / denominator;
+        float3 specular = (NDF * G * F) / (4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001);
+        if (debugUBO.disableSpecular != 0) specular = 0.0.xxx;
 
-        float3 kS = F;
-        float3 kD = float3(1.0, 1.0, 1.0) - kS;
-        kD *= 1.0 - metallic;
-
-        if (debugUBO.disableSpecular != 0)
-            specular = float3(0.0, 0.0, 0.0);
-
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+        float3 kD = (1.0.xxx - F) * (1.0 - metallic);
+        Lo += (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
     }
 
-    // Debug Views (post-lighting)
-    if (debugUBO.debugViewMode == 1)
-        return float4(albedo, 1.0);
-
-    if (debugUBO.debugViewMode == 2)
-        return float4(N * 0.6 + 0.5, 1.0);
-
-    // IBL
     float ao = debugUBO.aoStrength;
-    float3 ambient = float3(debugUBO.ambientStrength, debugUBO.ambientStrength, debugUBO.ambientStrength) * albedo * ao;
+    float3 ambient = debugUBO.ambientStrength.xxx * albedo * ao;
 
     float3 R = reflect(-V, N);
-    float maxMipLevel = 6.0;
-    float mipLevel = saturate(roughness + debugUBO.iblRoughnessMipBias) * maxMipLevel;
+    float mipLevel = saturate(roughness + debugUBO.iblRoughnessMipBias) * 6.0; // 6.0 = maxMip
     float3 envColor = envCubemap.SampleLevel(R, mipLevel).rgb;
 
     float3 F_ambient = fresnelSchlick(max(dot(N, V), 0.0), F0);
     float iblContribution = metallic * debugUBO.metallicReflectScale * (1.0 - roughness * debugUBO.roughnessReflectScale);
     float3 specularIBL = envColor * F_ambient * iblContribution * debugUBO.iblStrength;
 
-    float3 color = ambient + Lo + specularIBL * ao;
+    float3 color = ambient + Lo + (specularIBL * ao);
     return float4(TonemapACES(color), 1.0);
 }
 

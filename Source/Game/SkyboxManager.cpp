@@ -62,37 +62,17 @@ VulkanTexture SkyboxManager::CreateHDRTexture(const char* path) const
 
 VulkanTexture SkyboxManager::CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const
 {
-	LOG(Debug, "CreateCubeMap: Loading 6 cubemap faces...");
-
 	Array<TextureData, 6> faces;
 	for (i32 i = 0; i < 6; ++i)
 	{
-		auto tex = TextureLoader::LoadTextureFromSTB(paths[i], true);
-		if (!tex.has_value())
-		{
-			LOG(Warning, "CreateCubeMap: Failed to load face {}", i);
-			return {};
-		}
-
-		if (!std::holds_alternative<Vector<u8>>(tex->data))
-		{
-			LOG(Warning, "CreateCubeMap: Face {} has invalid data type", i);
-			return {};
-		}
-
-		faces[i] = std::move(*tex);
+	    auto tex = TextureLoader::LoadTextureFromSTB(paths[i], true);
+	    if (!tex || !std::holds_alternative<Vector<u8>>(tex->data)) return {};
+	    faces[i] = std::move(*tex);
 	}
 
-	// Validate base face
-	const u32 w = faces[0].width;
-	const u32 h = faces[0].height;
-	if (w == 0 || h == 0)
-	{
-		LOG(Warning, "CreateCubeMap: Invalid dimensions on face 0 ({}x{})", w, h);
-		return {};
-	}
-
-	const size_t faceBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4;
+    const u32 w = faces[0].width;
+    const u32 h = faces[0].height;
+    const size_t faceBytes = static_cast<size_t>(w) * h * 4;
 
 	// Validate all faces
 	for (size_t i = 1; i < 6; ++i)
@@ -112,7 +92,7 @@ VulkanTexture SkyboxManager::CreateCubeMapFromFiles(const Array<const char*, 6>&
 		}
 	}
 
-	TextureInfo info{
+	TextureInfo info = {
 		.extent = { w, h, 1 },
 		.mipLevels = 1,
 		.arrayLayers = 6,
@@ -122,27 +102,24 @@ VulkanTexture SkyboxManager::CreateCubeMapFromFiles(const Array<const char*, 6>&
 		.usage = ImageUsage::Sampled | ImageUsage::TransferDst,
 	};
 
-	VulkanTexture cube(devicePtr, info);
-
 	// Pack all faces into a single contiguous buffer
-	Vector<u8> packed;
-	packed.resize(faceBytes * 6);
+	Vector<u8> packed(faceBytes * 6);
 	for (u32 i = 0; i < 6; ++i)
 	{
 		const auto& faceData = std::get<Vector<u8>>(faces[i].data);
 		std::memcpy(packed.data() + (static_cast<size_t>(i) * faceBytes), faceData.data(), faceBytes);
 	}
 
+    VulkanTexture cube(devicePtr, info);
 	cube.UploadTextureToGPU(packed.data(), info);
 
 	LOG(Debug, "CreateCubeMap: Successfully created cubemap ({}x{}, 6 faces)", w, h);
 	return cube;
 }
 
-bool SkyboxManager::Initialize(VulkanDevice* dev, ArenaAllocator* arenaAlloc)
+bool SkyboxManager::Initialize(VulkanDevice* dev)
 {
 	devicePtr = dev;
-	arena = arenaAlloc;
 
 	if (!CreateCubemap()) return false;
 	CreateSampler();
@@ -218,11 +195,7 @@ void SkyboxManager::CreateSampler()
 
 bool SkyboxManager::CreateShaderAndPipeline()
 {
-	auto codeResult = VulkanShader::ReadShaderFile("Shaders/skybox.spv");
-	if (!codeResult)
-		LOG(Error, "Skybox: Could not load shader (error {})", static_cast<i32>(codeResult.error()));
-
-	shader = arena->Emplace<VulkanShader>(devicePtr, codeResult.value());
+    shader = devicePtr->CreateShaderPath("Shaders/skybox.spv");
 
 	// Descriptors
 	{
@@ -255,15 +228,14 @@ bool SkyboxManager::CreateShaderAndPipeline()
 	};
 
 	const GraphicsPipelineDesc skyboxDesc = {
-		.vertexShader   = shader,
-		.fragmentShader = shader,
+		.vertexShader   = shader.get(),
+		.fragmentShader = shader.get(),
 		.raster = {
 			.topology    = PrimitiveTopology::TriangleList,
 			.cull        = CullMode::None,
 			.depthFormat = TextureFormat::D32_SFLOAT,
 			.depthWrite  = false,
 			.depthOp     = CompareOp::GreaterOrEqual,
-			.blend       = { .enabled = false },
 			.colorFormats = { TextureFormat::BGRA8_SRGB }
 		},
 		.layout = {
@@ -287,7 +259,7 @@ void SkyboxManager::Render(GPUCommandBuffer* cmd, const Camera& camera, f32 aspe
 	cmd->BindDescriptorSet(&descriptorSet, 0, &pipeline);
 
 	const SkyPushConstants skyPC = {
-		.view = camera.GetProjectionMatrix(aspectRatio) * glm::mat4(glm::mat3(camera.GetViewMatrix(glm::vec3{0.0f})))
+		.view = camera.GetProjectionMatrix(aspectRatio) * camera.GetViewMatrix(glm::vec3{0.0f})
 	};
 
 	cmd->PushConstants(&pipeline, ShaderStage::Vertex, 0, sizeof(SkyPushConstants), &skyPC);
@@ -297,7 +269,6 @@ void SkyboxManager::Render(GPUCommandBuffer* cmd, const Camera& camera, f32 aspe
 void SkyboxManager::Cleanup()
 {
 	if (pipeline.IsValid()) pipeline.Destroy();
-	if (shader) { shader->Destroy(); }
 	if (cubemap.image) cubemap.Destroy();
 	sampler.Destroy();
 	layout.Destroy(devicePtr);

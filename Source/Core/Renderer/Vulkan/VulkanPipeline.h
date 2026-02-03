@@ -18,7 +18,7 @@ namespace Renderer
 		Vector<VkPipelineShaderStageCreateInfo> stages;
 	};
 
-
+    struct ComputePipelineLayout;
 	struct GraphicsPipelineDesc
 	{
 		// Shaders stored as nullable pointers
@@ -36,9 +36,61 @@ namespace Renderer
 	{
 		// Single compute shader pointer
 		GPUShader* computeShader = nullptr;
-		PipelineLayoutDesc layout;
-		VkPipelineLayout externalLayout = VK_NULL_HANDLE;
+	    ComputePipelineLayout* layout = nullptr;
 	};
+
+    struct ComputePipelineLayout
+    {
+        VkPipelineLayout vk = VK_NULL_HANDLE;
+
+        void Init(const VulkanDevice* device, const DescriptorSetLayoutDesc& setDesc, const PushConstantDesc& pc = {});
+        void Destroy(const VulkanDevice* device);
+    };
+
+    struct VulkanPipeline final : GPUPipeline
+    {
+        VulkanPipeline() = default;
+        explicit VulkanPipeline(VulkanDevice* device) : device(device) {}
+        ~VulkanPipeline() override { Destroy(); }
+
+        Result<void> CreateGraphicsPipeline(VulkanDevice* inDevice, const GraphicsPipelineDesc& desc);
+
+        void Destroy() override;
+        [[nodiscard]] bool IsValid() const override { return vk != VK_NULL_HANDLE; }
+        void Rebuild(GPUDevice* device) override;
+
+        VulkanPipeline(const VulkanPipeline&) = delete;
+        VulkanPipeline& operator=(const VulkanPipeline&) = delete;
+
+        VulkanPipeline(VulkanPipeline&& other) noexcept
+        {
+            *this = std::move(other);
+        }
+
+        VulkanPipeline& operator=(VulkanPipeline&& other) noexcept
+        {
+            if (this != &other)
+            {
+                Destroy();
+                vk = other.vk;
+                vkLayout = other.vkLayout;
+                ownsLayout = other.ownsLayout;
+
+                layoutMetadata = std::move(other.layoutMetadata);
+                other.vk = VK_NULL_HANDLE;
+                other.vkLayout = VK_NULL_HANDLE;
+            }
+            return *this;
+        }
+
+        VkPipeline vk = VK_NULL_HANDLE;
+        VkPipelineLayout vkLayout = VK_NULL_HANDLE;
+        Vector<DescriptorSetLayoutDesc> layoutMetadata;
+
+    private:
+        VulkanDevice* device = nullptr;
+        bool ownsLayout = true;
+    };
 
 	struct PipelineConfig
 	{
@@ -90,57 +142,4 @@ namespace Renderer
 		static void LogPipelineStages(const Vector<VkPipelineShaderStageCreateInfo>& stages);
 
 	};
-
-	/// Vulkan implementation of GPUPipeline
-	struct VulkanPipeline final : GPUPipeline
-	{
-		void Destroy() override;
-		[[nodiscard]] bool IsValid() const override { return vk != VK_NULL_HANDLE; }
-		void Rebuild(GPUDevice* device) override;
-
-		Result<void> CreateGraphicsPipeline(VulkanDevice* inDevice, const GraphicsPipelineDesc& desc);
-		Result<void> CreateComputePipeline(VulkanDevice* device, ComputePipelineDesc& desc);
-
-		[[nodiscard]] VkPipeline GetVkPipeline() const noexcept { return vk; }
-		[[nodiscard]] VkPipelineLayout GetVkLayout() const noexcept { return vkLayout; }
-
-		VulkanPipeline() = default;
-
-		explicit VulkanPipeline(VulkanDevice* device) : device(device){}
-
-		VulkanPipeline(const VulkanPipeline&) = delete;
-		VulkanPipeline& operator=(const VulkanPipeline&) = delete;
-
-		VulkanPipeline(VulkanPipeline&& other) noexcept
-		{
-			*this = std::move(other);
-		}
-
-		VulkanPipeline& operator=(VulkanPipeline&& other) noexcept
-		{
-			if (this != &other)
-			{
-				Destroy();
-				vk = other.vk;
-				vkLayout = other.vkLayout;
-				ownsLayout = other.ownsLayout;
-
-				layoutMetadata = std::move(other.layoutMetadata);
-				other.vk = VK_NULL_HANDLE;
-				other.vkLayout = VK_NULL_HANDLE;
-			}
-			return *this;
-		}
-
-		~VulkanPipeline() override { Destroy(); }
-
-		VkPipeline vk = VK_NULL_HANDLE;
-		VkPipelineLayout vkLayout = VK_NULL_HANDLE;
-		Vector<DescriptorSetLayoutDesc> layoutMetadata;
-
-	private:
-		VulkanDevice* device = nullptr; // Non-const for shader creation during rebuild
-		bool ownsLayout = true;
-	};
-
 } // namespace Renderer

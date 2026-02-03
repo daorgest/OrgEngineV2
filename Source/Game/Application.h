@@ -43,9 +43,6 @@ struct Application
 	DebugRenderer debugRenderer;
 	SceneRenderer sceneRenderer;
 
-	Renderer::VulkanPipeline scenePipeline;
-	Renderer::VulkanShader sceneShader;
-
 	std::unique_ptr<Renderer::VulkanShaderBuffer> sceneUBO;
 
 	Renderer::TextureDefaults texDefaults;
@@ -81,7 +78,8 @@ struct Application
 
 	f32 aspectRatio;
 	f32 cameraSpeed = 5;
-	f32 cameraSpeedPopupTime = 0.0;
+	f32 cameraSpeedPopupTime = 0.0f;
+    f32 debugViewPopupTime = 0.0f;
 	f32 lastFrameMs = 0.0f;
 	bool showGPUInfo = true;
 	bool showMenuBar = true;

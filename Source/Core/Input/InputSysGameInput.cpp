@@ -9,6 +9,7 @@
 
 #define HR_FAIL(hr) (FAILED((hr)))
 
+// Button Mappings
 static u32 MapButtons(const GI::GameInputGamepadState& s)
 {
     u32 b = 0;
@@ -122,7 +123,7 @@ bool InputSysGameInput::Init()
 {
     if (FAILED(GameInputCreate(&gi))) return false;
 
-    if (SUCCEEDED(gi->CreateDispatcher(&dispatcher))) // for hotplugging)
+    if (SUCCEEDED(gi->CreateDispatcher(&dispatcher))) // for hotplugging and background work)
     {
         gi->RegisterDeviceCallback(nullptr, GI::GameInputKindGamepad | GI::GameInputKindController, GI::GameInputDeviceConnected,
                                    GI::GameInputAsyncEnumeration,
@@ -218,23 +219,20 @@ void HandleKeyboard(GI::IGameInputReading* reading)
     const u32 numKeys = reading->GetKeyState(keys.size(), keys.data());
 
     // Track what keys are present in THIS specific reading
-    bool keysInPacket[Keyboard::ButtonCount] = {};
+    bool isDownNow[Keyboard::ButtonCount] = {};
     for (u32 i = 0; i < numKeys; ++i)
     {
         const Keyboard::Key k = MapKey(keys[i]);
-        if (k != Keyboard::Unknown) keysInPacket[k] = true;
+        if (k != Keyboard::Unknown) isDownNow[k] = true;
     }
 
     // Process state changes
     for (i32 k = 0; k < Keyboard::ButtonCount; ++k)
     {
-        bool isCurrentlyHeld = input.keyboard[k].held;
-        bool isPresentInPacket = keysInPacket[k];
-
-        if (isPresentInPacket && !isCurrentlyHeld)
-            Input::ProcessEventButton(input.keyboard[k], true);
-        else if (!isPresentInPacket && isCurrentlyHeld)
-            Input::ProcessEventButton(input.keyboard[k], false);
+        if (input.keyboard[k].held != isDownNow[k])
+        {
+            Input::ProcessEventButton(input.keyboard[k], isDownNow[k]);
+        }
     }
 }
 

@@ -1,25 +1,19 @@
 #include "DebugRenderer.h"
+
+#include "VulkanDevice.h"
 #include "Tools/Logger.h"
 #include "VulkanShader.h"
-#include "Tools/Arena.h"
+#include "Tools/FileManager.h"
 
 using namespace Renderer;
 
-bool DebugRenderer::Initialize(VulkanDevice* dev, ArenaAllocator* arena, VulkanShaderBuffer* sceneUBO,
+bool DebugRenderer::Initialize(GPUDevice* device, VulkanShaderBuffer* sceneUBO,
 				DescriptorAllocatorGrowable* globalDescriptorAllocator, bool depthTest, bool alwaysOnTop)
 {
-	device = dev;
 	this->sceneUBO = sceneUBO;
-
     drawQueue.reserve(maxInstances);
 
-	auto codeResult = VulkanShader::ReadShaderFile("Shaders/boundingBox.spv");
-	if (!codeResult)
-	{
-		LOG(Error, "Failed to read shader 'Shaders/boundingBox.spv' ({})", static_cast<i32>(codeResult.error()));
-		return false;
-	}
-	shader = arena->Emplace<VulkanShader>(device, codeResult.value());
+    shader = device->CreateShaderPath("Shaders/boundingBox.spv");
 
 	static Binding instBindings[] = {
 		{
@@ -35,7 +29,10 @@ bool DebugRenderer::Initialize(VulkanDevice* dev, ArenaAllocator* arena, VulkanS
 		.setIndex = 1,
 		.bindings = instBindings
 	};
-	instanceBuffer = arena->Emplace<VulkanShaderBuffer>(device, globalDescriptorAllocator, instDesc);
+
+    // Soon to be rhi
+    auto* vkDev = static_cast<VulkanDevice*>(device);
+	instanceBuffer = std::make_unique<VulkanShaderBuffer>(vkDev, globalDescriptorAllocator, instDesc);
 	instanceBuffer->AllocateDescriptorSets();
 
 
@@ -53,8 +50,8 @@ bool DebugRenderer::Initialize(VulkanDevice* dev, ArenaAllocator* arena, VulkanS
 	}
 
 	const GraphicsPipelineDesc debugDesc = {
-		.vertexShader   = shader,
-		.fragmentShader = shader,
+		.vertexShader   = shader.get(),
+		.fragmentShader = shader.get(),
 		.raster = {
 			.topology     = PrimitiveTopology::LineList,
 			.cull         = CullMode::None,
@@ -68,7 +65,7 @@ bool DebugRenderer::Initialize(VulkanDevice* dev, ArenaAllocator* arena, VulkanS
 		}
 	};
 
-	if (!pipeline.CreateGraphicsPipeline(device, debugDesc))
+	if (!pipeline.CreateGraphicsPipeline(vkDev, debugDesc))
 	{
 		LOG(Error, "Failed to create AABB Debug Pipeline");
 		return false;
@@ -111,5 +108,4 @@ void DebugRenderer::Cleanup()
 {
 	if (pipeline.vk != VK_NULL_HANDLE)
 		pipeline.Destroy();
-	if (shader) { shader->Destroy(); shader = nullptr; }
 }

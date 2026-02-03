@@ -16,6 +16,8 @@ void SceneRenderer::Init(SceneRenderConfig& cfg)
 {
     config = cfg;
 
+    sceneShader = config.device->CreateShaderPath("Shaders/scene.spv");
+
     // Scene pipeline descriptor sets:
         // Set 0: Scene UBO (camera, lights, debug)
         // Set 1: Material (albedo, normal textures on a bindless array)
@@ -36,8 +38,8 @@ void SceneRenderer::Init(SceneRenderConfig& cfg)
 
     // Opaque/Masked Pipeline
     const Renderer::GraphicsPipelineDesc sceneDesc = {
-        .vertexShader = config.vertexShader,
-        .fragmentShader = config.fragmentShader,
+        .vertexShader = sceneShader.get(),
+        .fragmentShader = sceneShader.get(),
         .raster = GpuRasterDesc::Opaque3D(TextureFormat::BGRA8_SRGB, TextureFormat::D32_SFLOAT),
         .layout = {
             .setLayouts = std::span(sceneLayouts),
@@ -285,7 +287,7 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
         instanceBuffer->Bind(cmd, *pipeline, resIdx);
 
         // Set 1 is NOT bound here because it is model-specific!
-        dc.lastMaterialSet = {VK_NULL_HANDLE};
+        dc.lastMaterialSet = {};
         dc.lastIndexBuffer = nullptr;
     };
 

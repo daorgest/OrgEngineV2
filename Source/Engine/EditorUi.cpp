@@ -11,6 +11,7 @@
 #include "MathFuncs.h"
 #include "MeshStats.h"
 #include "RendererTypes.h"
+#include "ufbx.h"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include "glm/gtx/norm.hpp"
@@ -491,6 +492,7 @@ void EditorUI::ClampWindowToViewport()
 
     ImGui::SetWindowPos(pos);
 }
+
 void EditorUI::DrawCameraSpeedPopup(f32 camSpeedPopupTime) const
 {
     if (camSpeedPopupTime <= 0.0f) return;
@@ -528,6 +530,45 @@ void EditorUI::DrawCameraSpeedPopup(f32 camSpeedPopupTime) const
     ImGui::End();
 }
 
+void EditorUI::DrawDebugViewPopup(f32 debugViewPopupTime, DebugView currentView)
+{
+    if (debugViewPopupTime <= 0.0f) return;
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 work_pos = viewport->WorkPos;
+    const ImVec2 work_size = viewport->WorkSize;
+
+    // Position in center of work area (slightly higher than center: 40% down)
+    const ImVec2 pos = {work_pos.x + (work_size.x * 0.5f), work_pos.y + (work_size.y * 0.20f)};
+
+    // Fade out over the last 0.5 seconds
+    const f32 alpha = std::min(1.0f, debugViewPopupTime / 0.5f);
+
+    ImGui::SetNextWindowBgAlpha(alpha * 0.7f); // Slightly transparent background
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always, {0.5f, 0.5f});
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 10));
+
+    constexpr ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoDecoration       |
+        ImGuiWindowFlags_AlwaysAutoResize   |
+        ImGuiWindowFlags_NoSavedSettings    |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav              |
+        ImGuiWindowFlags_NoInputs           |
+        ImGuiWindowFlags_NoDocking;
+
+    if (ImGui::Begin("##DebugViewPopup", nullptr, flags))
+    {
+        ImGui::Text("View Mode");
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "%s", DebugViewToString(currentView));
+    }
+
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+}
 
 bool EditorUI::DrawMainMenuBar()
 {
@@ -544,7 +585,7 @@ bool EditorUI::DrawMainMenuBar()
         if (ImGui::BeginMenu("File"))
         {
             if (ImGui::MenuItem("No UI Mode", "F6")) { state.noUI = true; }
-            HoverToolTip("Hide the UI");
+            HoverToolTip("Hides the entire editor interface. Press F6 to restore.");
             if (ImGui::MenuItem("Exit"))
             {
                 shouldExit = true;
@@ -584,6 +625,7 @@ bool EditorUI::DrawMainMenuBar()
                     }
                     if (selected) { ImGui::SetItemDefaultFocus(); }
                 }
+                HoverToolTip("Changes the swapchain presentation mode immediately.");
                 ImGui::EndMenu();
             }
             ImGui::EndMenu();
@@ -727,11 +769,12 @@ void EditorUI::DrawMainOverlay() const
                 ImGui::TextUnformatted("FPS");
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%.1f (%.3f ms)", state.wc->fps, state.wc->frameTime);
+                EditorUI::HoverToolTip("Total CPU frame time (Update + Render Submission + Present).");
 #ifdef ENABLE_GPU_TIMING
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("GPU Draw Time");
                 ImGui::TableSetColumnIndex(1); ImGui::Text("%.3f ms", state.sceneStats->gpuDrawTime);
-
+                EditorUI::HoverToolTip("Time taken by the GPU to execute the main render pass.");
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("GPU Busy");
                 ImGui::TableSetColumnIndex(1); ImGui::Text("%.1f%%", state.sceneStats->gpuBusy);
@@ -802,7 +845,8 @@ void EditorUI::DrawMainOverlay() const
             TextColored(hintCol, "F6      - Toggle UI Visibility");
             TextColored(hintCol, "F7      - Toggle Freeze Frustum");
             TextColored(hintCol, "F8      - Cycle Active Camera");
-            TextColored(hintCol, "Alt     - Unlock Cursor (FPS)");
+            TextColored(hintCol, "F9      - Cycle Debug View");
+            TextColored(hintCol, "Alt     - Unlock Cursor (During FPS Mode)");
             TextColored(hintCol, "Scroll  - Change Camera Speed");
         }
 
@@ -843,7 +887,7 @@ void EditorUI::DrawMainOverlay() const
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("VRAM");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%.1f GB", state.device->GetDeviceDesc().dedicatedVideoMemory / Gigabyte);
+                ImGui::Text("%.1f GB", static_cast<double>(state.device->GetDeviceDesc().dedicatedVideoMemory) / Gigabyte);
 
                 ImGui::EndTable();
             }
@@ -1006,7 +1050,7 @@ void EditorUI::AppInfoPopup()
 {
     if (!state.showAboutPopup) return;
 
-    if (!ImGui::Begin("System Info", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!ImGui::Begin("System Info", &state.showAboutPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         return;
     }
@@ -1035,19 +1079,18 @@ void EditorUI::AppInfoPopup()
         // Static Getters
         AddLibRow("Dear ImGui", ImGui::GetVersion());
 
-        // GLM 1.1.0
         snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
                  GLM_VERSION_MAJOR, GLM_VERSION_MINOR, GLM_VERSION_PATCH);
         AddLibRow("GLM", versionBuffer);
 
-        // VMA 3.4.0 (Decoding bitmask)
+
         snprintf(versionBuffer, sizeof(versionBuffer), "%u.%u.%u",
                  (uint32_t)(VMA_VERSION) >> 22U,
                  ((uint32_t)(VMA_VERSION) >> 12U) & 0x3FFU,
                  (uint32_t)(VMA_VERSION) & 0xFFFU);
-        AddLibRow("Vulkan Memory", versionBuffer);
+        AddLibRow("VMA", versionBuffer);
 
-        // SDL 3.5.0 Runtime (Linked)
+
 #if ENGINE_PLATFORM_SDL
         const int linkedVer = SDL_GetVersion();
         snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
@@ -1067,15 +1110,18 @@ void EditorUI::AppInfoPopup()
 
 
         // Miscellaneous
-        AddLibRow("fastgltf", "v0.11.x");
-        AddLibRow("ufbx", "v0.x");
-        AddLibRow("Tracy", "v0.10.x");
+        constexpr uint32_t uv = UFBX_HEADER_VERSION;
+        snprintf(versionBuffer, sizeof(versionBuffer), "%u.%u.%u",
+                 uv / 10000, (uv / 100) % 100, uv % 100);
+        AddLibRow("ufbx", versionBuffer);
+#ifdef TRACY_ENABLE
+        // Most Tracy versions define TRACY_VERSION or similar depending on the tag
+        snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
+                 TRACY_VERSION_MAJOR, TRACY_VERSION_MINOR, TRACY_VERSION_PATCH);
+        AddLibRow("Tracy", versionBuffer);
+#endif
 
         ImGui::EndTable();
-    }
-
-    if (ImGui::Button("Close")) {
-        // Handle closing logic here (e.g., setting a bool to false)
     }
 
     ImGui::End();

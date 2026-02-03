@@ -327,6 +327,47 @@ void VulkanPipeline::Rebuild(GPUDevice* device)
 	LOG(Error, "VulkanPipeline::Rebuild() not supported (no hot reload state stored).");
 }
 
+void ComputePipelineLayout::Init(const VulkanDevice* device, const DescriptorSetLayoutDesc& setDesc,
+    const PushConstantDesc& pc)
+{
+    Vector<VkDescriptorSetLayout> vkSetLayouts;
+
+    DescriptorLayoutBuilder builder;
+    auto layoutData = builder.AddBindings(setDesc.bindings)
+                             .Build(device);
+
+
+    vkSetLayouts.push_back(layoutData.vk);
+
+    VkPushConstantRange pushRange = {};
+    if (pc.size > 0)
+    {
+        pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        pushRange.offset = pc.offset;
+        pushRange.size = pc.size;
+    }
+
+    const VkPipelineLayoutCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1, // Compute usually has 1 set (Index 0)
+        .pSetLayouts = &layoutData.vk,
+        .pushConstantRangeCount = (pc.size > 0) ? 1u : 0u,
+        .pPushConstantRanges = (pc.size > 0) ? &pushRange : nullptr
+    };
+
+    VK_CHECK(vkCreatePipelineLayout(device->device, &info, nullptr, &vk));
+}
+
+void ComputePipelineLayout::Destroy(const VulkanDevice* device)
+{
+    if (vk != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(device->device, vk, nullptr);
+        vk = VK_NULL_HANDLE;
+    }
+
+}
+
 Result<void> VulkanPipeline::CreateGraphicsPipeline(VulkanDevice* inDevice, const GraphicsPipelineDesc& desc)
 {
 	this->device = inDevice;
@@ -361,32 +402,5 @@ Result<void> VulkanPipeline::CreateGraphicsPipeline(VulkanDevice* inDevice, cons
 	}
 
 	vk = result.value();
-	return {};
-}
-
-Result<void> VulkanPipeline::CreateComputePipeline(VulkanDevice* device, ComputePipelineDesc& desc)
-{
-	VulkanPipeline pipeline(device);
-	VulkanPipelineBuilder builder;
-
-	builder.SetComputeStage(desc.computeShader);
-
-	if (desc.externalLayout != VK_NULL_HANDLE) {
-		pipeline.vkLayout = desc.externalLayout;
-		pipeline.ownsLayout = false;
-	} else {
-		pipeline.vkLayout = VulkanPipelineBuilder::CreateLayout(device, desc.layout);
-		pipeline.ownsLayout = true;
-	}
-
-	VkComputePipelineCreateInfo ci = {
-		.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-		.stage  = builder.data.shaderStages.stages[0],
-		.layout = pipeline.vkLayout
-	};
-
-	if (vkCreateComputePipelines(device->device, VK_NULL_HANDLE, 1, &ci, nullptr, &pipeline.vk) != VK_SUCCESS)
-		return std::unexpected(VulkanPipelineCreationFailed);
-
 	return {};
 }
