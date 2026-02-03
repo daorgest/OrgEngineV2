@@ -191,7 +191,7 @@ else()
     )
     target_include_directories(OrgEngineV2 PRIVATE ${3RDPARTY_DIR}/gameinput/include)
     target_link_directories(OrgEngineV2 PRIVATE ${3RDPARTY_DIR}/gameinput/lib)
-    target_link_libraries(OrgEngineV2 PRIVATE GameInput.lib)
+    target_link_libraries(OrgEngineV2 PRIVATE ${3RDPARTY_DIR}/gameinput/lib/x64/GameInput.lib)
 
     set_target_properties(OrgEngineV2 PROPERTIES
             WIN32_EXECUTABLE $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:TRUE>

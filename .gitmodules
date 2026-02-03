@@ -29,3 +29,6 @@
 [submodule "3rdParty/openxr"]
 	path = 3rdParty/openxr
 	url = https://github.com/KhronosGroup/OpenXR-SDK.git
+[submodule "3rdParty/gameinput"]
+	path = 3rdParty/gameinput
+	url = https://github.com/microsoftconnect/GameInput
