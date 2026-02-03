@@ -297,9 +297,9 @@ void EditorUI::DrawCameraGizmo(CameraComponent& camComp)
     const ImVec2 work_pos = viewport->WorkPos;
     const ImVec2 work_size = viewport->WorkSize;
 
-    // Simple hardcoded sizes
-    constexpr f32 gizmoSize = 125.0f;
-    constexpr f32 padding = 10.0f;
+    const f32 fontSize = ImGui::GetFontSize();
+    const f32 gizmoSize = 7.0f * fontSize;
+    const f32 padding = 0.55f * fontSize;
 
     // Position in top-right corner of work area
     const f32 xPos = work_pos.x + work_size.x - gizmoSize - padding;
@@ -383,7 +383,7 @@ void EditorUI::DrawCameraEditor()
     }
 
 
-    if (ImGui::BeginListBox("##SceneCameras", ImVec2(-FLT_MIN, 120)))
+    if (ImGui::BeginListBox("##SceneCameras", ImVec2(-FLT_MIN, 6 * ImGui::GetFrameHeightWithSpacing())))
     {
         for (u32 i = 0; i < state.cameraComponents.size(); ++i)
         {
@@ -440,7 +440,7 @@ void EditorUI::DrawCameraProperties(CameraComponent& camComp)
 
     if (ImGui::BeginTable("CameraProps", 2, ImGuiTableFlags_RowBg))
     {
-        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 100.0f);
+        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 6.0f * ImGui::GetFontSize());
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
         ImGui::TableNextRow();
@@ -482,9 +482,9 @@ void EditorUI::ClampWindowToViewport()
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImVec2 pos = ImGui::GetWindowPos();
-    ImVec2 size = ImGui::GetWindowSize();
-    ImVec2 work_pos = viewport->WorkPos;
-    ImVec2 work_size = viewport->WorkSize;
+    const ImVec2 size = ImGui::GetWindowSize();
+    const ImVec2 work_pos = viewport->WorkPos;
+    const ImVec2 work_size = viewport->WorkSize;
 
     // Keep window within viewport bounds
     pos.x = std::clamp(pos.x, work_pos.x, work_pos.x + work_size.x - size.x);
@@ -538,6 +538,8 @@ void EditorUI::DrawDebugViewPopup(f32 debugViewPopupTime, DebugView currentView)
     const ImVec2 work_pos = viewport->WorkPos;
     const ImVec2 work_size = viewport->WorkSize;
 
+    const f32 fontSize = ImGui::GetFontSize();
+
     // Position in center of work area (slightly higher than center: 40% down)
     const ImVec2 pos = {work_pos.x + (work_size.x * 0.5f), work_pos.y + (work_size.y * 0.20f)};
 
@@ -547,8 +549,8 @@ void EditorUI::DrawDebugViewPopup(f32 debugViewPopupTime, DebugView currentView)
     ImGui::SetNextWindowBgAlpha(alpha * 0.7f); // Slightly transparent background
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always, {0.5f, 0.5f});
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.45f * fontSize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(1.1f * fontSize, 0.55f * fontSize));
 
     constexpr ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoDecoration       |
@@ -622,6 +624,9 @@ bool EditorUI::DrawMainMenuBar()
                     if (ImGui::MenuItem(label, nullptr, selected))
                     {
                         state.swapchain->SetVsyncMode(mode);
+#ifdef VULKAN_BUILD
+                        ImGui_ImplVulkan_SetMinImageCount(MAX_FRAME_OVERLAP);
+#endif
                     }
                     if (selected) { ImGui::SetItemDefaultFocus(); }
                 }
@@ -645,8 +650,13 @@ bool EditorUI::DrawMainMenuBar()
 void EditorUI::UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f32 speed)
 {
     const ImGuiIO& io = ImGui::GetIO();
+
     // Check if the current window being drawn is hovered
-    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    const bool hovered = ImGui::IsWindowHovered(
+        ImGuiHoveredFlags_ChildWindows |
+        ImGuiHoveredFlags_AllowWhenBlockedByPopup |
+        ImGuiHoveredFlags_AllowWhenBlockedByActiveItem
+    );
 
     const f32 target = hovered ? maxAlpha : minAlpha;
 
@@ -677,8 +687,8 @@ void EditorUI::DrawMainOverlay() const
     const ImVec2 work_pos = vp->WorkPos;
     const ImVec2 work_size = vp->WorkSize;
 
-    // Scale pad with DPI/work area; clamp to reasonable range.
-    const f32 padding = std::clamp(10.0f * vp->DpiScale, 8.0f, 24.0f);
+    const f32 fontSize = ImGui::GetFontSize();
+    const f32 padding = std::clamp(0.5f * fontSize, 8.0f, 24.0f);
 
     ImVec2 window_pos;
     ImVec2 window_pivot;
@@ -710,12 +720,12 @@ void EditorUI::DrawMainOverlay() const
     }
 
     // Base minimum size
-    ImVec2 min_size = ImVec2(220.0f, 100.0f);
+    ImVec2 min_size = ImVec2(12.0f * fontSize, 5.5f * fontSize);
 
     if (showDepthRange)
-        min_size.x = std::max(min_size.x, 320.0f);
+        min_size.x = std::max(min_size.x, 18.0f * fontSize); // ~320px scaled
     if (state.debugRenderer->enabled)
-        min_size.x = std::max(min_size.x, 420.0f);
+        min_size.x = std::max(min_size.x, 23.5f * fontSize); // ~420px scaled
 
     // Expand height for extra rows
     f32 extra_rows = 0.0f;
@@ -723,18 +733,11 @@ void EditorUI::DrawMainOverlay() const
     if (state.debugRenderer->enabled) extra_rows += 5.0f;
     min_size.y += extra_rows * ImGui::GetFrameHeightWithSpacing();
 
-    // Max size = screen area minus padding
-    const ImVec2 max_size = ImVec2(
-        std::max(150.0f, work_size.x - padding * 2.0f),
-        std::max(80.0f, work_size.y - padding * 2.0f)
-    );
 
-    // Clamp again just to be safe
-    min_size.x = std::clamp(min_size.x, 150.0f, max_size.x);
-    min_size.y = std::clamp(min_size.y, 80.0f, max_size.y);
+    SetNextWindowSizeConstraints(min_size, ImVec2(FLT_MAX, FLT_MAX));
 
-    ImGui::SetNextWindowBgAlpha(overlayAlpha);
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, overlayAlpha);
+    SetNextWindowBgAlpha(overlayAlpha);
+    PushStyleVar(ImGuiStyleVar_Alpha, overlayAlpha);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration
         | ImGuiWindowFlags_AlwaysAutoResize
@@ -761,8 +764,8 @@ void EditorUI::DrawMainOverlay() const
             // Aligned rows for timings
             if (ImGui::BeginTable("PerfTable", 2, ImGuiTableFlags_SizingStretchProp))
             {
-                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 7.0f * fontSize);
+                TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -788,8 +791,8 @@ void EditorUI::DrawMainOverlay() const
         {
             if (ImGui::BeginTable("OutputTable", 2, ImGuiTableFlags_SizingStretchProp))
             {
-                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 7.0f * fontSize);
+                TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -807,8 +810,8 @@ void EditorUI::DrawMainOverlay() const
         {
             if (ImGui::BeginTable("SceneStatsTable", 2, ImGuiTableFlags_SizingStretchProp))
             {
-                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 7.0f * fontSize);
+                TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -858,8 +861,8 @@ void EditorUI::DrawMainOverlay() const
             if (ImGui::BeginTable("Overview", 2, ImGuiTableFlags_SizingStretchProp))
             {
                 // Make first column a little narrower, second stretches
-                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 7.0f * fontSize);
+                TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
                 // GPU Name
                 ImGui::TableNextRow();
@@ -896,8 +899,8 @@ void EditorUI::DrawMainOverlay() const
         // Dynamic tables from toggles
         if (ImGui::BeginTable("TimingTable", 2, ImGuiTableFlags_SizingStretchProp))
         {
-            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+            TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 7.0f * fontSize);
+            TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
             if (showDepthRange)
             {
@@ -943,7 +946,8 @@ void EditorUI::DrawMainOverlay() const
                 ImGui::TableSetColumnIndex(1);
                 static glm::vec4 color = {1.0f, 1.0f, 0.0f, 1.0f};
                 if (ImGui::ColorButton("##AABBColor", ImVec4(color.x, color.y, color.z, color.w),
-                                       ImGuiColorEditFlags_AlphaPreview | ImGuiColorEditFlags_AlphaBar, ImVec2(40, 20)))
+                                       ImGuiColorEditFlags_AlphaPreview | ImGuiColorEditFlags_AlphaBar,
+                                       ImVec2(2.2f * fontSize, 1.1f * fontSize)))
                 {
                     ImGui::OpenPopup("AABBColorPicker");
                 }
@@ -978,8 +982,8 @@ void EditorUI::DrawMainOverlay() const
         {
             if (ImGui::BeginTable("ShaderToggles", 2, ImGuiTableFlags_SizingStretchProp))
             {
-                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+                TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 7.0f * fontSize);
+                TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Disable Normal Map");
@@ -1132,19 +1136,18 @@ void EditorUI::DrawEditorTools()
     if (state.noUI) return;
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    constexpr f32 gizmoSize = 160.0f; // Matches DrawCameraGizmo
-    constexpr f32 padding = 15.0f;
-
-    // Tools window width
-    constexpr f32 windowWidth = 400.0f;
+    const f32 fontSize = ImGui::GetFontSize();
+    const f32 windowWidth = 22.5f * fontSize;
+    const f32 gizmoOffset = 9.0f * fontSize;
+    const f32 padding = 1.0f * fontSize;
 
     // Position: X is right-aligned minus window width and padding.
     // Y is top-aligned plus gizmo size and double padding.
     const f32 defaultX = viewport->WorkPos.x + viewport->WorkSize.x - windowWidth - padding;
-    const f32 defaultY = viewport->WorkPos.y + padding + gizmoSize + padding;
+    const f32 defaultY = viewport->WorkPos.y + padding + gizmoOffset + padding;
 
     ImGui::SetNextWindowPos(ImVec2(defaultX, defaultY), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(windowWidth, 0.0f), ImGuiCond_Always); // 0 height + AutoResize = Snap to content
+    ImGui::SetNextWindowSize(ImVec2(windowWidth, 0.0f), ImGuiCond_Always);
 
     ImGui::SetNextWindowBgAlpha(state.editorAlpha);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, state.editorAlpha);
@@ -1319,7 +1322,7 @@ void EditorUI::DrawLightEditor()
     ImGui::Separator();
 
     // Light Selection and Removal
-    if (ImGui::BeginListBox("##LightsList", ImVec2(-FLT_MIN, 150)))
+    if (ImGui::BeginListBox("##LightsList", ImVec2(-FLT_MIN, 8 * ImGui::GetFrameHeightWithSpacing())))
     {
         for (i32 i = 0; i < (i32)lights.size(); ++i)
         {

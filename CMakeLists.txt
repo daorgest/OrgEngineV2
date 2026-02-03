@@ -199,12 +199,22 @@ else()
 endif()
 
 # --- Post-Build Assets ---
-add_custom_command(
-        TARGET OrgEngineV2 POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/Assets" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Assets"
-        COMMENT "Syncing assets..."
-)
+if(MSVC)
+    foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
+        string(TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG)
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+    endforeach()
+endif()
 
+add_custom_command(TARGET OrgEngineV2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/Assets"
+        "$<TARGET_FILE_DIR:OrgEngineV2>/Assets"
+        COMMENT "Copying Assets to output directory..."
+        VERBATIM
+)
 # --- Debug/Release Specifics ---
 if(MSVC)
     target_link_options(OrgEngineV2 PRIVATE

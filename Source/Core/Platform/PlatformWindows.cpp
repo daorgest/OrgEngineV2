@@ -161,7 +161,7 @@ void ApplyModernTheme(HWND hwnd)
 void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mode)
 {
     ZoneScopedN("Init Win32 Platform");
-    ImGui_ImplWin32_EnableDpiAwareness();
+    ImGui_ImplWin32_EnableDpiAwareness(); // why here.....trust me it works
     window->windowWidth = width;
     window->windowHeight = height;
     window->monitorWidth = GetSystemMetrics(SM_CXSCREEN);
