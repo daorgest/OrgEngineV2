@@ -36,7 +36,7 @@ namespace Renderer
         virtual void Init(GPUDevice* device, const BufferInfo& info) = 0;
 		virtual void Destroy() = 0;
 
-		virtual void* Map() const = 0;
+		[[nodiscard]] virtual void* Map() const = 0;
 		virtual void Unmap() const = 0;
 		virtual void Upload(const void* data, u64 size) const = 0;
 		[[nodiscard]] virtual u64 GetSize() const = 0;
@@ -105,7 +105,7 @@ namespace Renderer
 	{
 		virtual ~GPUPipeline() = default;
 		virtual void Destroy() = 0;
-		virtual bool IsValid() const = 0;
+		[[nodiscard]] virtual bool IsValid() const = 0;
 
 		// Hot-reload support
 		virtual void Rebuild(GPUDevice* device) = 0;
@@ -213,7 +213,7 @@ namespace Renderer
 
 	struct RenderingInfo
 	{
-		Extent2D extent;
+		Extent2D extent = {};
 		std::span<RenderAttachment> colorAttachments;
 		RenderAttachment* depthAttachment = nullptr;
 	};
@@ -317,11 +317,11 @@ namespace Renderer
 		[[nodiscard]] virtual GPUTexture* GetImage(u32 index) = 0;
 		[[nodiscard]] virtual GPUTexture* GetCurrentImage() = 0;
 
-		[[nodiscard]] virtual const Extent2D GetExtent() const = 0;
+		[[nodiscard]] virtual Extent2D GetExtent() const = 0;
         [[nodiscard]] virtual f32 GetAspectRatio() const = 0;
-        virtual void* GetNativeFormat() const { return nullptr; }
+        [[nodiscard]] virtual void* GetNativeFormat() const { return nullptr; }
 
-        virtual Platform::WindowHandle GetWindowHandle() const = 0;
+        [[nodiscard]] virtual Platform::WindowHandle GetWindowHandle() const = 0;
 
 		virtual void SetVsyncMode(PresentMode mode) = 0;
 		virtual void SetBufferingMode(BufferingMode mode) = 0;
@@ -352,10 +352,10 @@ namespace Renderer
 
 
         virtual GPUFrameData* GetCurrentFrameData() = 0;
-        virtual u32 GetFrameIndex() const = 0;
+        [[nodiscard]] virtual u32 GetFrameIndex() const = 0;
     };
 
-    constexpr std::string_view DecodeDriverVersion(u32 driverVersion, const GPUVendor vendor)
+    constexpr std::string DecodeDriverVersion(u32 driverVersion, const GPUVendor vendor)
     {
         switch (vendor)
         {

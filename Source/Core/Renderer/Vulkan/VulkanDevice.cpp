@@ -11,7 +11,7 @@
 #include "Tools/Array.h"
 #include "Tools/FileManager.h"
 
-static Array requiredDeviceExtensions = {
+static Vector requiredDeviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
     VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
@@ -35,6 +35,7 @@ bool VulkanDevice::Init(GPUInterface* gpuInterface)
 // Vulkan-specific implementation
 bool VulkanDevice::Init(VulkanInstance* inst)
 {
+    assert(inst != nullptr && "Instance must not be null");
     this->instance = inst;
 
     u32 deviceCount = 0;
@@ -334,9 +335,10 @@ std::unique_ptr<GPUShader> VulkanDevice::CreateShaderPath(const char* path)
     return CreateShader(*code);
 }
 
-void ImmediateSubmitter::Init(VulkanDevice* device)
+void ImmediateSubmitter::Init(VulkanDevice* inDevice)
 {
-    this->device = device;
+    assert(device == nullptr && "Device pointer not fond");
+    this->device = inDevice;
 
     VkCommandPoolCreateInfo poolInfo = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,

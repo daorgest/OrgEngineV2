@@ -46,7 +46,7 @@ bool Application::Init()
 	    editorUI.state.frozenCam     = &frozenCamComp;
 		editorUI.state.cameraSpeed   = cameraSpeed;
 
-		editorUI.Init(&instance, &device, &swapchain);
+		EditorUI::Init(&instance, &device, &swapchain);
 	}
 	// DrawLoadingSplash("Loading...");
 
@@ -111,7 +111,7 @@ bool Application::Init()
 		.sceneUBO = sceneUBO.get(),
 		.skybox = &skybox,
 		.debugRenderer = &debugRenderer,
-		.models = &models,
+		.models = models,
 	};
 	sceneRenderer.Init(renderConfig);
 
@@ -136,7 +136,6 @@ bool Application::Init()
     }
 
     camMode = CameraMode::FreeFly;
-    activeCamIdx = 0;
     editorUI.state.cameraComponents = std::span(sceneCameras.data(), MAX_SCENE_CAMERAS);
     editorUI.state.activeCameraIdx = activeCamIdx;
 
@@ -193,14 +192,14 @@ bool Application::Init()
 
 	lightMeta.count = static_cast<u32>(lights.size());
 
-    InitDefaultBindings();
+    InitDefaultKeyBindings();
 
 	debugData.debugMode = DebugView::Material;
 	Platform::ShowWindow(windowContext);
 	return true;
 }
 
-void Application::InitDefaultBindings()
+void Application::InitDefaultKeyBindings()
 {
     // --- Rebindable Movement (Keyboard + Gamepad) ---
     input.BindAction(Action::MoveForward,  Keyboard::W);
@@ -345,33 +344,36 @@ void Application::UpdateCamera()
         debugViewPopupTime = 1.5f;
     }
 
-
-    const bool altHeld = input.IsKeyHeld(Keyboard::Alt);
-    const bool shouldLock = camMode == CameraMode::FPS && !altHeld;
-
-    Platform::SetCursorLocked(&windowContext, shouldLock);
-    Platform::SetCursorVisible(!shouldLock);
+    // Platform::SetCursorLocked(&windowContext, shouldLock);
+    // Platform::SetCursorVisible(!shouldLock);
 
     glm::vec3 renderPos = activeCam.position;
     if (camMode == CameraMode::FPS)
     {
-        // 1. Update feet and timers
-        activeCam.controller.Update(activeCam, dt);
+    	if (input.IsKeyHeld(Keyboard::Alt))
+    	{
+    		Platform::SetCursorLocked(&windowContext, false);
+    		Platform::SetCursorVisible(true);
+    	} else
+    	{
+    		Platform::SetCursorLocked(&windowContext, false);
+    		Platform::SetCursorVisible(false);
+    		Platform::CenterMouse(&windowContext);
+    		activeCam.controller.Update(activeCam, dt);
+    	}
 
-        // 2. Apply Bobbing to the eye offset
-        const f32 s = std::sin(activeCam.controller.headTimer * glm::two_pi<f32>());
-        const f32 c = std::cos(activeCam.controller.headTimer * glm::two_pi<f32>());
+    	const f32 s = std::sin(activeCam.controller.headTimer * glm::two_pi<f32>());
+    	const f32 c = std::cos(activeCam.controller.headTimer * glm::two_pi<f32>());
 
-        glm::vec3 bobOffset = activeCam.base.right * (s * activeCam.controller.tune.bobHorizAmp);
-        bobOffset.y = std::abs(c * activeCam.controller.tune.bobVertAmp);
+    	glm::vec3 bobOffset = activeCam.base.right * (s * activeCam.controller.tune.bobHorizAmp);
+    	bobOffset.y = std::abs(c * activeCam.controller.tune.bobVertAmp);
 
-        // 3. Render Position = Feet + Height + Bob
-        renderPos = activeCam.position + glm::vec3(0, activeCam.controller.eyeHeight, 0) + bobOffset;
-
-        if (shouldLock) Platform::CenterMouse(&windowContext);
+    	renderPos = activeCam.position + glm::vec3(0, activeCam.controller.eyeHeight, 0) + bobOffset;
     }
     else
     {
+    	Platform::SetCursorLocked(&windowContext, false);
+    	Platform::SetCursorVisible(true);
         ApplyFreeFlyMovement(activeCamIdx, dt);
         renderPos = activeCam.position;
     }
@@ -429,7 +431,7 @@ void Application::ApplyFreeFlyMovement(const u32 idx, const f32 dt)
     if (input.IsActionHeld(Action::MoveLeft))     move -= cam.right;
     if (input.IsActionHeld(Action::MoveRight))    move += cam.right;
     if (input.IsActionHeld(Action::MoveUp))       move += cam.up;
-    if (input. IsActionHeld(Action::MoveDown))     move -= cam.up;
+    if (input.IsActionHeld(Action::MoveDown))     move -= cam.up;
 
     if (input.controllers[0].connected)
     {
@@ -564,7 +566,7 @@ void Application::RenderScene(u32 imageIndex)
     frame->queryPool.WriteTimestamp(&cmd, 0);
 #endif
 
-    sceneRenderer.PrepareFrame(&windowContext, &cullingCam, aspectRatio);
+    sceneRenderer.PrepareFrame(&windowContext, &cullingCam);
     sceneRenderer.RenderModels(frame->GetCommandBuffer(), frameIndex, sceneStats);
     cmd.EndDebugLabel();
 

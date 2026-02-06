@@ -30,7 +30,7 @@ struct SceneRenderConfig
 	SkyboxManager* skybox = nullptr;
 	DebugRenderer* debugRenderer = nullptr;
 
-	Vector<Renderer::ModelComponent>* models = nullptr;
+	std::span<Renderer::ModelComponent> models;
 	u32 drawLimit = 100000;
 };
 
@@ -40,7 +40,7 @@ public:
 	SceneRenderer() = default;
 
 	void Init(SceneRenderConfig& cfg);
-	void PrepareFrame(const Platform::WindowContext* window, const Camera* camera, f32 aspectRatio);
+	void PrepareFrame(const Platform::WindowContext* window, const Camera* camera);
 	void DrawStandardObject(const Renderer::ModelComponent* inst, Renderer::DrawCache& dc) const;
     static void DrawInstancedBatch(Renderer::VulkanModel* model, u32 count, u32 offset, Renderer::DrawCache& dc);
 	void RenderModels(Renderer::GPUCommandBuffer* cmd, u32 frameIndex, SceneStats& stats);

@@ -15,7 +15,6 @@ bool VulkanQueryPool::Init(VulkanDevice* inDevice, const u32 inQueryCount)
     device = inDevice;
     queryCount = inQueryCount;
 
-
     const VkQueryPoolCreateInfo createInfo = {
         .sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
         .queryType  = VK_QUERY_TYPE_TIMESTAMP,

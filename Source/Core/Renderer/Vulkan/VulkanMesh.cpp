@@ -76,8 +76,8 @@ VulkanModel::VulkanModel(VulkanDevice* device, LoadedModel& loadedModel, Descrip
 
 	// 3. Helper to register into the local bindless list
 	auto getBindlessIndex = [&](const std::string& path, bool srgb) -> u32 {
-		auto res = loadTex(path, srgb);
-		u32 idx = static_cast<u32>(bindlessEntries.size());
+		const auto res = loadTex(path, srgb);
+		const u32 idx = static_cast<u32>(bindlessEntries.size());
 		bindlessEntries.push_back(res);
 		return idx;
 	};
@@ -122,12 +122,10 @@ VulkanModel::VulkanModel(VulkanDevice* device, LoadedModel& loadedModel, Descrip
 		const size_t vBytes = totalVertices * sizeof(Vertex);
 		const size_t iBytes = totalIndices * sizeof(u32);
 
-		// 1. Initialize GPU Buffers
 		vertexBuffer.Init(device, BufferPreset::VertexStorageGPU, vBytes);
 		indexBuffer.Init(device, BufferPreset::IndexGPU, iBytes);
 		vertexBufferAddress = vertexBuffer.GetDeviceAddress();
 
-		// 2. Setup Staging
 		VulkanBuffer staging(device, BufferPreset::StagingUpload, vBytes + iBytes);
 		auto mappedPtr = static_cast<u8*>(staging.allocationInfo.pMappedData);
 
@@ -136,6 +134,7 @@ VulkanModel::VulkanModel(VulkanDevice* device, LoadedModel& loadedModel, Descrip
 		u32 vGlobalOffset = 0;
 		u32 iGlobalOffset = 0;
 
+		parts.reserve(loadedModel.meshes.size());
 		LOG(Info, "[VulkanModel] Flattening {} meshes into unified buffers ({} verts, {} indices)",
 		    loadedModel.meshes.size(), totalVertices, totalIndices);
 

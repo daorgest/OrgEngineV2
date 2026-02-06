@@ -25,7 +25,7 @@ namespace Renderer
         VkCommandPool immCommandPool = VK_NULL_HANDLE;
 
         ImmediateSubmitter() = default;
-        void Init(VulkanDevice* device);
+        void Init(VulkanDevice* inDevice);
         void Destroy();
 
         template <typename Func>

@@ -70,7 +70,7 @@ void SceneRenderer::Init(SceneRenderConfig& cfg)
 }
 
 
-void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Camera* camera, f32 aspectRatio)
+void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Camera* camera)
 {
     if (!window) return;
 
@@ -88,7 +88,7 @@ void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Ca
     frustum.Update(newVP);
 
     // Sorting models to their respective buckets before presentation :3
-    for (const auto& inst : *config.models)
+    for (const auto& inst : config.models)
     {
         if (!frustum.IsBoxInFrustum(inst.model->modelBounds, inst.transform)) continue;
 
@@ -144,6 +144,8 @@ void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Ca
 
 void SceneRenderer::DrawStandardObject(const Renderer::ModelComponent* inst, Renderer::DrawCache& dc) const
 {
+    assert(inst != nullptr && "No model to be rendered");
+    assert(inst->model->indexBuffer.IsValid() == true && "No index buffer in this current model");
     auto* model = inst->model;
     if (!model || !model->indexBuffer.IsValid() || model->vertexBufferAddress == 0) return;
 
@@ -195,6 +197,8 @@ void SceneRenderer::DrawStandardObject(const Renderer::ModelComponent* inst, Ren
 
 void SceneRenderer::DrawInstancedBatch(Renderer::VulkanModel* model, u32 count, u32 offset, Renderer::DrawCache& dc)
 {
+    assert(model != nullptr && "No model to be rendered");
+    assert(model->indexBuffer.IsValid() == true && "No index buffer in this current model");
     if (!model || !model->indexBuffer.IsValid() || model->vertexBufferAddress == 0) return;
 
 
@@ -234,7 +238,7 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
     stats.totalTris = 0;
     stats.totalMeshCount = 0;
 
-    if (!config.models || (standardBucket.empty() && transparentBucket.empty() && totalVisibleInstances == 0)) return;
+    if (!config.models.data() || (standardBucket.empty() && transparentBucket.empty() && totalVisibleInstances == 0)) return;
 
     stats.totalMeshCount = static_cast<u32>(standardBucket.size() + transparentBucket.size() + totalVisibleInstances);
 

@@ -577,7 +577,7 @@ bool Platform::ShowMessageBox(std::string_view message, std::string_view title, 
     const std::wstring wideTitle = ConvertToWideString(title);
 
     // Standard Win32 MessageBox call
-    int result = MessageBox(nullptr, wideMsg.c_str(), wideTitle.c_str(), flags);
+    const i32 result = MessageBox(nullptr, wideMsg.c_str(), wideTitle.c_str(), flags);
 
     if (type == MessageBoxType::Error && result == IDCANCEL)
     {

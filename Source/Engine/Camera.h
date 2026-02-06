@@ -26,9 +26,9 @@ struct Camera
 	f32 farPlane  = 10000.0f;
 
     void UpdateVecAndMat(const glm::vec3& position, f32 aspectRatio);
-    glm::mat4 GetViewMatrix(const glm::vec3& position) const;
-	glm::mat4 GetProjectionMatrix(f32 aspectRatio) const;
-    glm::mat4 GetViewProjectionMatrix(f32 aspectRatio) const;
+    [[nodiscard]] glm::mat4 GetViewMatrix(const glm::vec3& position) const;
+	[[nodiscard]] glm::mat4 GetProjectionMatrix(f32 aspectRatio) const;
+    [[nodiscard]] glm::mat4 GetViewProjectionMatrix(f32 aspectRatio) const;
 };
 
 struct CameraComponent

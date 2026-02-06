@@ -28,7 +28,7 @@ namespace Renderer
         bool ResizeIfNeeded() override;
         GPUTexture* GetCurrentImage() override;
 
-        [[nodiscard]] const Extent2D GetExtent() const override
+        [[nodiscard]] Extent2D GetExtent() const override
         {
             return {width, height};
         }

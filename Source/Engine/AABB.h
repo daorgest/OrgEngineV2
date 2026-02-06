@@ -141,7 +141,7 @@ struct Frustum
 		}
 	}
 
-	bool IsBoxInFrustum(const AABB& aabb, const glm::mat4& transform) const
+	[[nodiscard]] bool IsBoxInFrustum(const AABB& aabb, const glm::mat4& transform) const
 	{
 		// Transform AABB center to World Space
 		const auto globalCenter = glm::vec3(transform * glm::vec4(aabb.center, 1.0f));

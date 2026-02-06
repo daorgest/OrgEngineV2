@@ -86,7 +86,7 @@ struct Application
 	bool showEditorTools = true;
 
 	bool Init();
-    static void InitDefaultBindings();
+    static void InitDefaultKeyBindings();
     void Run();
 	void Cleanup();
 	void UpdateCamera();
