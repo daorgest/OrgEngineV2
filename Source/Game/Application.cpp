@@ -353,7 +353,7 @@ void Application::UpdateCamera()
         bool wantsUnlock = input.IsKeyHeld(Keyboard::Alt);
 
         // Only update platform state if it differs from what we want
-        if (windowContext.displayState.isCursorLocked == wantsUnlock)
+        if (windowContext.displayState.isFocused == wantsUnlock)
         {
             Platform::SetCursorLocked(&windowContext, !wantsUnlock);
             Platform::SetCursorVisible(wantsUnlock);
