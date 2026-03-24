@@ -182,6 +182,11 @@ VulkanPipelineBuilder& VulkanPipelineBuilder::UseLayout(const PipelineLayoutDesc
     data.config.pushConstants.clear();
     for (const auto& pc : desc.pushConstants)
     {
+        if (pc.size > device->deviceProperties.limits.maxPushConstantsSize)
+        {
+            LOG(Error, "Push constant size {} exceeds GPU limit {}", pc.size, device->deviceProperties.limits.maxPushConstantsSize);
+        }
+
         if (pc.size > 0)
         {
             AddPushConstant(pc.stages, pc.size, pc.offset);
