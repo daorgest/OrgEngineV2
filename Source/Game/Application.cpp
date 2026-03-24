@@ -350,17 +350,20 @@ void Application::UpdateCamera()
     glm::vec3 renderPos = activeCam.position;
     if (camMode == CameraMode::FPS)
     {
-    	if (input.IsKeyHeld(Keyboard::Alt))
-    	{
-    		Platform::SetCursorLocked(&windowContext, false);
-    		Platform::SetCursorVisible(true);
-    	} else
-    	{
-    		Platform::SetCursorLocked(&windowContext, false);
-    		Platform::SetCursorVisible(false);
-    		Platform::CenterMouse(&windowContext);
-    		activeCam.controller.Update(activeCam, dt);
-    	}
+        bool wantsUnlock = input.IsKeyHeld(Keyboard::Alt);
+
+        // Only update platform state if it differs from what we want
+        if (windowContext.displayState.isCursorLocked == wantsUnlock)
+        {
+            Platform::SetCursorLocked(&windowContext, !wantsUnlock);
+            Platform::SetCursorVisible(wantsUnlock);
+        }
+
+        if (!wantsUnlock)
+        {
+            Platform::CenterMouse(&windowContext);
+            activeCam.controller.Update(activeCam, dt);
+        }
 
     	const f32 s = std::sin(activeCam.controller.headTimer * glm::two_pi<f32>());
     	const f32 c = std::cos(activeCam.controller.headTimer * glm::two_pi<f32>());

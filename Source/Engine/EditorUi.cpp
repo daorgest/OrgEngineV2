@@ -1118,12 +1118,12 @@ void EditorUI::AppInfoPopup()
         snprintf(versionBuffer, sizeof(versionBuffer), "%u.%u.%u",
                  uv / 10000, (uv / 100) % 100, uv % 100);
         AddLibRow("ufbx", versionBuffer);
-#ifdef TRACY_ENABLE
-        // Most Tracy versions define TRACY_VERSION or similar depending on the tag
-        snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
-                 TRACY_VERSION_MAJOR, TRACY_VERSION_MINOR, TRACY_VERSION_PATCH);
-        AddLibRow("Tracy", versionBuffer);
-#endif
+// #ifdef TRACY_ENABLE
+//         // Most Tracy versions define TRACY_VERSION or similar depending on the tag
+//         snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
+//                  TRACY_VERSION_MAJOR, TRACY_VERSION_MINOR, TRACY_VERSION_PATCH);
+//         AddLibRow("Tracy", versionBuffer);
+// #endif
 
         ImGui::EndTable();
     }
