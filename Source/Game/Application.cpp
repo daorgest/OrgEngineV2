@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <chrono>
 
-#include "imgui.h"
+#include <imgui.h>
 #include "glm/gtc/constants.hpp"
 #include "glm/gtx/norm.hpp"
 #include "Input/InputSys.h"
@@ -15,7 +15,7 @@
 #include "MeshGenerator.h"
 #include "MeshLoader.h"
 #include "../Engine/ShaderConstants.h"
-#include "glm/gtx/transform.hpp"
+#include <glm/gtx/transform.hpp>
 #include "Input/InputSysGameInput.h"
 
 bool Application::Init()
@@ -66,7 +66,7 @@ bool Application::Init()
 		ZoneScopedN("Init Scene UBO");
 		DescriptorSetLayoutDesc sceneDesc = {
 			.setIndex = 0,
-			.bindings = Constants::Scene
+		    .bindings = { Constants::Scene }
 		};
 		sceneUBO = std::make_unique<Renderer::VulkanShaderBuffer>(&device, &globalDescriptorAlloc, sceneDesc);
 		sceneUBO->AllocateDescriptorSets();

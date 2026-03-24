@@ -23,49 +23,38 @@ void SceneRenderer::Init(SceneRenderConfig& cfg)
         // Set 1: Material (albedo, normal textures on a bindless array)
         // Set 2: Skybox cubemap (for IBL reflections)
         // Set 3: Instanced Data
-    DescriptorSetLayoutDesc sceneLayouts[] = {
-        {.setIndex = 0, .bindings = Constants::Scene},
-        {.setIndex = 1, .bindings = Constants::Material},
-        {.setIndex = 2, .bindings = Constants::Skybox},
-        {.setIndex = 3, .bindings = Constants::InstanceData}
+    PipelineLayoutDesc sceneLayout;
+    sceneLayout.setLayouts = {
+            { .setIndex = 0, .bindings = Constants::Scene },
+            { .setIndex = 1, .bindings = Constants::Material },
+            { .setIndex = 2, .bindings = Constants::Skybox },
+            { .setIndex = 3, .bindings = Constants::InstanceData }
     };
-
-    PushConstantDesc scenePushConstants = {
+    sceneLayout.pushConstants = {{
         .size = sizeof(PushConstants),
         .offset = 0,
         .stages = ShaderStage::Vertex | ShaderStage::Fragment
-    };
+    }};
 
     // Opaque/Masked Pipeline
     const Renderer::GraphicsPipelineDesc sceneDesc = {
         .vertexShader = sceneShader.get(),
         .fragmentShader = sceneShader.get(),
         .raster = GpuRasterDesc::Opaque3D(TextureFormat::BGRA8_SRGB, TextureFormat::D32_SFLOAT),
-        .layout = {
-            .setLayouts = std::span(sceneLayouts),
-            .pushConstants = std::span(&scenePushConstants, 1)
-        }
+        .layout = sceneLayout
     };
 
-    opaquePipeline = std::make_unique<Renderer::VulkanPipeline>();
-    if (!opaquePipeline->CreateGraphicsPipeline(config.device, sceneDesc))
-    {
-        LOG(Error, "SceneRenderer: Failed to create Opaque Pipeline");
-    }
+    opaquePipeline = config.device->CreateGraphicsPipeline(sceneDesc);
 
     // Transparent Pipeline
     Renderer::GraphicsPipelineDesc transDesc = sceneDesc;
     transDesc.raster = GpuRasterDesc::Transparent(TextureFormat::BGRA8_SRGB, TextureFormat::D32_SFLOAT);
-    transparentPipeline = std::make_unique<Renderer::VulkanPipeline>();
-    if (!transparentPipeline->CreateGraphicsPipeline(config.device, transDesc))
-    {
-        LOG(Error, "SceneRenderer: Failed to create Transparent Pipeline");
-    }
+    transparentPipeline = config.device->CreateGraphicsPipeline(transDesc);
 
-    materialBuffer = std::make_unique<Renderer::VulkanShaderBuffer>(cfg.device, cfg.descriptorAllocator, sceneLayouts[1]);
+    materialBuffer = std::make_unique<Renderer::VulkanShaderBuffer>(cfg.device, cfg.descriptorAllocator, sceneLayout.setLayouts[1]);
     materialBuffer->AllocateDescriptorSets(true, 1000);
 
-    instanceBuffer = std::make_unique<Renderer::VulkanShaderBuffer>(cfg.device, cfg.descriptorAllocator, sceneLayouts[3]);
+    instanceBuffer = std::make_unique<Renderer::VulkanShaderBuffer>(cfg.device, cfg.descriptorAllocator, sceneLayout.setLayouts[3]);
     instanceBuffer->AllocateDescriptorSets();
 }
 
@@ -241,7 +230,6 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
     if (!config.models.data() || (standardBucket.empty() && transparentBucket.empty() && totalVisibleInstances == 0)) return;
 
     stats.totalMeshCount = static_cast<u32>(standardBucket.size() + transparentBucket.size() + totalVisibleInstances);
-
     const u32 resIdx = frameIndex % MAX_FRAME_OVERLAP;
 
     megaStagingData.clear();
@@ -251,18 +239,16 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
     for (const auto& batch : instanceBucket)
     {
         if (batch.instanceData.empty()) continue;
-
         const size_t batchSize = batch.instanceData.size();
         std::memcpy(megaStagingData.data() + offset, batch.instanceData.data(), batchSize * sizeof(GPUInstanceSSBO));
         offset += batchSize;
     }
 
-    Renderer::VulkanBuffer currentIB; // Empty buffer to force first bind
     Renderer::DrawCache dc = {
         .activePipeline = opaquePipeline.get(),
         .cmd = cmd,
         .stats = &stats,
-        .lastIndexBuffer = &currentIB,
+        .lastIndexBuffer = nullptr,
         .frameIndex = resIdx
     };
 
@@ -272,7 +258,7 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
                                       megaStagingData.size() * sizeof(GPUInstanceSSBO));
     }
 
-    auto BindGlobalSets = [&](Renderer::VulkanPipeline* pipeline)
+    auto BindGlobalSets = [&](Renderer::GPUPipeline* pipeline)
     {
         cmd->BindPipeline(pipeline);
         dc.activePipeline = pipeline;
@@ -288,7 +274,7 @@ void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fram
         }
 
         // Set 3: Instance Data SSBO
-        instanceBuffer->Bind(cmd, *pipeline, resIdx);
+        instanceBuffer->Bind(cmd, pipeline, resIdx);
 
         // Set 1 is NOT bound here because it is model-specific!
         dc.lastMaterialSet = {};

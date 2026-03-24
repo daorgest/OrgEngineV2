@@ -146,6 +146,9 @@ target_include_directories(OrgEngineV2 PRIVATE
         ${CORE_DIR}/Math
         ${ENGINE_DIR}
         ${GAME_DIR}
+)
+
+target_include_directories(OrgEngineV2 SYSTEM PRIVATE
         ${3RDPARTY_DIR}/stb
         ${3RDPARTY_DIR}/tinyobjloader
         ${3RDPARTY_DIR}/imgui

@@ -69,7 +69,7 @@ namespace Renderer
 
 	struct DrawCache
 	{
-		VulkanPipeline* activePipeline = nullptr;
+		GPUPipeline* activePipeline = nullptr;
 		GPUCommandBuffer* cmd = nullptr; // Current command buffer
 		SceneStats* stats = nullptr; // Pointer to stats for tracking
 

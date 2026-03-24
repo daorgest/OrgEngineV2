@@ -6,7 +6,6 @@
 #include <cassert>
 #include <cmath>
 #include <optional>
-#include <span>
 #include <string>
 #include <type_traits>
 #include <variant>
@@ -752,7 +751,7 @@ struct Binding
 struct DescriptorSetLayoutDesc
 {
     u32 setIndex = 0;
-    std::span<Binding> bindings; // resource bindings
+    Vector<Binding> bindings; // resource bindings
 };
 
 struct PushConstantDesc
@@ -764,11 +763,8 @@ struct PushConstantDesc
 
 struct PipelineLayoutDesc
 {
-    std::span<const DescriptorSetLayoutDesc> setLayouts;
-    std::span<const PushConstantDesc> pushConstants;
-
-    // Future-proofing for VK_EXT_descriptor_buffer
-    bool useDescriptorBuffers = false;
+    Vector<DescriptorSetLayoutDesc> setLayouts;
+    Vector<PushConstantDesc> pushConstants;
 };
 
 

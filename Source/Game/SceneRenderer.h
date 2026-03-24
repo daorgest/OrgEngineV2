@@ -65,7 +65,7 @@ private:
     std::unique_ptr<Renderer::GPUShader> sceneShader;
 
     // Pipelines for the render states
-	std::unique_ptr<Renderer::VulkanPipeline> opaquePipeline;
-	std::unique_ptr<Renderer::VulkanPipeline> transparentPipeline;
+    std::unique_ptr<Renderer::GPUPipeline> opaquePipeline;
+    std::unique_ptr<Renderer::GPUPipeline> transparentPipeline;
 };
 

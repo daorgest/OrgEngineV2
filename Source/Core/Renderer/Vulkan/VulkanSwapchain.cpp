@@ -230,11 +230,10 @@ void VulkanSwapchain::CreateShadowMap()
     TextureInfo shadowMapInfo = {
         .extent = { 2048, 2048, 1 },
         .format = TextureFormat::D32_SFLOAT,
-        // Must include Sampled so it can be read in the lighting pass later
         .usage = ImageUsage::DepthStencil | ImageUsage::Sampled
     };
     shadowTexture.Init(vkDev, shadowMapInfo);
-    shadowTexture.SetName("Shadow Map Storage");
+    shadowTexture.SetName("Shadow Map Atlas");
 }
 
 void VulkanSwapchain::DestroyDepthImage()

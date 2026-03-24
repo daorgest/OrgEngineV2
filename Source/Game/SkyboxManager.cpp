@@ -216,16 +216,18 @@ bool SkyboxManager::CreateShaderAndPipeline()
 		.WriteCombinedImage(0, &cubemap, &sampler, 0)
 		.UpdateSet(devicePtr, descriptorSet);
 
-	static DescriptorSetLayoutDesc setLayout = {
-		.setIndex = 2,
-		.bindings = Constants::Skybox,
-	};
+    PipelineLayoutDesc skyLayout;
+    skyLayout.setLayouts = {
+        {.setIndex = 0, .bindings = {Constants::Skybox.begin(), Constants::Skybox.end()}}
+    };
 
-	static PushConstantDesc pushConstant = {
-		.size   = sizeof(SkyPushConstants),
-		.offset = 0,
-		.stages = ShaderStage::Vertex
-	};
+    skyLayout.pushConstants = {
+        {
+            .size = sizeof(SkyPushConstants),
+            .offset = 0,
+            .stages = ShaderStage::Vertex
+        }
+    };
 
 	const GraphicsPipelineDesc skyboxDesc = {
 		.vertexShader   = shader.get(),
@@ -238,37 +240,32 @@ bool SkyboxManager::CreateShaderAndPipeline()
 			.depthOp     = CompareOp::GreaterOrEqual,
 			.colorFormats = { TextureFormat::BGRA8_SRGB }
 		},
-		.layout = {
-			.setLayouts   = SPAN_ONE(setLayout),
-			.pushConstants = SPAN_ONE(pushConstant)
-		}
+		.layout = skyLayout
 	};
 
-	const auto result = pipeline.CreateGraphicsPipeline(devicePtr, skyboxDesc);
-	return result.has_value();
-
+    pipeline = devicePtr->CreateGraphicsPipeline(skyboxDesc);
 	LOG(Info, "Skybox: Successfully loaded pipeline");
+    return pipeline != nullptr && pipeline->IsValid();
 }
 
-void SkyboxManager::Render(GPUCommandBuffer* cmd, const Camera& camera, f32 aspectRatio)
+void SkyboxManager::Render(GPUCommandBuffer* cmd, const Camera& camera, f32 aspectRatio) const
 {
-	if (!shader || !pipeline.IsValid() || cubemap.image == nullptr)
-		return;
+    if (!pipeline || !pipeline->IsValid() || cubemap.image == nullptr)
+        return;
 
-	cmd->BindPipeline(&pipeline);
-	cmd->BindDescriptorSet(&descriptorSet, 0, &pipeline);
+    cmd->BindPipeline(pipeline.get());
+    cmd->BindDescriptorSet(&descriptorSet, 0, pipeline.get());
 
 	const SkyPushConstants skyPC = {
 		.view = camera.GetProjectionMatrix(aspectRatio) * camera.GetViewMatrix(glm::vec3{0.0f})
 	};
 
-	cmd->PushConstants(&pipeline, ShaderStage::Vertex, 0, sizeof(SkyPushConstants), &skyPC);
+	cmd->PushConstants(pipeline.get(), ShaderStage::Vertex, 0, sizeof(SkyPushConstants), &skyPC);
 	cmd->Draw(36, 1, 0, 0);
 }
 
 void SkyboxManager::Cleanup()
 {
-	if (pipeline.IsValid()) pipeline.Destroy();
 	if (cubemap.image) cubemap.Destroy();
 	sampler.Destroy();
 	layout.Destroy(devicePtr);

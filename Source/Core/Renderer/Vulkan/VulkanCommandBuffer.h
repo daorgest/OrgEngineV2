@@ -53,7 +53,7 @@ namespace Renderer
 
 		// Pipeline & Descriptors
 		void BindPipeline(GPUPipeline* pipeline) override;
-		void BindDescriptorSet(DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline) override;
+		void BindDescriptorSet(const DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline) override;
 		void PushConstants(GPUPipeline* pipeline, ShaderStageFlags stages, u32 offset, u32 size, const void* data) override;
 
 		void TransitionLayout(GPUTexture* texture, TextureLayout newLayout) override;

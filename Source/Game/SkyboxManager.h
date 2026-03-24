@@ -34,7 +34,7 @@ public:
 	Renderer::VulkanTexture               CreateHDRTexture(const char* path) const;
 	[[nodiscard]] Renderer::VulkanTexture CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const;
 
-	void Render(Renderer::GPUCommandBuffer* cmd, const Camera& camera, f32 aspectRatio);
+	void Render(Renderer::GPUCommandBuffer* cmd, const Camera& camera, f32 aspectRatio) const;
 	void Cleanup();
 
 	// Getters for IBL integration
@@ -53,7 +53,7 @@ private:
 	Renderer::VulkanTexture cubemap;
 	Renderer::VulkanSampler sampler;
 	std::unique_ptr<Renderer::GPUShader> shader;
-	Renderer::VulkanPipeline pipeline;
+	std::unique_ptr<Renderer::GPUPipeline> pipeline;
 	Renderer::DescriptorLayout layout;
 	Renderer::DescriptorSet descriptorSet;
 };

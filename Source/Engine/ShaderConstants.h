@@ -10,7 +10,7 @@
 namespace Constants
 {
     // Scene Global Data
-    inline Array<Binding, 5> Scene = {
+    inline const Vector<Binding> Scene = {
         {2, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(DebugUBO), 1, false},
         {3, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(CameraUBO), 1, false},
         {4, DescriptorType::StorageBuffer, ShaderStage::AllGraphics,    sizeof(LightUBO) * MAX_LIGHTS, 1, false},
@@ -19,22 +19,23 @@ namespace Constants
     };
 
     // PBR Material
-    inline Array<Binding, 2> Material = {
+    inline const Vector<Binding> Material = {
         {0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics, sizeof(MaterialProperties) * 1000, 1, false},
         {1, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics, 0, 1000, true}
     };
 
     // Instance Data SSBO (Set 3)
-    inline Array<Binding, 1> InstanceData = {
+    inline const Vector<Binding> InstanceData = {
         {0, DescriptorType::StorageBuffer, ShaderStage::Vertex, sizeof(GPUInstanceSSBO) * 10000, 1, false}
     };
 
     // Skybox
-    inline Array<Binding, 1> Skybox = {
+    inline const Vector<Binding> Skybox = {
         {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics}
     };
 
-    inline Array<Binding, 1> Compute = {
+    // Compute Shader
+    inline const Vector<Binding> Compute = {
         {0, DescriptorType::StorageImage, ShaderStage::Compute, 0, 1, false}
     };
 }

@@ -9,6 +9,7 @@
 #include "VulkanCommandBuffer.h"
 #include "VulkanConvert.h"
 #include "VulkanDescriptors.h"
+#include "VulkanDevice.h"
 #include "VulkanInit.h"
 #include "VulkanPipeline.h"
 #include "Tools/Logger.h"
@@ -18,7 +19,7 @@ using namespace Renderer;
 
 // Insertion sort :3
 template<typename T>
-static auto SortBindingsByBinding(std::span<T> bindings) -> void
+static auto SortBindingsByBinding(Vector<T>& bindings) -> void
 {
 	for (u32 i = 1; i < bindings.size(); ++i)
 	{
@@ -33,9 +34,9 @@ static auto SortBindingsByBinding(std::span<T> bindings) -> void
 	}
 }
 
-VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc)
+VulkanShaderBuffer::VulkanShaderBuffer(GPUDevice* device, DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc)
 {
-	this->device = dev;
+	this->device = static_cast<VulkanDevice*>(device);
 	this->allocator = alloc;
 	this->desc = desc;
 
@@ -57,7 +58,7 @@ VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGro
 	}
 
 	// Builder now handles internal binding flags (bindless, stageFlags, etc.)
-	layout = layoutBuilder.Build(device);
+	layout = layoutBuilder.Build(this->device);
 
     // 2. Initialize Mapping Table
     const u32 bindingTableSize = maxBinding + 1;
@@ -82,7 +83,7 @@ VulkanShaderBuffer::VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGro
 	        {
 	            // Note: index() uses currentSlot via bindingToSlot
 	            const u32 linearIndex = (f * slotCount) + currentSlot;
-	            buffers[linearIndex] = VulkanBuffer(device, ToPreset(b.type), b.size);
+	            buffers[linearIndex] = VulkanBuffer(this->device, ToPreset(b.type), b.size);
 	        }
 	        currentSlot++;
 	    }
@@ -160,14 +161,12 @@ void VulkanShaderBuffer::Update(u32 frameIndex, const void* data, size_t size) c
 	UpdateBinding(frameIndex, 0, data, size);
 }
 
-void VulkanShaderBuffer::Bind(GPUCommandBuffer* cmd, const VulkanPipeline& pipeline, u32 frameIndex) const
+void VulkanShaderBuffer::Bind(GPUCommandBuffer* cmd, GPUPipeline* pipeline, u32 frameIndex) const
 {
 	ZoneScopedN("VulkanShaderBuffer::Bind");
 	assert(frameIndex < MAX_FRAME_OVERLAP && "frameIndex out of range");
 
-	const auto* vkCmd = static_cast<VulkanCommandBuffer*>(cmd);
-	const DescriptorSet set = descriptorSets[frameIndex];
-	vkCmdBindDescriptorSets(vkCmd->GetVkHandle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.vkLayout, desc.setIndex, 1, &set.vk, 0, nullptr);
+    cmd->BindDescriptorSet(&descriptorSets[frameIndex], desc.setIndex, pipeline);
 }
 
 void VulkanShaderBuffer::AllocateDescriptorSets(const bool isBindless, const u32 bindlessCount)

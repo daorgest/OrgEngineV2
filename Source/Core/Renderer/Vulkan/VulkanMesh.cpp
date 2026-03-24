@@ -34,7 +34,7 @@ VulkanModel::VulkanModel(VulkanDevice* device, LoadedModel& loadedModel, Descrip
 
 	DescriptorSetLayoutDesc matLayoutDesc = {
 		.setIndex = 1,
-		.bindings = Constants::Material
+	    .bindings = { Constants::Material}
 	};
 
 	materialBuffer = std::make_unique<VulkanShaderBuffer>(device, &globalAllocator, matLayoutDesc);

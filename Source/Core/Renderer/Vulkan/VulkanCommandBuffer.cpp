@@ -248,17 +248,14 @@ void VulkanCommandBuffer::EndRendering()
 
 void VulkanCommandBuffer::BindPipeline(GPUPipeline* pipeline)
 {
-	auto* vkPipeline = static_cast<VulkanPipeline*>(pipeline);
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline->vk);
+	const auto* vkPipeline = static_cast<const VulkanPipeline*>(pipeline);
+	vkCmdBindPipeline(cmd, vkPipeline->bindPoint, vkPipeline->vkPipeline);
 }
 
-void VulkanCommandBuffer::BindDescriptorSet(DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline)
+void VulkanCommandBuffer::BindDescriptorSet(const DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline)
 {
-	const auto* vkSet = set;
-	const auto* vkPipeline = static_cast<VulkanPipeline*>(pipeline);
-
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline->vkLayout,
-	                       setIndex, 1, &vkSet->vk, 0, nullptr);
+	const auto* vkPipeline = static_cast<const VulkanPipeline*>(pipeline);
+	vkCmdBindDescriptorSets(cmd, vkPipeline->bindPoint, vkPipeline->vkLayout, setIndex, 1, &set->vk, 0, nullptr);
 }
 
 void VulkanCommandBuffer::PushConstants(GPUPipeline* pipeline, ShaderStageFlags stages, u32 offset, u32 size, const void* data)

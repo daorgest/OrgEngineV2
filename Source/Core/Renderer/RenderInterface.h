@@ -12,6 +12,7 @@
 
 namespace Renderer
 {
+    struct ComputePipelineDesc;
     struct GPUCommandBuffer;
     struct GraphicsPipelineDesc;
     struct DescriptorSet;
@@ -100,15 +101,21 @@ namespace Renderer
 		virtual void RegisterPipeline(void* pipeline, const char* sourcePath) = 0;
 	};
 
+    enum class PipelineType : u32
+    {
+        Graphics,
+        Compute,
+        Raytracing,
+        Unknown
+    };
+
 	/// Abstract graphics/compute pipeline
 	struct GPUPipeline
 	{
 		virtual ~GPUPipeline() = default;
 		virtual void Destroy() = 0;
+	    virtual void Rebuild() = 0;
 		[[nodiscard]] virtual bool IsValid() const = 0;
-
-		// Hot-reload support
-		virtual void Rebuild(GPUDevice* device) = 0;
 	};
 
 	// Descriptors (Bindless Resources)
@@ -149,6 +156,8 @@ namespace Renderer
         virtual std::unique_ptr<GPUShader> CreateShader(std::span<const u32> code) = 0;
         virtual std::unique_ptr<GPUShader> CreateShaderPath(const char* path) = 0;
         virtual std::unique_ptr<GPUBuffer> CreateBuffer(BufferInfo& info) = 0;
+        virtual std::unique_ptr<GPUPipeline> CreateGraphicsPipeline(const GraphicsPipelineDesc& desc) = 0;
+        virtual std::unique_ptr<GPUPipeline> CreateComputePipeline(const ComputePipelineDesc& desc) = 0;
 
         [[nodiscard]] virtual const GPUDeviceDesc& GetDeviceDesc() const = 0;
     };
@@ -260,7 +269,7 @@ namespace Renderer
 
         // Pipeline & Descriptors
         virtual void BindPipeline(GPUPipeline* pipeline) = 0;
-        virtual void BindDescriptorSet(DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline) = 0;
+        virtual void BindDescriptorSet(const DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline) = 0;
         virtual void PushConstants(GPUPipeline* pipeline, ShaderStageFlags stages, u32 offset, u32 size,
                                    const void* data) = 0;
 

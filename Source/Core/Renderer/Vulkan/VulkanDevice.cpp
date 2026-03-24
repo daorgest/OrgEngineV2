@@ -335,6 +335,16 @@ std::unique_ptr<GPUShader> VulkanDevice::CreateShaderPath(const char* path)
     return CreateShader(*code);
 }
 
+std::unique_ptr<GPUPipeline> VulkanDevice::CreateGraphicsPipeline(const GraphicsPipelineDesc& desc)
+{
+    return std::make_unique<VulkanGraphicsPipeline>(this, desc);
+}
+
+std::unique_ptr<GPUPipeline> VulkanDevice::CreateComputePipeline(const ComputePipelineDesc& desc)
+{
+    return std::make_unique<VulkanComputePipeline>(this, desc);
+}
+
 void ImmediateSubmitter::Init(VulkanDevice* inDevice)
 {
     assert(device == nullptr && "Device pointer not fond");

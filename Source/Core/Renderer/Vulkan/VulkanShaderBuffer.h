@@ -36,13 +36,13 @@ namespace Renderer
 			return (frame * slotCount) + slot;
 		}
 
-		VulkanShaderBuffer(VulkanDevice* dev, DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc);
+		VulkanShaderBuffer(GPUDevice* device, DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc);
 
 		// Raw update with manual size
 		void UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size) const;
 
 		void Update(u32 frameIndex, const void* data, size_t size) const;
-		void Bind(GPUCommandBuffer* cmd, const VulkanPipeline& pipeline, u32 frameIndex) const;
+		void Bind(GPUCommandBuffer* cmd, GPUPipeline* pipeline, u32 frameIndex) const;
 		void AllocateDescriptorSets(bool isBindless = false, u32 bindlessCount = 1);
 		void Destroy();
 	};

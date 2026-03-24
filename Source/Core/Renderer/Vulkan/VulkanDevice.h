@@ -9,6 +9,7 @@
 #include "RenderInterface.h"
 #include "VulkanCheck.h"
 #include "VulkanDebugUtils.h"
+#include "VulkanPipeline.h"
 #include "VulkanTexture.h"
 #include "Tools/Logger.h"
 
@@ -64,6 +65,8 @@ namespace Renderer
         std::unique_ptr<GPUBuffer> CreateBuffer(BufferInfo& info) override;
         std::unique_ptr<GPUShader> CreateShader(std::span<const u32> code) override;
         std::unique_ptr<GPUShader> CreateShaderPath(const char* path) override;
+        std::unique_ptr<GPUPipeline> CreateGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
+        std::unique_ptr<GPUPipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override;
 
         // Public Vulkan handles for compatibility
         VkDevice device = VK_NULL_HANDLE;

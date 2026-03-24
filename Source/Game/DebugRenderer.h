@@ -35,7 +35,7 @@ public:
 	std::unique_ptr<Renderer::GPUShader> shader;
 	std::unique_ptr<Renderer::VulkanShaderBuffer> instanceBuffer;    // internal
 	Renderer::VulkanShaderBuffer* sceneUBO = nullptr;          // external
-	Renderer::VulkanPipeline pipeline;
+	std::unique_ptr<Renderer::GPUPipeline> pipeline;
 
 	u32 maxInstances = 500000;
 	glm::vec4 color = {1.0f, 1.0f, 0.0f, 1.0f};

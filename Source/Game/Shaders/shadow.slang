@@ -1,33 +1,34 @@
-// --- Interface Structures ---
+struct PushConstants
+{
+    float4x4 model;
+    float4x4 lightSpaceMatrix;
+};
+
+[[vk::push_constant]] PushConstants pc;
 
 struct VertexInput
 {
     float3 position : POSITION;
 };
 
-struct VertexOutput
+struct Coords
 {
-
-};
-
-struct Coords {
     float4 clipPos : SV_Position;
-    float2 uv      : TEXCOORD0;
 };
-
-// --- Entry Points ---
 
 [shader("vertex")]
-Coords vertexMain(VertexInput input) {
+Coords vertexMain(VertexInput input)
+{
     Coords output;
 
-    output.clipPos = float4(input.position, 1.0);
+    float4 worldPos = mul(pc.model, float4(input.position, 1.0));
+    output.clipPos = mul(pc.lightSpaceMatrix, worldPos);
 
     return output;
 }
 
 [shader("fragment")]
-float4 fragmentMain(Coords input) : SV_Target {
-    // Return a solid magenta color (standard for "empty" or "error" shaders)
-    return float4(1.0, 0.0, 1.0, 1.0);
+void fragmentMain()
+{
+    // Empty for depth-only shadow mapping
 }
