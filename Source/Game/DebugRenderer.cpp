@@ -1,7 +1,6 @@
 #include "DebugRenderer.h"
 
 #include "VulkanDevice.h"
-#include "Tools/Logger.h"
 #include "VulkanShader.h"
 #include "Tools/FileManager.h"
 
@@ -26,8 +25,6 @@ bool DebugRenderer::Initialize(GPUDevice* device, VulkanShaderBuffer* sceneUBO,
             }
     };
 	instanceBuffer = std::make_unique<VulkanShaderBuffer>(device, globalDescriptorAllocator, instSetDesc);
-	instanceBuffer->AllocateDescriptorSets();
-
 
     PipelineLayoutDesc debugLayout;
     debugLayout.setLayouts = {
@@ -40,8 +37,8 @@ bool DebugRenderer::Initialize(GPUDevice* device, VulkanShaderBuffer* sceneUBO,
 
 
 	GraphicsPipelineDesc debugDesc = {
-		.vertexShader   = shader.get(),
-		.fragmentShader = shader.get(),
+		.vertexShader   = shader,
+		.fragmentShader = shader,
 		.raster = {
 			.topology     = PrimitiveTopology::LineList,
 			.cull         = CullMode::None,

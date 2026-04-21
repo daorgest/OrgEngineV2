@@ -314,7 +314,7 @@ namespace ImOGuizmo {
 		}
 		internal::config.mDrawList = nullptr;
 
-		if (selection != -1 && ImGui::IsMouseClicked(ImGuiPopupFlags_MouseButtonLeft)) {
+		if (selection != -1 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
 			float modelMat[16];
 			internal::invert4x4(viewMatrix, modelMat);
 

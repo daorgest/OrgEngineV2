@@ -3,31 +3,17 @@
 //
 
 #pragma once
+#include <filesystem>
 #include "RendererTypes.h"
 #include "RenderInterface.h"
+#include "ShaderCompiler.h"
 #include "VulkanInit.h"
 #include "Tools/Vector.h"
 
 namespace Renderer
 {
-	struct DescriptorLayout;
-	struct VulkanDevice;
-
-	struct GraphicsPipelineDesc
-	{
-		GPUShader* vertexShader   = nullptr;
-		GPUShader* fragmentShader = nullptr;
-
-		VertexInputLayout vertexLayout;
-		GpuRasterDesc raster;
-		PipelineLayoutDesc layout;
-	};
-
-	struct ComputePipelineDesc
-	{
-		GPUShader* computeShader = nullptr;
-	    PipelineLayoutDesc layout;
-	};
+    struct DescriptorLayout;
+    struct VulkanDevice;
 
     struct VulkanPipeline : GPUPipeline
     {
@@ -50,48 +36,69 @@ namespace Renderer
             }
         }
 
-        ~VulkanPipeline() override
-        {
-            VulkanPipeline::Destroy();
-        }
-        void Destroy() override;
+        ~VulkanPipeline() override = default;
         void Rebuild() override;
+        void Destroy() override;
         [[nodiscard]] bool IsValid() const override { return vkPipeline != VK_NULL_HANDLE; }
+        [[nodiscard]] std::string_view GetSourcePath() const;
 
-        VulkanDevice* device;
+        void ApplyReload(const CompileResult& result);
+
+        [[nodiscard]] const PipelineLayoutDesc& GetLayoutDesc() const override = 0;
+
+        VulkanDevice* device = nullptr;
         PipelineType type;
         VkPipelineBindPoint bindPoint;
         VkPipeline vkPipeline = VK_NULL_HANDLE;
         VkPipelineLayout vkLayout = VK_NULL_HANDLE;
+        Vector<VkDescriptorSetLayout> descriptorSetLayouts;
         bool ownsLayout = false;
+
     protected:
         virtual void CreateInternal() = 0;
     };
 
-    struct VulkanGraphicsPipeline : VulkanPipeline
+    struct VulkanGraphicsPipeline final : VulkanPipeline
     {
-        VulkanGraphicsPipeline(VulkanDevice* device, const GraphicsPipelineDesc& inConfig) : VulkanPipeline(device, PipelineType::Graphics), config(inConfig)
+        friend struct VulkanPipeline;
+
+        VulkanGraphicsPipeline(VulkanDevice* device, const GraphicsPipelineDesc& inConfig) :
+            VulkanPipeline(device, PipelineType::Graphics), config(inConfig)
         {
             Create();
         };
 
+        ~VulkanGraphicsPipeline() override { VulkanPipeline::Destroy(); }
+
+        [[nodiscard]] const PipelineLayoutDesc& GetLayoutDesc() const override { return config.layout; };
+        [[nodiscard]] GraphicsPipelineDesc& GetPipelineConfig() { return config; }
+
     protected:
         void CreateInternal() override { Create(); }
         void Create();
+
     private:
         GraphicsPipelineDesc config;
     };
 
-    struct VulkanComputePipeline : VulkanPipeline
+    struct VulkanComputePipeline final : VulkanPipeline
     {
-        VulkanComputePipeline(VulkanDevice* device, const ComputePipelineDesc& inConfig) : VulkanPipeline(device, PipelineType::Compute), config(inConfig)
+        friend struct VulkanPipeline;
+
+        VulkanComputePipeline(VulkanDevice* device, const ComputePipelineDesc& inConfig) :
+            VulkanPipeline(device, PipelineType::Compute), config(inConfig)
         {
             Create();
         };
 
+        ~VulkanComputePipeline() override { VulkanPipeline::Destroy(); }
+
+        [[nodiscard]] const PipelineLayoutDesc& GetLayoutDesc() const override { return config.layout; };
+
     protected:
         void CreateInternal() override { Create(); }
         void Create();
+
     private:
         ComputePipelineDesc config;
     };
@@ -101,54 +108,59 @@ namespace Renderer
         Vector<VkPipelineShaderStageCreateInfo> stages;
     };
 
-	struct PipelineConfig
-	{
-		VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
-		VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    struct PipelineConfig
+    {
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+        VkPipelineRasterizationStateCreateInfo rasterizer = {};
 
-		Vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments;
-		Vector<VkFormat> colorAttachmentFormats;
-		VkFormat depthAttachmentFormat = VK_FORMAT_UNDEFINED;
+        Vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments;
+        Vector<VkFormat> colorAttachmentFormats;
+        VkFormat depthAttachmentFormat = VK_FORMAT_UNDEFINED;
 
-		VkPipelineMultisampleStateCreateInfo multisampling = {};
-		VkPipelineLayout layout = VK_NULL_HANDLE;
-		VkPipelineDepthStencilStateCreateInfo depthStencil = {};
-		VkPipelineRenderingCreateInfo renderInfo = {};
+        VkPipelineMultisampleStateCreateInfo multisampling = {};
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+        VkPipelineRenderingCreateInfo renderInfo = {};
 
-		Vector<VkVertexInputBindingDescription> bindings;
-		Vector<VkVertexInputAttributeDescription> attributes;
-	    Vector<VkPushConstantRange> pushConstants;
-	};
+        Vector<VkVertexInputBindingDescription> bindings;
+        Vector<VkVertexInputAttributeDescription> attributes;
+        Vector<VkPushConstantRange> pushConstants;
+        Vector<VkDescriptorSetAndBindingMappingEXT> vkMappings;
+        PipelineLayoutDesc layoutDesc;
+    };
 
-	class VulkanPipelineBuilder
-	{
-	public:
-		struct PipelineData
-		{
-			ShaderStages shaderStages;
-			PipelineConfig config;
-		} data;
+    class VulkanPipelineBuilder
+    {
+    public:
+        struct PipelineData
+        {
+            ShaderStages shaderStages;
+            PipelineConfig config;
+        } data;
 
-		VulkanPipelineBuilder();
-
-
-		VulkanPipelineBuilder& ApplyRasterDesc(const GpuRasterDesc& raster);
-		VulkanPipelineBuilder& SetGraphicsStage(GPUShader* vert, GPUShader* frag);
-		VulkanPipelineBuilder& SetComputeStage(GPUShader* compute);
-		VulkanPipelineBuilder& SetVertexInput(const VertexInputLayout& layout);
-	    VulkanPipelineBuilder& AddPushConstant(ShaderStageFlags stages, u32 size, u32 offset = 0);
-	    VulkanPipelineBuilder& UseLayout(const PipelineLayoutDesc& desc, const VulkanDevice* device);
-	    VkPipelineLayout BuildLayout(const VulkanDevice* device);
-		static Result<VkPipeline> BuildGraphicsPipeline(const VulkanDevice* device, const VulkanPipelineBuilder& b, VkPipelineLayout layout);
+        VulkanPipelineBuilder();
 
 
-		// Static helpers
-		static VkPipelineDynamicStateCreateInfo MakeDynamicStateInfo();
-		static VkPipelineViewportStateCreateInfo MakeViewportInfo();
-		static VkPipelineColorBlendStateCreateInfo MakeBlendInfo(const Vector<VkPipelineColorBlendAttachmentState>& attachments);
-		static VkPipelineVertexInputStateCreateInfo MakeVertexInputInfo(const PipelineConfig& cfg);
-		static void LogPipelineStages(const Vector<VkPipelineShaderStageCreateInfo>& stages);
-	private:
-	    Vector<VkDescriptorSetLayout> descriptorSetLayouts;
-	};
+        VulkanPipelineBuilder& ApplyRasterDesc(const GpuRasterDesc& raster);
+        VulkanPipelineBuilder& SetGraphicsStage(const std::shared_ptr<GPUShader>& vert,
+                                                const std::shared_ptr<GPUShader>& frag);
+        VulkanPipelineBuilder& SetComputeStage(const std::shared_ptr<GPUShader>& compute);
+        VulkanPipelineBuilder& SetVertexInput(const VertexInputLayout& layout);
+        VulkanPipelineBuilder& AddPushConstant(ShaderStageFlags stages, u32 size, u32 offset = 0);
+        VulkanPipelineBuilder& UseLayout(const PipelineLayoutDesc& desc, const VulkanDevice* device);
+        VkPipelineLayout BuildLayout(const VulkanDevice* device);
+        static Result<VkPipeline> BuildGraphicsPipeline(const VulkanDevice* device, const VulkanPipelineBuilder& b,
+                                                        VkPipelineLayout layout);
+
+        // Static helpers
+        static VkPipelineDynamicStateCreateInfo MakeDynamicStateInfo();
+        static VkPipelineViewportStateCreateInfo MakeViewportInfo();
+        static VkPipelineColorBlendStateCreateInfo MakeBlendInfo(
+            const Vector<VkPipelineColorBlendAttachmentState>& attachments);
+        static VkPipelineVertexInputStateCreateInfo MakeVertexInputInfo(const PipelineConfig& cfg);
+        static void LogPipelineStages(const Vector<VkPipelineShaderStageCreateInfo>& stages);
+
+    private:
+        Vector<VkDescriptorSetLayout> descriptorSetLayouts;
+    };
 } // namespace Renderer

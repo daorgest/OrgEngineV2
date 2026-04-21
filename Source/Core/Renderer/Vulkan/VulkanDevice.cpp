@@ -8,7 +8,8 @@
 #include "VulkanCommandBuffer.h"
 #include "VulkanInit.h"
 #include "VulkanShader.h"
-#include "Tools/Array.h"
+#include "VulkanShaderBuffer.h"
+#include "VulkanTexture.h"
 #include "Tools/FileManager.h"
 
 static Vector requiredDeviceExtensions = {
@@ -19,10 +20,26 @@ static Vector requiredDeviceExtensions = {
     VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
     VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
     VK_EXT_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME,
-    VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME
+    VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME,
+    // VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME /// sooon :3
 };
 
 using namespace Renderer;
+
+void ImmediateSubmitter::Init(VulkanDevice* inDevice)
+{
+    assert(device == nullptr && "Device pointer not fond");
+    this->device = inDevice;
+
+    cmdBuffer.Init(device);
+    immFence = std::make_unique<VulkanFence>(device);
+    vkResetFences(device->device, 1, &immFence->fence);
+}
+
+void ImmediateSubmitter::Destroy() const
+{
+    cmdBuffer.Destroy();
+}
 
 // RHI interface implementation
 bool VulkanDevice::Init(GPUInterface* gpuInterface)
@@ -30,6 +47,27 @@ bool VulkanDevice::Init(GPUInterface* gpuInterface)
     // Cast to VulkanInstance (safe because we control the backend)
     auto* vkInstance = static_cast<VulkanInstance*>(gpuInterface);
     return Init(vkInstance);
+}
+
+void VulkanDevice::Destroy()
+{
+    immediateSubmitter.Destroy();
+
+    if (allocator != VK_NULL_HANDLE)
+    {
+        vmaDestroyAllocator(allocator);
+        allocator = VK_NULL_HANDLE;
+    }
+
+    if (device != VK_NULL_HANDLE)
+    {
+        vkDestroyDevice(device, nullptr);
+        device = VK_NULL_HANDLE;
+    }
+
+    physicalDevice = nullptr;
+    graphicsQueue = nullptr;
+    instance = nullptr;
 }
 
 // Vulkan-specific implementation
@@ -40,14 +78,14 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 
     u32 deviceCount = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(inst->instance, &deviceCount, nullptr));
-    if (deviceCount == 0)
+    if (deviceCount < 1)
     {
         LOG(Error, "Failed to find GPU!");
         return false;
     }
 
     Vector<VkPhysicalDevice> devices(deviceCount);
-    vkEnumeratePhysicalDevices(inst->instance, &deviceCount, devices.data());
+    VK_CHECK(vkEnumeratePhysicalDevices(inst->instance, &deviceCount, devices.data()));
 
     VkPhysicalDevice bestDevice = VK_NULL_HANDLE;
     u32 bestQueueIndex = ~0u;
@@ -56,7 +94,7 @@ bool VulkanDevice::Init(VulkanInstance* inst)
     for (const auto& dev : devices)
     {
         // let's check for min Vulkan 1.3 support, and store physical device properties
-        VkPhysicalDeviceProperties props{};
+        VkPhysicalDeviceProperties props = {};
         vkGetPhysicalDeviceProperties(dev, &props);
         if (props.apiVersion < VK_API_VERSION_1_3)
             continue;
@@ -118,14 +156,14 @@ bool VulkanDevice::Init(VulkanInstance* inst)
                 deviceDesc.dedicatedVideoMemory = vram;
                 deviceDesc.driverVersionString = DecodeDriverVersion(props.driverVersion, deviceDesc.vendor);
                 deviceDesc.apiName = fmt::format("Vulkan {}.{}.{}",
-                                                VK_VERSION_MAJOR(props.apiVersion),
-                                                VK_VERSION_MINOR(props.apiVersion),
-                                                VK_VERSION_PATCH(props.apiVersion));
+                                                 VK_VERSION_MAJOR(props.apiVersion),
+                                                 VK_VERSION_MINOR(props.apiVersion),
+                                                 VK_VERSION_PATCH(props.apiVersion));
             }
         }
     }
 
-    if (bestDevice == VK_NULL_HANDLE || bestQueueIndex == ~0u)
+    if (bestDevice == VK_NULL_HANDLE)
     {
         LOG(Error, "Failed to find GPU with Graphics/Compute support!");
         return false;
@@ -142,22 +180,40 @@ bool VulkanDevice::Init(VulkanInstance* inst)
         return false;
     }
 
-    // Querying device extensions
     u32 deviceExtensionCount;
     VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, nullptr));
     Vector<VkExtensionProperties> deviceExtensions(deviceExtensionCount);
-    VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount,
-                                                  deviceExtensions.data()));
+    VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, deviceExtensions.data()));
 
     if (!ValidateVulkanProperties(requiredDeviceExtensions, deviceExtensions, &VkExtensionProperties::extensionName))
     {
+        bool hasHeapExt = false;
+        for (const auto& ext : deviceExtensions)
+        {
+            if (strcmp(ext.extensionName, VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME) == 0)
+            {
+                hasHeapExt = true;
+                break;
+            }
+        }
+
+        if (!hasHeapExt)
+        {
+            LOG(Warning, "VK_EXT_descriptor_heap is missing! You must install NVIDIA driver 595.xx or later.");
+        }
+
         LOG(Error, "Required device extensions are missing!!!");
         return false;
     }
 
+    VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT,
+        .pNext = nullptr
+    };
+
     VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR fifoLatestReadyFeature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_KHR,
-        .pNext = nullptr
+        .pNext = &heapFeatures
     };
 
     VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unifiedLayoutFeature = {
@@ -175,56 +231,55 @@ bool VulkanDevice::Init(VulkanInstance* inst)
         .pNext = &features11
     };
 
-    VkPhysicalDeviceVulkan13Features features13{
+    VkPhysicalDeviceVulkan13Features features13 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
         .pNext = &features12
     };
 
-#ifdef USE_DESCRIPTOR_BUFFER
-    VkPhysicalDeviceDescriptorBufferFeaturesEXT featuresDescBuf{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
-        .pNext = &features13
-    };
-
-    VkPhysicalDeviceFeatures2 supportedCore{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &featuresDescBuf
-    };
-#else
-    VkPhysicalDeviceFeatures2 supportedCore{
+    VkPhysicalDeviceFeatures2 supportedCore = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &features13
     };
-#endif
 
     vkGetPhysicalDeviceFeatures2(physicalDevice, &supportedCore);
 
+    VkPhysicalDeviceDescriptorHeapPropertiesEXT heapProps = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT
+    };
+
+    // Heap Stuff
+    VkPhysicalDeviceProperties2 props = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+        .pNext = &heapProps
+    };
+    vkGetPhysicalDeviceProperties2(physicalDevice, &props);
+
+    HeapProperties& heapProp = deviceDesc.heapProperties;
+    heapProp.samplerDescriptorSize = heapProps.samplerDescriptorSize;
+    heapProp.resourceDescriptorSize = std::max(heapProps.imageDescriptorSize, heapProps.bufferDescriptorSize);
+    heapProp.samplerReservedSize = heapProps.minSamplerHeapReservedRange;
+    heapProp.resourceReservedSize = heapProps.minResourceHeapReservedRange;
 
     // storing this for fallback logic later
     this->useUnifiedLayout = (unifiedLayoutFeature.unifiedImageLayouts == VK_TRUE);
     if (this->useUnifiedLayout)
     {
-        unifiedLayoutFeature.unifiedImageLayouts = VK_TRUE;
         LOG(Info, "Vulkan Unified Image Layouts enabled.");
     }
     else
     {
-        // fallback
-        unifiedLayoutFeature.unifiedImageLayouts = VK_FALSE;
+        LOG(Warning, "Unified Image Layouts not supported. Falling back to legacy transitions.");
     }
 
     // Optional Features!!
     if (fifoLatestReadyFeature.presentModeFifoLatestReady)
     {
         LOG(Info, "FIFO_LATEST_READY is supported and enabled.");
-        fifoLatestReadyFeature.presentModeFifoLatestReady = VK_TRUE;
     }
     else
     {
         LOG(Warning, "FIFO_LATEST_READY not supported. Falling back to standard FIFO.");
-        fifoLatestReadyFeature.presentModeFifoLatestReady = VK_FALSE;
     }
-
 
     // check for the things that matter for now
     if (!features13.dynamicRendering || !features13.synchronization2 || !features12.bufferDeviceAddress)
@@ -232,13 +287,6 @@ bool VulkanDevice::Init(VulkanInstance* inst)
         LOG(Error, "Device missing mandatory Vulkan 1.2/1.3 features!");
         return false;
     }
-
-#ifdef USE_DESCRIPTOR_BUFFER
-    if (!featuresDescBuf.descriptorBuffer)
-    {
-        LOG(Error, "Mandatory Extension Feature Missing: Descriptor Buffer ");
-    }
-#endif
 
     // slang...
     features11.shaderDrawParameters = VK_TRUE;
@@ -286,20 +334,14 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 
     // Initialize immediate submitter
     immediateSubmitter.Init(this);
-
-    if (!this->useUnifiedLayout)
-    {
-        LOG(Warning, "Unified Image Layouts not supported. Falling back to legacy transitions.");
-    }
     return true;
 }
 
 void VulkanDevice::ImmediateSubmit(const std::function<void(GPUCommandBuffer*)> func)
 {
-    immediateSubmitter.Submit([&](VkCommandBuffer vkCmd) {
-        VulkanCommandBuffer wrapper;
-        wrapper.InitFromHandle(this, vkCmd);
-        func(&wrapper);
+    immediateSubmitter.Submit([&](VulkanCommandBuffer* cmd)
+    {
+        func(cmd);
     }, "RHI Immediate");
 }
 
@@ -318,12 +360,17 @@ std::unique_ptr<GPUBuffer> VulkanDevice::CreateBuffer(BufferInfo& info)
     return std::make_unique<VulkanBuffer>(this, info);
 }
 
-std::unique_ptr<GPUShader> VulkanDevice::CreateShader(std::span<const u32> code)
+std::unique_ptr<GPUBuffer> VulkanDevice::CreateBuffer(BufferPreset preset, u64 size)
 {
-    return std::make_unique<VulkanShader>(this, code);
+    return std::make_unique<VulkanBuffer>(this, preset, size);
 }
 
-std::unique_ptr<GPUShader> VulkanDevice::CreateShaderPath(const char* path)
+std::shared_ptr<GPUShader> VulkanDevice::CreateShader(std::span<const u32> code)
+{
+    return std::make_shared<VulkanShader>(this, code);
+}
+
+std::shared_ptr<GPUShader> VulkanDevice::CreateShaderPath(const char* path)
 {
     auto code = FileManager::LoadSPV(path);
 
@@ -345,69 +392,8 @@ std::unique_ptr<GPUPipeline> VulkanDevice::CreateComputePipeline(const ComputePi
     return std::make_unique<VulkanComputePipeline>(this, desc);
 }
 
-void ImmediateSubmitter::Init(VulkanDevice* inDevice)
+std::unique_ptr<GPUShaderBuffer> VulkanDevice::CreateShaderBuffer(DescriptorAllocatorGrowable* alloc,
+    const DescriptorSetLayoutDesc& desc)
 {
-    assert(device == nullptr && "Device pointer not fond");
-    this->device = inDevice;
-
-    VkCommandPoolCreateInfo poolInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = device->graphicsQueueIndex
-    };
-    VK_CHECK(vkCreateCommandPool(device->device, &poolInfo, nullptr, &immCommandPool));
-
-    VkCommandBufferAllocateInfo allocInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = immCommandPool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1
-    };
-    VK_CHECK(vkAllocateCommandBuffers(device->device, &allocInfo, &immCommandBuffer));
-
-    VkFenceCreateInfo fenceInfo = {
-        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-        .flags = 0
-    };
-    VK_CHECK(vkCreateFence(device->device, &fenceInfo, nullptr, &immFence));
-}
-
-void ImmediateSubmitter::Destroy()
-{
-    if (device && device->device)
-    {
-        if (immFence != VK_NULL_HANDLE)
-        {
-            vkDestroyFence(device->device, immFence, nullptr);
-            immFence = VK_NULL_HANDLE;
-        }
-        if (immCommandPool != VK_NULL_HANDLE)
-        {
-            vkDestroyCommandPool(device->device, immCommandPool, nullptr);
-            immCommandPool = VK_NULL_HANDLE;
-        }
-    }
-    immCommandBuffer = VK_NULL_HANDLE;
-    device = nullptr;
-}
-
-void VulkanDevice::Destroy()
-{
-    immediateSubmitter.Destroy();
-
-    if (allocator != VK_NULL_HANDLE)
-    {
-        vmaDestroyAllocator(allocator);
-        allocator = VK_NULL_HANDLE;
-    }
-
-    if (device != VK_NULL_HANDLE)
-    {
-        vkDestroyDevice(device, nullptr);
-        device = VK_NULL_HANDLE;
-    }
-
-    physicalDevice = nullptr;
-    graphicsQueue = nullptr;
-    instance = nullptr;
+    return std::make_unique<VulkanShaderBuffer>(this, alloc, desc);
 }

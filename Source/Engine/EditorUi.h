@@ -6,8 +6,14 @@
 #include <span>
 
 #include "RenderInterface.h"
+#include "Audio/Audio.h"
 #include "glm/vec3.hpp"
 #include "Tools/Vector.h"
+
+namespace Renderer
+{
+    struct ModelComponent;
+}
 
 struct CameraComponent;
 
@@ -29,15 +35,19 @@ struct State
     DebugRenderer* debugRenderer = nullptr;
     DebugUBO* debugData = nullptr;
     SceneStats* sceneStats = nullptr;
+    Audio::System* audioSystem = nullptr;
     Vector<LightUBO>* lights;
     std::span<CameraComponent> cameraComponents;
     bool* freezeFrustum = nullptr;
     CameraComponent* frozenCam = nullptr;
     f32* aspectRatio = nullptr;
 
+    Vector<Renderer::ModelComponent>* models = nullptr;
+
     u32 activeCameraIdx = 0;
     u32 selectedCameraIdx = 0;
     u32 selectedLightIdx = 0;
+	u32 activeFlashlightIdx = 0;
     // Panels (ImGui toggles)
     bool showMenuBar = true;
     bool showMainOverlay = true;
@@ -46,12 +56,21 @@ struct State
     bool showEditorTools = true;
     bool showAboutPopup = false;
     bool noUI = false;
+    bool autoReloadShaders = false;
+    bool pendingManualReload = false;
+    bool showAudioPopup = false;
+    bool showAudioVitals = false;
+    bool showAudioMixer = false;
+    bool showSoundBank = false;
 
     // Per-frame UI state
     f32 menuBarHeight = 0.f;
     f32 overlayAlpha = 0.7f;
     f32 editorAlpha = 0.7f;
     f32 cameraSpeed = 0.0f;
+
+    u32 selectedModelIdx = u32(-1);
+    i32 selectedPartIdx  = -1;
 
     bool spinLights = false;
     f32 spinSpeed = 0.1f;
@@ -79,6 +98,10 @@ struct EditorUI
     void DrawCameraSpeedPopup(f32 camSpeedPopupTime) const;
     static void DrawDebugViewPopup(f32 debugViewPopupTime, DebugView currentView);
     bool DrawMainMenuBar();
+    void DrawAudioSystemVitals() const;
+    void DrawAudioMixer();
+    void DrawSoundBank();
+    void ShowAudioInfo();
     void DrawMainOverlay() const;
     void AppInfoPopup();
 
@@ -89,8 +112,7 @@ struct EditorUI
     void DrawLightEditor();
 
     // Helpers
-    static void UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f32 speed);
+    static void UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f32 speed = 12.0f);
     static void HoverToolTip(const char* tooltip);
     static void ClampWindowToViewport();
-
 };

@@ -16,112 +16,134 @@
 #include "MeshLoader.h"
 #include "../Engine/ShaderConstants.h"
 #include <glm/gtx/transform.hpp>
+
+#include "ShaderCompiler.h"
 #include "Input/InputSysGameInput.h"
 
 bool Application::Init()
 {
-	ZoneScopedN("Application::Init");
+    ZoneScopedN("Application::Init");
 
-	{
-		ZoneScopedN("Init Platform & Window");
-		Platform::Init(&windowContext);
-		// Platform::ShowWindow(*wc);
-	}
+    {
+        ZoneScopedN("Init Platform & Window");
+        Platform::Init(&windowContext);
+        CHECK_RESULT(audioSys.Init());
+        // audioSys.LoadSound("Background", "1-18 Quartz Quadrant.flac");
 
-	{
-		ZoneScopedN("Init Vulkan Instance, Device, Swapchain, Editor UI, and Command Buffers");
-		instance.Init();
-		device.Init(&instance);
-		CHECK_RESULT(swapchain.Init(&device, windowContext.handle));
-		renderer.Init(&device, &swapchain);
+        // Platform::ShowWindow(*wc);
+    }
 
-		editorUI.state.wc            = &windowContext;
-		editorUI.state.device        = &device;
-		editorUI.state.swapchain     = &swapchain;
-		editorUI.state.debugRenderer = &debugRenderer;
-		editorUI.state.sceneStats    = &sceneStats;
-		editorUI.state.lights        = &lights;
-		editorUI.state.debugData     = &debugData;
-	    editorUI.state.freezeFrustum = &freezeFrustum;
-	    editorUI.state.frozenCam     = &frozenCamComp;
-		editorUI.state.cameraSpeed   = cameraSpeed;
+    // compiler and manager!
+    compiler.Init();
+    shaderManager.Init(&device, &compiler);
 
-		EditorUI::Init(&instance, &device, &swapchain);
-	}
-	// DrawLoadingSplash("Loading...");
+    {
+        ZoneScopedN("Init Vulkan Instance, Device, Swapchain, Editor UI, and Command Buffers");
+        instance.Init();
+        device.Init(&instance);
+        CHECK_RESULT(swapchain.Init(&device, windowContext.handle));
+        renderer.Init(&device, &swapchain);
 
-	{
-		ZoneScopedN("Init Global Descriptor Allocator");
-		Array<Renderer::PoolSizes, 5> sizes = {
-			{DescriptorType::CombinedImageSampler, 4000.f},
-			{DescriptorType::UniformBuffer, 10.f},
-			{DescriptorType::StorageBuffer, 10.f},
-			{DescriptorType::SampledImage, 10.f},
-			{DescriptorType::Sampler, 10.f},
-		 };
-		globalDescriptorAlloc.Init(&device, 10, sizes);
-	}
+        editorUI.state.wc            = &windowContext;
+        editorUI.state.device        = &device;
+        editorUI.state.swapchain     = &swapchain;
+        editorUI.state.debugRenderer = &debugRenderer;
+        editorUI.state.sceneStats    = &sceneStats;
+        editorUI.state.audioSystem   = &audioSys;
+        editorUI.state.lights        = &lights;
+        editorUI.state.debugData     = &debugData;
+        editorUI.state.freezeFrustum = &freezeFrustum;
+        editorUI.state.frozenCam     = &frozenCamComp;
+        editorUI.state.cameraSpeed   = cameraSpeed;
 
-	{
-		ZoneScopedN("Init Scene UBO");
-		DescriptorSetLayoutDesc sceneDesc = {
-			.setIndex = 0,
-		    .bindings = { Constants::Scene }
-		};
-		sceneUBO = std::make_unique<Renderer::VulkanShaderBuffer>(&device, &globalDescriptorAlloc, sceneDesc);
-		sceneUBO->AllocateDescriptorSets();
-	}
+        EditorUI::Init(&instance, &device, &swapchain);
+    }
+    // DrawLoadingSplash("Loading...");
 
-	// Texture Defaults
-	texDefaults.Init(&device);
+    {
+        ZoneScopedN("Init Global Descriptor Allocator");
+        Array<Renderer::PoolSizes, 5> sizes = {
+            {DescriptorType::CombinedImageSampler, 4000.f},
+            {DescriptorType::UniformBuffer, 10.f},
+            {DescriptorType::StorageBuffer, 10.f},
+            {DescriptorType::SampledImage, 10.f},
+            {DescriptorType::Sampler, 10.f},
+        };
+        globalDescriptorAlloc.Init(&device, 10, sizes);
+    }
+
+    {
+        ZoneScopedN("Init Scene UBO");
+        DescriptorSetLayoutDesc sceneDesc = {
+            .setIndex = 0,
+            .bindings = { Constants::Scene }
+        };
+        sceneUBO = std::make_unique<Renderer::VulkanShaderBuffer>(&device, &globalDescriptorAlloc, sceneDesc);
+    }
 
     // Debug Renderer
     debugRenderer.Initialize(&device, sceneUBO.get(), &globalDescriptorAlloc);
 
-	// // Main model
-	// {
-	// 	ZoneScopedN("LoadModel From Source!");
-	// 	DrawLoadingSplash("Loading OBJ Model...");
-	// 	LOG(Debug, "Loading main model: Sponza/sponza.obj");
-	//
-	// 	auto result = Assets::MeshLoader::LoadModelFromSource(MeshSourceType::OBJ, "Assets/Sponza/sponza.obj");
-	// 	modelInst = std::make_unique<Renderer::VulkanModel>(&device, *result, globalDescriptorAlloc, texDefaults);
-	// 	Renderer::ModelComponent comp = {
-	//
-	// 		.model = modelInst.get(),
-	// 		.transform = glm::scale(glm::vec3(0.01f)),
-	// 	};
-	// 	models.push_back(comp);
-	// }
+    // Bindless Manager
+    bindlessManager.Init(&device, texturePool, globalDescriptorAlloc);
 
-	// DrawLoadingSplash("Building Skybox...");
+    // // Main model
+    {
+        ZoneScopedN("LoadModel From Source!");
+        RenderLoadingSplash("Loading OBJ Model...");
+        LOG(Debug, "Loading main model: Sponza/sponza.obj");
 
-	if (!skybox.Initialize(&device))
-	{
-		LOG(Warning, "Skybox initialization failed - Skybox will not be rendered");
-	}
+        auto sponzaHandle = modelPool.Load("Assets/Sponza/sponza.obj", [&](const std::string& path) -> Result<Renderer::GPUModel>
+        {
+            auto result = Assets::MeshLoader::LoadModelFromSource(MeshSourceType::OBJ, path);
+            if (!result) return std::unexpected(OrgErrCode::AssetNotFound);
 
-	// DrawLoadingSplash("Creating PBR Sphere Grid...");
-	CreatePBRSphereGrid();
+            return Renderer::CreateVulkanModel(&device, *result, bindlessManager, texturePool, globalDescriptorAlloc);
+        });
+        if (sponzaHandle) {
+            Renderer::ModelComponent comp = {
+                .modelHandle = *sponzaHandle,
+                .transform = glm::scale(glm::vec3(0.01f)),
+                .path = Renderer::RenderPath::Standard
+            };
+            models.push_back(comp);
+        }
+    }
 
-	// Initialize Scene Renderer - abstracts all model rendering logic
-	SceneRenderConfig renderConfig = {
-		.device = &device,
-		.descriptorAllocator = &globalDescriptorAlloc,
-		.sceneUBO = sceneUBO.get(),
-		.skybox = &skybox,
-		.debugRenderer = &debugRenderer,
-		.models = models,
-	};
-	sceneRenderer.Init(renderConfig);
+    // DrawLoadingSplash("Building Skybox...");
 
-	ComputeStaticSceneStats();
+    if (!skybox.Initialize(&device))
+    {
+        LOG(Warning, "Skybox initialization failed - Skybox will not be rendered");
+    }
+
+    // DrawLoadingSplash("Creating PBR Sphere Grid...");
+    // CreatePBRSphereGrid();
+
+    // Initialize Scene Renderer - abstracts all model rendering logic
+    SceneRenderConfig renderConfig = {
+        .device = &device,
+        .descriptorAllocator = &globalDescriptorAlloc,
+        .bindless = &bindlessManager,
+        .shaderManager = &shaderManager,
+        .modelPool = &modelPool,
+        .sceneUBO = sceneUBO.get(),
+        .skybox = &skybox,
+        .debugRenderer = &debugRenderer,
+        .models = models,
+    };
+    sceneRenderer.Init(renderConfig);
+
+    ComputeStaticSceneStats();
 
     for (i32 i = 0; i < MAX_SCENE_CAMERAS; i++)
     {
         auto& camComp = sceneCameras[i];
 
-        camComp.position = {0.0f, 5.0f, -20.0f};
+        camComp.position = {0.0f, 2, 0};
+        camComp.base.yaw = -90.0f;
+        camComp.base.pitch = 0.0f;
+        camComp.base.roll = 0.0f;
 
         // Base Camera Defaults
         camComp.base.fov = 70.0f;
@@ -139,64 +161,382 @@ bool Application::Init()
     editorUI.state.cameraComponents = std::span(sceneCameras.data(), MAX_SCENE_CAMERAS);
     editorUI.state.activeCameraIdx = activeCamIdx;
 
-	// Create 4 point lights surrounding the sphere grid (grid is at z=-10, centered at y=5)
-	constexpr f32 gridCenterZ = -10.0f;   // Grid depth position
-	constexpr f32 lightHeight = 5.0f;     // Same height as sphere grid center
-	constexpr f32 lightDistance = 12.0f;  // Distance from grid center
-	constexpr f32 lightIntensity = 150.0f;
-	constexpr f32 lightRange = 25.0f;
+    // Create 4 point lights surrounding the sphere grid (grid is at z=-10, centered at y=5)
+    constexpr f32 gridCenterZ = -10.0f;   // Grid depth position
+    constexpr f32 lightHeight = 5.0f;     // Same height as sphere grid center
+    constexpr f32 lightDistance = 12.0f;  // Distance from grid center
+    constexpr f32 lightIntensity = 150.0f;
+    constexpr f32 lightRange = 25.0f;
 
-	// Front (magenta)
-	{
-		LightUBO L{};
-		L.type = LightType::Point;
-		L.position = {0.0f, lightHeight, gridCenterZ + lightDistance};
-		L.color = {1.0f, 0.2f, 1.0f};
-		L.intensity = lightIntensity;
-		L.range = lightRange;
-		lights.push_back(L);
-	}
+    // Front (magenta)
+    {
+        LightUBO L{};
+        L.type = LightType::Point;
+        L.position = {0.0f, lightHeight, gridCenterZ + lightDistance};
+        L.color = {1.0f, 0.2f, 1.0f};
+        L.intensity = lightIntensity;
+        L.range = lightRange;
+        lights.push_back(L);
+    }
 
-	// Back (cyan)
-	{
-		LightUBO L{};
-		L.type = LightType::Point;
-		L.position = {0.0f, lightHeight, gridCenterZ - lightDistance};
-		L.color = {0.2f, 1.0f, 1.0f};
-		L.intensity = lightIntensity;
-		L.range = lightRange;
-		lights.push_back(L);
-	}
+    // Back (cyan)
+    {
+        LightUBO L{};
+        L.type = LightType::Point;
+        L.position = {0.0f, lightHeight, gridCenterZ - lightDistance};
+        L.color = {0.2f, 1.0f, 1.0f};
+        L.intensity = lightIntensity;
+        L.range = lightRange;
+        lights.push_back(L);
+    }
 
-	// Right (pinkish)
-	{
-		LightUBO L{};
-		L.type = LightType::Point;
-		L.position = {lightDistance, lightHeight, gridCenterZ};
-		L.color = {1.0f, 0.4f, 0.8f};
-		L.intensity = lightIntensity;
-		L.range = lightRange;
-		lights.push_back(L);
-	}
+    // Right (pinkish)
+    {
+        LightUBO L{};
+        L.type = LightType::Point;
+        L.position = {lightDistance, lightHeight, gridCenterZ};
+        L.color = {1.0f, 0.4f, 0.8f};
+        L.intensity = lightIntensity;
+        L.range = lightRange;
+        lights.push_back(L);
+    }
 
-	// Left (blue)
-	{
-		LightUBO L{};
-		L.type = LightType::Point;
-		L.position = {-lightDistance, lightHeight, gridCenterZ};
-		L.color = {0.4f, 0.6f, 1.0f};
-		L.intensity = lightIntensity;
-		L.range = lightRange;
-		lights.push_back(L);
-	}
+    // Left (blue)
+    {
+        LightUBO L{};
+        L.type = LightType::Point;
+        L.position = {-lightDistance, lightHeight, gridCenterZ};
+        L.color = {0.4f, 0.6f, 1.0f};
+        L.intensity = lightIntensity;
+        L.range = lightRange;
+        lights.push_back(L);
+    }
 
-	lightMeta.count = static_cast<u32>(lights.size());
+    lightUBO.count = static_cast<u32>(std::min(lights.size(), static_cast<size_t>(16)));
 
     InitDefaultKeyBindings();
 
-	debugData.debugMode = DebugView::Material;
-	Platform::ShowWindow(windowContext);
-	return true;
+    debugData.debugMode = DebugView::Material;
+    Platform::ShowWindow(windowContext);
+    audioSys.PlayAudio("Background");
+
+    editorUI.state.models = &models;
+    return true;
+}
+
+void Application::Run()
+{
+    while (Platform::ProcessMessages(&windowContext))
+    {
+        FrameMarkStart("Frame");
+        ZoneScopedN("Frame");
+
+        // Input
+        {
+            ZoneScopedN("GameInput Update");
+#if ENGINE_PLATFORM_WIN32
+            gameInput.Update(windowContext);
+#endif
+        }
+
+        // Audio
+        {
+            ZoneScopedN("Sound System Update");
+            audioSys.Update();
+        }
+
+        if (editorUI.state.autoReloadShaders || editorUI.state.pendingManualReload)
+        {
+            shaderManager.CheckForReloads();
+            editorUI.state.pendingManualReload = false;
+        }
+
+        Platform::StartFrame(windowContext);
+
+        if (!swapchain.ResizeIfNeeded() || windowContext.displayState.isMinimized)
+        {
+            FrameMarkEnd("Frame");
+            continue;
+        }
+
+        u32 frameIndex = 0;
+        u32 imageIndex = 0;
+        {
+            ZoneScopedN("BeginFrame");
+            if (!renderer.BeginFrame(frameIndex, imageIndex)) continue;
+        }
+
+        {
+            ZoneScopedN("Update Logic");
+            UpdateCamera();
+            UpdateSceneUBO();
+        }
+
+        {
+            ZoneScopedN("Render Logic");
+            RenderScene(imageIndex);
+            RenderImGui(imageIndex);
+        }
+
+        {
+            ZoneScopedN("EndFrame (Present)");
+            renderer.EndFrame(frameIndex, imageIndex);
+        }
+        Input::EndFrameInputUpdate();
+        FrameMarkEnd("Frame");
+    }
+}
+
+void Application::RenderLoadingSplash(const char* text)
+{
+    // Process a frame just like Run() does, but only once.
+    if (!swapchain.ResizeIfNeeded()) return;
+
+    u32 frameIndex = 0;
+    u32 imageIndex = 0;
+    if (!renderer.BeginFrame(frameIndex, imageIndex))
+        return;
+
+    auto* frameData = renderer.GetCurrentFrameData();
+    auto* cmd = frameData->GetCommandBuffer();
+
+    Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
+    const Extent2D extent = swapchain.GetExtent();
+
+    cmd->TransitionLayout(colorImage, TextureLayout::ColorWrite);
+    // Build a minimal ImGui overlay
+    EditorUI::BeginFrame();
+    {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(vp->WorkPos);
+        ImGui::SetNextWindowSize(vp->WorkSize);
+        constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBackground;
+        if (ImGui::Begin("##LoadingSplash", nullptr, flags))
+        {
+            const ImVec2 win = ImGui::GetWindowSize();
+            const ImVec2 sz = ImGui::CalcTextSize(text);
+            ImGui::SetCursorPos({(win.x - sz.x) * 0.5f, (win.y - sz.y) * 0.5f});
+            ImGui::TextUnformatted(text);
+        }
+        ImGui::End();
+    }
+
+    auto colorAttach = Renderer::RenderAttachment::Color(colorImage);
+
+    Renderer::RenderingInfo renderInfo = {
+        .extent = extent,
+        .colorAttachments = SPAN_ONE(colorAttach),
+    };
+
+    cmd->BeginRendering(renderInfo);
+
+    editorUI.EndFrame();
+    editorUI.Render(cmd);
+
+    cmd->EndRendering();
+    cmd->TransitionLayout(colorImage, TextureLayout::Present);
+
+    renderer.EndFrame(frameIndex, imageIndex);
+}
+
+void Application::RenderScene(u32 imageIndex)
+{
+    auto* frame = renderer.GetCurrentFrameData();
+    auto* cmd = frame->GetCommandBuffer();
+    const Extent2D extent = swapchain.GetExtent();
+    const u32 frameIndex = renderer.GetFrameIndex();
+
+    Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
+    Renderer::GPUTexture* depthImage = &swapchain.depthTexture;
+    Renderer::GPUTexture* msaaImage = &swapchain.msaaColorImage; // MSAA RESOLVE YAY
+
+    // {
+    //     Renderer::GPUTexture* shadowMap = &swapchain.shadowTexture; // not available yet
+    //     cmd.TransitionLayout(shadowMap, TextureLayout::DepthWrite);
+    //        auto shadowDepthAttach = Renderer::RenderAttachment::Depth(shadowMap, LoadOP::Clear, 1.0f);
+    //
+    //        constexpr Extent2D shadowExtent = { 2048, 2048 };
+    //
+    //        Renderer::RenderingInfo shadowRenderInfo = {
+    //            .extent = shadowExtent,
+    //            .colorAttachments = {}, // Zero color attachments for depth-only pass
+    //            .depthAttachment = &shadowDepthAttach
+    //         };
+    //        cmd.BeginDebugLabel("Shadow Pass", 0.1f, 0.1f, 0.1f);
+    //        cmd.BeginRendering(shadowRenderInfo);
+    //        cmd.SetViewport({0.0f, 0.0f, static_cast<f32>(shadowExtent.width), static_cast<f32>(shadowExtent.height), 0.0f, 1.0f});
+    //        cmd.SetScissor(0, 0, shadowExtent.width, shadowExtent.height);
+    //        cmd.EndRendering();
+    //        cmd.EndDebugLabel();
+    // }
+
+    cmd->TransitionLayout(msaaImage,  TextureLayout::ColorWrite);
+    cmd->TransitionLayout(colorImage, TextureLayout::ColorWrite);
+    cmd->TransitionLayout(depthImage, TextureLayout::DepthWrite);
+
+    auto colorAttach = Renderer::RenderAttachment::Color(msaaImage, colorImage, LoadOP::Clear);
+    auto depthAttach = Renderer::RenderAttachment::Depth(depthImage, LoadOP::Clear, 0.0);
+
+    Renderer::RenderingInfo renderInfo = {
+        .extent = extent,
+        .colorAttachments = SPAN_ONE(colorAttach),
+        .depthAttachment = &depthAttach
+    };
+    cmd->BeginDebugLabel("Scene", 0.2f, 0.8f, 0.2f);
+    cmd->BeginRendering(renderInfo);
+
+    cmd->SetViewport({0.0f, 0.0f, static_cast<f32>(extent.width), static_cast<f32>(extent.height), 0.0f, 1.0f});
+    cmd->SetScissor(0, 0, extent.width, extent.height);
+
+    const auto cpuStart = std::chrono::high_resolution_clock::now();
+
+    const CameraComponent& activeCam = sceneCameras[activeCamIdx];
+    const Camera& cullingCam = freezeFrustum ? frozenCamComp.base : activeCam.base;
+
+    cmd->BeginDebugLabel("Models", 0.4f, 0.4f, 0.9f);
+
+#ifdef ENABLE_GPU_TIMING
+    frame->queryPool.WriteTimestamp(cmd, 0);
+#endif
+
+    sceneRenderer.PrepareFrame(&windowContext, &cullingCam);
+    sceneRenderer.RenderModels(cmd, frameIndex, sceneStats);
+    cmd->EndDebugLabel();
+
+    cmd->BeginDebugLabel("Skybox", 0.6f, 0.3f, 0.6f);
+    skybox.Render(cmd, activeCam.base);
+    cmd->EndDebugLabel();
+
+    cmd->BeginDebugLabel("DebugGizmos", 1.0f, 1.0f, 0.0f);
+    QueueFrustumVisualizer(frustumIdx, glm::vec4(0.0f, 1.0f, 1.0f, 1.0f));
+    if (debugRenderer.enabled)
+    {
+        debugRenderer.Flush(cmd, frameIndex);
+    }
+
+    cmd->EndDebugLabel();
+#ifdef ENABLE_GPU_TIMING
+    frame->queryPool.WriteTimestamp(cmd, 1);
+#endif
+
+    const auto cpuEnd = std::chrono::high_resolution_clock::now();
+    sceneStats.cpuDrawTime = static_cast<f32>(std::chrono::duration<f64, std::milli>(cpuEnd - cpuStart).count());
+
+    cmd->EndRendering();
+    cmd->EndDebugLabel();
+}
+
+void Application::RenderImGui(u32 imageIndex)
+{
+    auto* frame = renderer.GetCurrentFrameData();
+    auto* cmd = frame->GetCommandBuffer();
+    const Extent2D extent = swapchain.GetExtent();
+    Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
+
+    Renderer::RenderAttachment colorAttach = Renderer::RenderAttachment::Color(colorImage, nullptr, LoadOP::Load);
+
+    const Renderer::RenderingInfo renderInfo = {
+        .extent = extent,
+        .colorAttachments = SPAN_ONE(colorAttach),
+    };
+
+    EditorUI::BeginFrame();
+
+
+#ifdef ENABLE_GPU_TIMING
+
+    // Slot 0-1: Scene Pass | Slot 2-3: UI Pass
+    sceneStats.gpuDrawTime = frame->queryPool.GetElapsedMs(0) + frame->queryPool.GetElapsedMs(1);
+
+
+    const f32 frameMs = (windowContext.frameTime > 0.0f)
+                        ? windowContext.frameTime
+                        : (1000.0f / windowContext.fps);
+
+    const f32 busy = (sceneStats.gpuDrawTime / frameMs) * 100.0f;
+    sceneStats.gpuBusy = std::clamp(busy, 0.0f, 100.0f);
+#endif
+
+    cmd->BeginDebugLabel("UI/ImGui", 0.6f, 0.3f, 0.6f);
+    cmd->BeginRendering(renderInfo);
+
+#ifdef ENABLE_GPU_TIMING
+    frame->queryPool.WriteTimestamp(cmd, 2);
+#endif
+
+    if (!editorUI.state.noUI)
+    {
+        CameraComponent& activeCam = sceneCameras[activeCamIdx];
+
+        if (editorUI.state.showMenuBar)
+        {
+            if (editorUI.DrawMainMenuBar())
+            {
+                Cleanup();
+                return;
+            }
+        }
+
+        // ImGui::ShowDemoWindow();
+
+        editorUI.DrawCameraGizmo(activeCam);
+
+        editorUI.DrawMainOverlay();
+
+
+        if (editorUI.state.showEditorTools)
+        {
+            editorUI.DrawEditorTools();
+        }
+
+        if (editorUI.state.showAboutPopup)
+        {
+            editorUI.AppInfoPopup();
+        }
+
+        if (editorUI.state.showAudioPopup)
+        {
+            editorUI.ShowAudioInfo();
+        }
+
+        if (editorUI.state.showAudioVitals)
+        {
+            editorUI.DrawAudioSystemVitals();
+        }
+        if (editorUI.state.showAudioMixer)
+        {
+            editorUI.DrawAudioMixer();
+        }
+        if (editorUI.state.showSoundBank)
+        {
+            editorUI.DrawSoundBank();
+        }
+
+        // --- Transient UI ---
+        editorUI.DrawDebugViewPopup(debugViewPopupTime, debugData.debugMode);
+        editorUI.DrawCameraSpeedPopup(cameraSpeedPopupTime);
+    }
+
+    editorUI.UpdateLights(windowContext.GetDeltaTime());
+
+    EditorUI::EndFrame();
+    EditorUI::Render(cmd);
+
+#ifdef ENABLE_GPU_TIMING
+    frame->queryPool.WriteTimestamp(cmd, 3);
+#endif
+
+    cmd->EndRendering();
+    cmd->EndDebugLabel();
+    cmd->TransitionLayout(colorImage, TextureLayout::Present);
+}
+
+void Application::Cleanup()
+{
+    device.WaitIdle();
 }
 
 void Application::InitDefaultKeyBindings()
@@ -228,57 +568,134 @@ void Application::InitDefaultKeyBindings()
 
 }
 
-void Application::Run()
+void Application::ComputeStaticSceneStats()
 {
-	while (Platform::ProcessMessages(&windowContext))
-	{
-		FrameMarkStart("Frame");
-		ZoneScopedN("Frame");
+    ZoneScopedN("ComputeStaticSceneStats"); // Add profiling for this pass
 
-		{
-			ZoneScopedN("GameInput Update");
-#if ENGINE_PLATFORM_WIN32
-			gameInput.Update(windowContext);
-#endif
-		}
+    sceneStats.totalVerts      = 0;
+    sceneStats.totalTris       = 0;
+    sceneStats.totalMeshCount  = 0;
 
-		Platform::StartFrame(windowContext);
+    for (const auto& comp : models)
+    {
 
-		if (!swapchain.ResizeIfNeeded() || windowContext.displayState.isMinimized)
-		{
-			FrameMarkEnd("Frame");
-			continue;
-		}
+        auto modelRes = modelPool.Get(comp.modelHandle);
+        if (!modelRes) continue;
 
-		u32 frameIndex = 0;
-		u32 imageIndex = 0;
-	    if (!renderer.BeginFrame(frameIndex, imageIndex)) continue;
+        const auto* model = *modelRes;
 
-	    {
-		    ZoneScopedN("Update Logic");
-		    UpdateCamera();
-		    UpdateSceneUBO();
-	    }
 
-	    {
-		    ZoneScopedN("Render Logic");
-		    RenderScene(imageIndex);
+        if (model->vertexBuffer && model->vertexBuffer->IsValid())
+        {
+            sceneStats.totalVerts += static_cast<u32>(model->vertexBuffer->GetSize() / sizeof(Vertex));
+        }
 
-		    EditorUI::BeginFrame();
-		    RenderImGui(imageIndex);
-	    }
 
-		Input::EndFrameInputUpdate();
-		renderer.EndFrame(frameIndex, imageIndex);
-		FrameMarkEnd("Frame");
-	}
+        for (const auto& part : model->parts)
+        {
+            sceneStats.totalTris += (part.indexCount / 3);
+            ++sceneStats.totalMeshCount;
+        }
+    }
+
+    const Extent2D extent = swapchain.GetExtent();
+    LOG(Debug, "Scene Stats - Triangles: {} | Verts: {} | MeshParts: {} | Resolution: {}x{}",
+        sceneStats.totalTris, sceneStats.totalVerts, sceneStats.totalMeshCount,
+        extent.width, extent.height);
 }
 
-void Application::Cleanup()
+void Application::UpdateSceneUBOAtIndex(u32 frameIndex) const
 {
-	device.WaitIdle();
+    if (sceneUBO)
+    {
+        sceneUBO->UpdateBinding(frameIndex, 2, &debugData, sizeof(DebugUBO));
+        sceneUBO->UpdateBinding(frameIndex, 3, &camUBO,   sizeof(CameraUBO));
+        sceneUBO->UpdateBinding(frameIndex, 4, &lightUBO, sizeof(LightSceneData));
+        sceneUBO->UpdateBinding(frameIndex, 6, &sceneData, sizeof(SceneUBO));
+    }
 }
 
+void Application::UpdateSceneUBO()
+{
+    ZoneScopedN("UpdateSceneUBO");
+    const CameraComponent& activeCam = sceneCameras[activeCamIdx];
+    glm::vec3 finalEyePos = activeCam.position;
+    if (camMode == CameraMode::FPS)
+    {
+        finalEyePos.y += activeCam.controller.eyeHeight;
+    }
+
+    aspectRatio = static_cast<f32>(swapchain.width) / static_cast<f32>(swapchain.height);
+
+    sceneData.view = activeCam.base.view;
+    sceneData.proj = activeCam.base.projection;
+    camUBO.position = finalEyePos;
+    camUBO.nearPlane = activeCam.base.nearPlane;
+    camUBO.farPlane = activeCam.base.farPlane;
+
+    lightUBO.count = static_cast<u32>(std::min(lights.size(), static_cast<size_t>(16)));
+    std::memcpy(lightUBO.lights, lights.data(), lightUBO.count * sizeof(LightUBO));
+
+    TracyPlot("Draw Calls", static_cast<i64>(sceneStats.drawCallCount));
+    TracyPlot("Triangle Count", static_cast<i64>(sceneStats.totalTris));
+    TracyPlot("GPU Draw Time (ms)", sceneStats.gpuDrawTime);
+
+    UpdateSceneUBOAtIndex(renderer.GetFrameIndex());
+}
+
+void Application::ApplyFreeFlyMovement(const u32 idx, const f32 dt)
+{
+    CameraComponent& camComp = sceneCameras[idx];
+    Camera& cam = camComp.base;
+    glm::vec3& worldPos = camComp.position;
+
+    f32 deltaYaw = 0.0f;
+    f32 deltaPitch = 0.0f;
+
+    if (input.IsKeyHeld(Keyboard::Alt) && input.IsMouseHeld(Mouse::Middle))
+    {
+        const f32 panSpeed = cameraSpeed * 0.001f;
+        worldPos += (cam.right * static_cast<f32>(-input.xrel) + cam.up * static_cast<f32>(input.yrel)) * panSpeed;
+        input.scrollY = 0; // no cam speed happening here
+    }
+
+    if ((input.IsMouseHeld(Mouse::Right)))
+    {
+        deltaYaw   -= static_cast<f32>(input.xrel) * 0.1f;
+        deltaPitch += static_cast<f32>(input.yrel) * 0.1f;
+        Platform::WrapCursorToOppositeEdge(&windowContext);
+    }
+
+    // Controller movement
+    if (input.controllers[0].connected)
+    {
+        deltaYaw   -= input.GetRightStickX() * 150.0f * dt;
+        deltaPitch += input.GetRightStickY() * 150.0f * dt;
+    }
+
+    cam.yaw += deltaYaw;
+    cam.pitch = std::clamp(cam.pitch + deltaPitch, -89.0f, 89.0f);
+
+    glm::vec3 move{0.0f};
+    if (input.IsActionHeld(Action::MoveForward))  move += cam.forward;
+    if (input.IsActionHeld(Action::MoveBackward)) move -= cam.forward;
+    if (input.IsActionHeld(Action::MoveLeft))     move += cam.right;
+    if (input.IsActionHeld(Action::MoveRight))    move -= cam.right;
+    if (input.IsActionHeld(Action::MoveUp))       move += cam.up;
+    if (input.IsActionHeld(Action::MoveDown))     move -= cam.up;
+
+    if (input.controllers[0].connected)
+    {
+        move += cam.forward * input.GetLeftStickY();
+        move += cam.right   * input.GetLeftStickX();
+    }
+
+    if (glm::length2(move) > 1e-6f)
+    {
+        worldPos += glm::normalize(move) * cameraSpeed * dt;
+    }
+
+}
 
 void Application::UpdateCamera()
 {
@@ -365,18 +782,18 @@ void Application::UpdateCamera()
             activeCam.controller.Update(activeCam, dt);
         }
 
-    	const f32 s = std::sin(activeCam.controller.headTimer * glm::two_pi<f32>());
-    	const f32 c = std::cos(activeCam.controller.headTimer * glm::two_pi<f32>());
+        const f32 s = std::sin(activeCam.controller.headTimer * glm::two_pi<f32>());
+        const f32 c = std::cos(activeCam.controller.headTimer * glm::two_pi<f32>());
 
-    	glm::vec3 bobOffset = activeCam.base.right * (s * activeCam.controller.tune.bobHorizAmp);
-    	bobOffset.y = std::abs(c * activeCam.controller.tune.bobVertAmp);
+        glm::vec3 bobOffset = activeCam.base.right * (s * activeCam.controller.tune.bobHorizAmp);
+        bobOffset.y = std::abs(c * activeCam.controller.tune.bobVertAmp);
 
-    	renderPos = activeCam.position + glm::vec3(0, activeCam.controller.eyeHeight, 0) + bobOffset;
+        renderPos = activeCam.position + glm::vec3(0, activeCam.controller.eyeHeight, 0) + bobOffset;
     }
     else
     {
-    	Platform::SetCursorLocked(&windowContext, false);
-    	Platform::SetCursorVisible(true);
+        Platform::SetCursorLocked(&windowContext, false);
+        Platform::SetCursorVisible(true);
         ApplyFreeFlyMovement(activeCamIdx, dt);
         renderPos = activeCam.position;
     }
@@ -394,94 +811,6 @@ void Application::UpdateCamera()
 
     if (!freezeFrustum) frustumIdx = activeCamIdx;
     selectedCameraIdx = editorUI.state.selectedCameraIdx;
-}
-
-void Application::ApplyFreeFlyMovement(const u32 idx, const f32 dt)
-{
-    CameraComponent& camComp = sceneCameras[idx];
-    Camera& cam = camComp.base;
-    glm::vec3& worldPos = camComp.position;
-
-    f32 deltaYaw = 0.0f;
-    f32 deltaPitch = 0.0f;
-
-    if (input.IsKeyHeld(Keyboard::Alt) && input.IsMouseHeld(Mouse::Middle))
-    {
-        worldPos += (cam.right * static_cast<f32>(-input.xrel) + cam.up * static_cast<f32>(input.yrel)) * 0.02f;
-        input.scrollY = 0; // no cam speed happening here
-    }
-
-    if ((input.IsMouseHeld(Mouse::Right)))
-    {
-        deltaYaw   -= static_cast<f32>(input.xrel) * 0.1f;
-        deltaPitch -= static_cast<f32>(input.yrel) * 0.1f;
-        Platform::WrapCursorToOppositeEdge(&windowContext);
-    }
-
-    // Controller movement
-    if (input.controllers[0].connected)
-    {
-        deltaYaw   -= input.GetRightStickX() * 150.0f * dt;
-        deltaPitch += input.GetRightStickY() * 150.0f * dt;
-    }
-
-    cam.yaw += deltaYaw;
-    cam.pitch = std::clamp(cam.pitch + deltaPitch, -89.0f, 89.0f);
-
-    glm::vec3 move{0.0f};
-    if (input.IsActionHeld(Action::MoveForward))  move += cam.forward;
-    if (input.IsActionHeld(Action::MoveBackward)) move -= cam.forward;
-    if (input.IsActionHeld(Action::MoveLeft))     move -= cam.right;
-    if (input.IsActionHeld(Action::MoveRight))    move += cam.right;
-    if (input.IsActionHeld(Action::MoveUp))       move += cam.up;
-    if (input.IsActionHeld(Action::MoveDown))     move -= cam.up;
-
-    if (input.controllers[0].connected)
-    {
-        move += cam.forward * input.GetLeftStickY();
-        move += cam.right   * input.GetLeftStickX();
-    }
-
-    if (glm::length2(move) > 1e-6f) {
-        worldPos += glm::normalize(move) * cameraSpeed * dt;
-    }
-
-}
-
-void Application::UpdateSceneUBO()
-{
-    ZoneScopedN("UpdateSceneUBO");
-    const u32 frameIndex = renderer.GetFrameIndex();
-    const CameraComponent& activeCam = sceneCameras[activeCamIdx];
-
-    glm::vec3 finalEyePos = activeCam.position;
-    if (camMode == CameraMode::FPS)
-    {
-        finalEyePos.y += activeCam.controller.eyeHeight;
-    }
-
-    aspectRatio = static_cast<f32>(swapchain.width) / static_cast<f32>(swapchain.height);
-
-    sceneData.view = activeCam.base.view;
-    sceneData.proj = activeCam.base.projection;
-    camUBO.position = finalEyePos;
-    camUBO.nearPlane = activeCam.base.nearPlane;
-    camUBO.farPlane = activeCam.base.farPlane;
-
-    lightMeta.count = static_cast<u32>(lights.size());
-
-    TracyPlot("Draw Calls", static_cast<i64>(sceneStats.drawCallCount));
-    TracyPlot("Triangle Count", static_cast<i64>(sceneStats.totalTris));
-    TracyPlot("GPU Draw Time (ms)", sceneStats.gpuDrawTime);
-
-    if (sceneUBO)
-    {
-        sceneUBO->UpdateBinding(frameIndex, 2, &debugData, sizeof(DebugUBO));
-        sceneUBO->UpdateBinding(frameIndex, 3, &camUBO, sizeof(CameraUBO));
-        sceneUBO->UpdateBinding(frameIndex, 4, lights.data(), sizeof(LightUBO) * lights.size());
-        sceneUBO->UpdateBinding(frameIndex, 5, &lightMeta, sizeof(LightUBOCount));
-        sceneUBO->UpdateBinding(frameIndex, 6, &sceneData, sizeof(SceneUBO));
-    }
 }
 
 void Application::QueueFrustumVisualizer(u32 camIdx, const glm::vec4& color)
@@ -504,308 +833,70 @@ void Application::QueueFrustumVisualizer(u32 camIdx, const glm::vec4& color)
     debugRenderer.QueueBox(invVP, ndcVolume);
 }
 
-void Application::RenderScene(u32 imageIndex)
-{
-	auto* frame = static_cast<Renderer::VulkanFrameData*>(renderer.GetCurrentFrameData());
-	auto& cmd = frame->commandBuffer;
-	const Extent2D extent = swapchain.GetExtent();
-	const u32 frameIndex = renderer.GetFrameIndex();
-
-	Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
-	Renderer::GPUTexture* depthImage = &swapchain.depthTexture;
-
-	// {
-	//     Renderer::GPUTexture* shadowMap = &swapchain.shadowTexture; // not available yet
-	//     cmd.TransitionLayout(shadowMap, TextureLayout::DepthWrite);
- //        auto shadowDepthAttach = Renderer::RenderAttachment::Depth(shadowMap, LoadOP::Clear, 1.0f);
- //
- //        constexpr Extent2D shadowExtent = { 2048, 2048 };
- //
- //        Renderer::RenderingInfo shadowRenderInfo = {
- //            .extent = shadowExtent,
- //            .colorAttachments = {}, // Zero color attachments for depth-only pass
- //            .depthAttachment = &shadowDepthAttach
- //         };
- //        cmd.BeginDebugLabel("Shadow Pass", 0.1f, 0.1f, 0.1f);
- //        cmd.BeginRendering(shadowRenderInfo);
- //        cmd.SetViewport({0.0f, 0.0f, static_cast<f32>(shadowExtent.width), static_cast<f32>(shadowExtent.height), 0.0f, 1.0f});
- //        cmd.SetScissor(0, 0, shadowExtent.width, shadowExtent.height);
- //        cmd.EndRendering();
- //        cmd.EndDebugLabel();
-	// }
-
-
-
-#ifdef ENABLE_GPU_TIMING
-    sceneStats.gpuDrawTime = frame->queryPool.GetElapsedMs(0);
-    sceneStats.gpuDrawTime += frame->queryPool.GetElapsedMs(1);
-#endif
-
-    cmd.TransitionLayout(colorImage, TextureLayout::ColorWrite);
-    cmd.TransitionLayout(depthImage, TextureLayout::DepthWrite);
-
-	auto colorAttach = Renderer::RenderAttachment::Color(colorImage, LoadOP::Clear, {0.1f, 0.1f, 0.1f, 1.0f});
-	auto depthAttach = Renderer::RenderAttachment::Depth(depthImage, LoadOP::Clear, 0.0);
-
-	Renderer::RenderingInfo renderInfo = {
-		.extent = extent,
-		.colorAttachments = SPAN_ONE(colorAttach),
-		.depthAttachment = &depthAttach
-	};
-    cmd.BeginDebugLabel("Scene", 0.2f, 0.8f, 0.2f);
-	cmd.BeginRendering(renderInfo);
-
-	cmd.SetViewport({0.0f, 0.0f, static_cast<f32>(extent.width), static_cast<f32>(extent.height), 0.0f, 1.0f});
-	cmd.SetScissor(0, 0, extent.width, extent.height);
-
-	const auto cpuStart = std::chrono::high_resolution_clock::now();
-
-    const CameraComponent& activeCam = sceneCameras[activeCamIdx];
-    const Camera& cullingCam = freezeFrustum ? frozenCamComp.base : activeCam.base;
-
-    cmd.BeginDebugLabel("Models", 0.4f, 0.4f, 0.9f);
-
-#ifdef ENABLE_GPU_TIMING
-    frame->queryPool.WriteTimestamp(&cmd, 0);
-#endif
-
-    sceneRenderer.PrepareFrame(&windowContext, &cullingCam);
-    sceneRenderer.RenderModels(frame->GetCommandBuffer(), frameIndex, sceneStats);
-    cmd.EndDebugLabel();
-
-    cmd.BeginDebugLabel("Skybox", 0.6f, 0.3f, 0.6f);
-    skybox.Render(&cmd, activeCam.base, aspectRatio);
-    cmd.EndDebugLabel();
-
-    cmd.BeginDebugLabel("DebugGizmos", 1.0f, 1.0f, 0.0f);
-    QueueFrustumVisualizer(frustumIdx, glm::vec4(0.0f, 1.0f, 1.0f, 1.0f));
-    if (debugRenderer.enabled)
-    {
-        debugRenderer.Flush(&cmd, frameIndex);
-    }
-
-    cmd.EndDebugLabel();
-#ifdef ENABLE_GPU_TIMING
-	frame->queryPool.WriteTimestamp(&cmd, 1);
-#endif
-
-	const auto cpuEnd = std::chrono::high_resolution_clock::now();
-	sceneStats.cpuDrawTime = static_cast<f32>(std::chrono::duration<f64, std::milli>(cpuEnd - cpuStart).count());
-
-	cmd.EndRendering();
-    cmd.EndDebugLabel();
-}
-
-void Application::RenderImGui(u32 imageIndex)
-{
-	auto* frame = static_cast<Renderer::VulkanFrameData*>(renderer.GetCurrentFrameData());
-	auto& cmd = frame->commandBuffer;
-
-	TracyVkZone(cmd.tracyCtx, cmd.GetVkHandle(), "ImGui");
-
-	const Extent2D extent = swapchain.GetExtent();
-	Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
-
-	Renderer::RenderAttachment colorAttach = Renderer::RenderAttachment::Color(colorImage, LoadOP::Load);
-
-	const Renderer::RenderingInfo renderInfo = {
-		.extent = extent,
-		.colorAttachments = SPAN_ONE(colorAttach),
-	};
-    cmd.BeginDebugLabel("UI/ImGui", 0.6f, 0.3f, 0.6f);
-	cmd.BeginRendering(renderInfo);
-
-#ifdef ENABLE_GPU_TIMING
-    frame->queryPool.WriteTimestamp(&cmd, 2);
-#endif
-
-    if (!editorUI.state.noUI)
-    {
-        CameraComponent& activeCam = sceneCameras[activeCamIdx];
-
-        if (editorUI.state.showMenuBar)
-        {
-            if (editorUI.DrawMainMenuBar())
-            {
-                Cleanup();
-                return;
-            }
-        }
-
-        editorUI.DrawCameraGizmo(activeCam);
-
-        editorUI.DrawMainOverlay();
-
-        if (editorUI.state.showEditorTools)
-        {
-            editorUI.DrawEditorTools();
-        }
-
-        if (editorUI.state.showAboutPopup)
-        {
-            editorUI.AppInfoPopup();
-        }
-
-        // --- Transient UI ---
-        editorUI.DrawDebugViewPopup(debugViewPopupTime, debugData.debugMode);
-        editorUI.DrawCameraSpeedPopup(cameraSpeedPopupTime);
-    }
-
-    editorUI.UpdateLights(windowContext.GetDeltaTime());
-
-	EditorUI::EndFrame();
-	EditorUI::Render(frame->GetCommandBuffer());
-
-#ifdef ENABLE_GPU_TIMING
-    frame->queryPool.WriteTimestamp(&cmd, 3);
-#endif
-
-	cmd.EndRendering();
-    cmd.EndDebugLabel();
-	cmd.TransitionLayout(colorImage, TextureLayout::Present);
-
-	// Compute GPU busy percentage
-	const f32 frameMs = (lastFrameMs > 0.0f) ? lastFrameMs : (1000.0f / windowContext.fps);
-	const f32 busy = (frameMs > 0.0f) ? (sceneStats.gpuDrawTime / frameMs * 100.0f) : 0.0f;
-	sceneStats.gpuBusy = std::clamp(busy, 0.0f, 100.0f);
-}
-
-void Application::DrawLoadingSplash(const char* text)
-{
-	// Process a frame just like Run() does, but only once.
-	if (!swapchain.ResizeIfNeeded()) return;
-
-	u32 frameIndex = 0;
-	u32 imageIndex = 0;
-	if (!renderer.BeginFrame(frameIndex, imageIndex))
-		return;
-
-	auto* frameData = static_cast<Renderer::VulkanFrameData*>(renderer.GetCurrentFrameData());
-	auto* cmd = static_cast<Renderer::VulkanCommandBuffer*>(frameData->GetCommandBuffer());
-
-	Renderer::GPUTexture* colorImage = swapchain.GetImage(imageIndex);
-	const Extent2D extent = swapchain.GetExtent();
-
-	cmd->TransitionLayout(colorImage, TextureLayout::ColorWrite);
-	// Build a minimal ImGui overlay
-	EditorUI::BeginFrame();
-	{
-		const ImGuiViewport* vp = ImGui::GetMainViewport();
-		ImGui::SetNextWindowPos(vp->WorkPos);
-		ImGui::SetNextWindowSize(vp->WorkSize);
-		constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
-		   ImGuiWindowFlags_NoMove |
-		   ImGuiWindowFlags_NoSavedSettings |
-		   ImGuiWindowFlags_NoBackground;
-		if (ImGui::Begin("##LoadingSplash", nullptr, flags))
-		{
-			const ImVec2 win = ImGui::GetWindowSize();
-			const ImVec2 sz = ImGui::CalcTextSize(text);
-			ImGui::SetCursorPos({(win.x - sz.x) * 0.5f, (win.y - sz.y) * 0.5f});
-			ImGui::TextUnformatted(text);
-		}
-		ImGui::End();
-	}
-
-	auto colorAttach = Renderer::RenderAttachment::Color(colorImage, LoadOP::Clear, {0.0f, 0.0f, 0.0f, 1.0f});
-
-	Renderer::RenderingInfo renderInfo = {
-		.extent = extent,
-		.colorAttachments = SPAN_ONE(colorAttach),
-	 };
-
-	cmd->BeginRendering(renderInfo);
-
-	editorUI.EndFrame();
-	editorUI.Render(cmd);
-
-	cmd->EndRendering();
-	cmd->TransitionLayout(colorImage, TextureLayout::Present);
-
-	renderer.EndFrame(frameIndex, imageIndex);
-}
-
 void Application::CreatePBRSphereGrid()
 {
-	ZoneScopedN("CreatePBRSphereGrid3D");
+    ZoneScopedN("CreatePBRSphereGrid3D");
 
-	LoadedModel loadedModel;
-	loadedModel.sourceType = MeshSourceType::Runtime;
+    auto sphereHandleRes = modelPool.Load("runtime://pbr_sphere", [&]([[maybe_unused]] const std::string& path) -> Result<Renderer::GPUModel>
+    {
+        LoadedModel loadedModel;
+        loadedModel.sourceType = MeshSourceType::Runtime;
 
-	Mesh sphereSource = MeshGenerator::GenerateSphere();
-	sphereSource.name = "PBR_Sphere_3D";
-	loadedModel.meshes.push_back(std::move(sphereSource));
+        Mesh sphereSource = MeshGenerator::GenerateSphere();
+        sphereSource.name = "PBR_Sphere_3D";
+        loadedModel.meshes.push_back(std::move(sphereSource));
 
-	Material pbrMat;
-	pbrMat.name = "SpherePBRBase";
-	pbrMat.baseColor = glm::vec3(1.0f);
-	pbrMat.roughness = 1.0f;
-	pbrMat.metallic = 1.0f;
-	loadedModel.materials.push_back(pbrMat);
+        Material pbrMat;
+        pbrMat.name = "SpherePBRBase";
+        pbrMat.baseColor = glm::vec3(1.0f);
+        pbrMat.roughness = 1.0f;
+        pbrMat.metallic = 1.0f;
 
-	sphereMesh = std::make_unique<Renderer::VulkanModel>(&device, loadedModel, globalDescriptorAlloc,  texDefaults);
+        pbrMat.albedoPath = "engine://white";
 
-	// 3D Grid Dimensions
-	constexpr i32 dimX = 20; // Metallic variation
-	constexpr i32 dimY = 20; // Roughness variation
-	constexpr i32 dimZ = 20; // Depth stacking
-	constexpr f32 spacing = 3.0f;
+        loadedModel.materials.push_back(pbrMat);
 
-	constexpr f32 offsetX = (dimX - 1) * spacing * 0.5f;
-	constexpr f32 offsetY = (dimY - 1) * spacing * 0.5f;
-	constexpr f32 offsetZ = (dimZ - 1) * spacing * 0.5f;
+        return Renderer::CreateVulkanModel(&device, loadedModel, bindlessManager, texturePool, globalDescriptorAlloc);
+    });
 
-	for (i32 z = 0; z < dimZ; ++z)
-	{
-		for (i32 y = 0; y < dimY; ++y)
-		{
-			for (i32 x = 0; x < dimX; ++x)
-			{
-				const f32 posX = (x * spacing) - offsetX;
-				const f32 posY = (y * spacing) - offsetY + 10.0f;
-				const f32 posZ = (z * spacing) - offsetZ - 20.0f; // Push away from camera
+    if (!sphereHandleRes) {
+        LOG(Error, "Failed to create PBR Sphere model grid!");
+        return;
+    }
 
-				models.push_back(Renderer::ModelComponent{
-					.model = sphereMesh.get(),
-					.transform = glm::translate(glm::mat4(1.0f), glm::vec3(posX, posY, posZ)),
-					.path = Renderer::RenderPath::Instance,
-					// Map Roughness to Y-axis, Metallic to X-axis
-					.roughness = std::clamp(static_cast<f32>(y) / (dimY - 1), 0.05f, 1.0f),
-					.metallic = std::clamp(static_cast<f32>(x) / (dimX - 1), 0.05f, 1.0f),
-				});
-			}
-		}
-	}
-}
+    // Extract the safe handle from the result
+    const auto sphereHandle = *sphereHandleRes;
 
-void Application::ComputeStaticSceneStats()
-{
-	sceneStats.totalVerts      = 0;
-	sceneStats.totalTris       = 0;
-	sceneStats.totalMeshCount  = 0;
+    // 3D Grid Dimensions
+    constexpr i32 dimX = 20; // Metallic variation
+    constexpr i32 dimY = 20; // Roughness variation
+    constexpr i32 dimZ = 20; // Depth stacking
+    constexpr f32 spacing = 3.0f;
 
-	// Loop over all model components (the instances in the scene)
-	for (const auto& comp : models)
-	{
-		if (comp.model == nullptr) continue;
+    constexpr f32 offsetX = (dimX - 1) * spacing * 0.5f;
+    constexpr f32 offsetY = (dimY - 1) * spacing * 0.5f;
+    constexpr f32 offsetZ = (dimZ - 1) * spacing * 0.5f;
 
-		const auto* model = comp.model;
+    for (i32 z = 0; z < dimZ; ++z)
+    {
+        for (i32 y = 0; y < dimY; ++y)
+        {
+            for (i32 x = 0; x < dimX; ++x)
+            {
+                const f32 posX = (x * spacing) - offsetX;
+                const f32 posY = (y * spacing) - offsetY + 10.0f;
+                const f32 posZ = (z * spacing) - offsetZ - 20.0f;
 
-		if (model->vertexBuffer.buffer != VK_NULL_HANDLE)
-		{
-			sceneStats.totalVerts += static_cast<u32>(model->vertexBuffer.allocationInfo.size / sizeof(Vertex));
-		}
 
-		for (const auto& part : model->parts)
-		{
-			sceneStats.totalTris += part.indexCount / 3;
-			++sceneStats.totalMeshCount;
-		}
-	}
-
-	// Log scene complexity once at startup
-	const Extent2D extent = swapchain.GetExtent();
-	LOG(Debug, "Scene Stats - Triangles: {} | Verts: {} | MeshParts: {} | Resolution: {}x{}",
-	    sceneStats.totalTris, sceneStats.totalVerts, sceneStats.totalMeshCount,
-	    extent.width, extent.height);
+                models.push_back(Renderer::ModelComponent{
+                    .modelHandle = sphereHandle,
+                    .transform = glm::translate(glm::mat4(1.0f), glm::vec3(posX, posY, posZ)),
+                    .path = Renderer::RenderPath::Instance,
+                    // Map Roughness to Y-axis, Metallic to X-axis
+                    .roughness = std::clamp(static_cast<f32>(y) / (dimY - 1), 0.05f, 1.0f),
+                    .metallic = std::clamp(static_cast<f32>(x) / (dimX - 1), 0.05f, 1.0f),
+                });
+            }
+        }
+    }
 }

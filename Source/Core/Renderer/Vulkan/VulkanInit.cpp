@@ -4,12 +4,12 @@
 #include "VulkanInit.h"
 #include <vk_mem_alloc.h>
 
+#include <volk.h>
 #include "VulkanCheck.h"
 
 #if ENGINE_PLATFORM_SDL
 #include "SDL3/SDL_vulkan.h"
 #endif
-#include "Tools/Array.h"
 #include "Tools/Logger.h"
 #include "Tools/Vector.h"
 #include "tracy/Tracy.hpp"
@@ -35,31 +35,28 @@ static Vector kValidationLayers = {
 
 
 #ifdef VULKAN_DEBUG_MODE
-static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-                                                    VkDebugUtilsMessageTypeFlagsEXT messageType,
+VKAPI_ATTR static VkBool32 DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+                                                    [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT messageType,
                                                     const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
-                                                    void* pUserData = nullptr)
+                                                    [[maybe_unused]] void* pUserData = nullptr)
 {
-    LogType type = LogType::Debug;
+    auto type = LogType::Debug;
 
     if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+    {
         type = LogType::Error;
+    }
     else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+    {
         type = LogType::Warning;
+    }
     else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
+    {
         type = LogType::Info;
+    }
 
-    // Simplify Type String
-    auto typeStr = "GENERAL";
-    if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
-        typeStr = "VALIDATION";
-    else if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)
-        typeStr = "PERFORMANCE";
+    Logger::Write(type, {}, "[Vulkan]: {}" , callbackData->pMessage);
 
-    Logger::Write(type, {}, "[Vulkan] [{}] ({}): {}",
-                typeStr,
-                callbackData->pMessageIdName ? callbackData->pMessageIdName : "None",
-                callbackData->pMessage ? callbackData->pMessage : "No message");
     return VK_FALSE;
 }
 #endif
@@ -107,14 +104,6 @@ bool VulkanInstance::Init()
 
     ValidateVulkanProperties(requiredExtensions, available, &VkExtensionProperties::extensionName);
 
-    appInfo = {
-        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "OrgEngine",
-        .applicationVersion = 1,
-        .engineVersion = 1,
-        .apiVersion = VK_HEADER_VERSION_COMPLETE
-    };
-
 #ifdef VULKAN_DEBUG_MODE
     VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -124,10 +113,10 @@ bool VulkanInstance::Init()
         .pfnUserCallback = DebugCallback,
     };
 
-    u32 layerCount = 0;
-    vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
-    Vector<VkLayerProperties> layers(layerCount);
-    vkEnumerateInstanceLayerProperties(&layerCount, layers.data());
+    u32 instanceLayerCount = 0;
+    vkEnumerateInstanceLayerProperties(&instanceLayerCount, nullptr);
+    Vector<VkLayerProperties> layers(instanceLayerCount);
+    vkEnumerateInstanceLayerProperties(&instanceLayerCount, layers.data());
 
     if (!ValidateVulkanProperties(kValidationLayers, layers, &VkLayerProperties::layerName))
     {
@@ -139,6 +128,14 @@ bool VulkanInstance::Init()
         return false;
     }
 #endif
+
+    appInfo = {
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pApplicationName = "OrgEngine",
+        .applicationVersion = 1,
+        .engineVersion = 1,
+        .apiVersion = VK_HEADER_VERSION_COMPLETE
+    };
 
     VkInstanceCreateInfo createInfo = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,

@@ -397,8 +397,17 @@ public:
         m_size += count;
     }
 
+    void assign(size_t count, const T& value)
+    {
+        clear();
+        reserve(count);
+        for (size_t i = 0; i < count; ++i)
+        {
+            push_back(value);
+        }
+    }
 
-    template<typename It>
+    template <std::input_iterator It>
     void assign(It first, It last)
     {
         clear();

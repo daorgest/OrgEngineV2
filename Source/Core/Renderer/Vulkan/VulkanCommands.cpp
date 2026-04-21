@@ -19,7 +19,7 @@ bool VulkanFrameData::Init(GPUDevice* dev)
     device = static_cast<VulkanDevice*>(dev);
 
     // Allocate primary command buffer and pool directly
-    commandBuffer.Init(device, false);
+    commandBuffer.Init(device);
 
     queryPool.Init(device, 4);
     renderFence = std::make_unique<VulkanFence>(device);
@@ -59,7 +59,7 @@ bool VulkanRenderer::Init(GPUDevice* dev, GPUSwapchain* sc, u32 frameOverlap)
 
     // Initialize Tracy profiling context ONCE
     tracyCtx = TracyVkContext(device->physicalDevice, device->device, device->graphicsQueue,
-                              frames.at(0).commandBuffer.GetVkHandle());
+                              frames[0].commandBuffer.GetVkHandle());
     TracyVkContextName(tracyCtx, "Graphics", 8);
 
     // Distribute Tracy context to all frame command buffers
@@ -67,6 +67,7 @@ bool VulkanRenderer::Init(GPUDevice* dev, GPUSwapchain* sc, u32 frameOverlap)
     {
         frames[i].commandBuffer.tracyCtx = tracyCtx;
     }
+    device->immediateSubmitter.cmdBuffer.tracyCtx = tracyCtx;
 
     // Allocate present semaphores (matching swapchain image count)
     for (u32 i = 0; i < swapchain->imageCount; i++)
@@ -85,6 +86,7 @@ void VulkanRenderer::Destroy()
     if (tracyCtx)
     {
         TracyVkDestroy(tracyCtx);
+        tracyCtx = nullptr;
     }
 
     for (auto& frame : frames)
@@ -124,6 +126,7 @@ bool VulkanRenderer::BeginFrame(u32& outFrameIndex, u32& outImageIndex)
     outImageIndex = acquireResult.value();
 
     frame.commandBuffer.Begin(nullptr);
+    frame.commandBuffer.BeginDebugLabel("Frame CommandBuffer", 0.0f, 0.7f, 1.0f);
 
     frame.queryPool.Reset(&frame.commandBuffer);
 
@@ -140,6 +143,7 @@ void VulkanRenderer::EndFrame(u32 frameIndex, u32 imageIndex)
     VulkanFrameData& frame = frames[frameIndex];
 
     VkSemaphore sem = presentSemaphores[imageIndex]->semaphore;
+	frame.commandBuffer.EndDebugLabel();
     frame.commandBuffer.End();
 
     // Sync2 Submission!

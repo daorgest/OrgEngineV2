@@ -636,6 +636,7 @@ void Platform::StartFrame(WindowContext& window)
 
     window.lastFrameTime = currentTicks;
 }
+
 void Platform::ShowWindow(const WindowContext& window)
 {
     ::ShowWindow(static_cast<HWND>(window.handle), SW_NORMAL);

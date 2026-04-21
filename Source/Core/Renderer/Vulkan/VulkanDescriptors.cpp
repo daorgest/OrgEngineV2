@@ -15,12 +15,28 @@
 
 using namespace Renderer;
 
-void DescriptorLayout::Destroy(const VulkanDevice* device) const
+static VkDevice GetVkDevice(const GPUDevice* device)
 {
-    if (vk)
-    {
-        vkDestroyDescriptorSetLayout(device->device, vk, nullptr);
-    }
+    return static_cast<const VulkanDevice*>(device)->device;
+}
+
+void DescriptorLayout::Destroy(const GPUDevice* device) const
+{
+    if (vk) vkDestroyDescriptorSetLayout(GetVkDevice(device), vk, nullptr);
+}
+
+
+static VkImageLayout DetermineDescriptorLayout(const VulkanTexture* img, VkDescriptorType type)
+{
+    // If the device uses a unified layout (like General), stick to it
+    if (img->device->useUnifiedLayout) return VK_IMAGE_LAYOUT_GENERAL;
+
+    // Storage images almost always require GENERAL
+    if (type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) return VK_IMAGE_LAYOUT_GENERAL;
+
+    return IsDepthFormat(img->imageFormat)
+               ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+               : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
 // Layout Builder
@@ -40,7 +56,7 @@ DescriptorLayoutBuilder& DescriptorLayoutBuilder::AddBindings(const std::span<co
     return *this;
 }
 
-DescriptorLayout DescriptorLayoutBuilder::Build(const VulkanDevice* device, void* pNext,
+DescriptorLayout DescriptorLayoutBuilder::Build(const GPUDevice* device, void* pNext,
                                                 const VkDescriptorSetLayoutCreateFlags flags)
 {
     Vector<VkDescriptorBindingFlags> bindingFlags;
@@ -54,8 +70,7 @@ DescriptorLayout DescriptorLayoutBuilder::Build(const VulkanDevice* device, void
         if (b.isBindless)
         {
             hasBindless = true;
-            newFlag = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
-                VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+            newFlag = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
 
             // Only the LAST binding can be variable count
             if (i == metadata.size() - 1)
@@ -89,33 +104,34 @@ DescriptorLayout DescriptorLayoutBuilder::Build(const VulkanDevice* device, void
     };
 
     DescriptorLayout result;
-    vkCreateDescriptorSetLayout(device->device, &info, nullptr, &result.vk);
+    vkCreateDescriptorSetLayout(GetVkDevice(device), &info, nullptr, &result.vk);
     return result;
 }
 
-// Combined Image + Sampler
-DescriptorWriter& DescriptorWriter::WriteCombinedImage(u32 binding, const GPUTexture* image,
-                                                       const GPUSampler* sampler, const u32 arrayElement)
+DescriptorLayout DescriptorLayoutBuilder::BuildFromDesc(const GPUDevice* device, const DescriptorSetLayoutDesc& desc)
 {
-    if (sampler == nullptr)
-    {
-        return *this;
-    }
+    this->Clear();
+    this->metadata = desc.bindings;
+    SortBindings(this->metadata);
+    return Build(device);
+}
+
+// Combined Image + Sampler
+DescriptorWriter& DescriptorWriter::WriteCombinedImage(u32 binding, const GPUTexture* image, const GPUSampler* sampler,
+                                                       const u32 arrayElement)
+{
+    if (!sampler || !image) return *this;
 
     const auto* img = static_cast<const VulkanTexture*>(image);
     const auto* smp = static_cast<const VulkanSampler*>(sampler);
 
-    VkImageLayout layout = img->device->useUnifiedLayout ? VK_IMAGE_LAYOUT_GENERAL :
-                           (IsDepthFormat(img->imageFormat) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                                                            : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-    imageInfos.emplace_back(VkDescriptorImageInfo{
-        .sampler = smp->sampler, // Accessing Vulkan handle
+    imageInfos.push_back({
+        .sampler = smp->sampler,
         .imageView = img->imageView,
-        .imageLayout = layout
+        .imageLayout = DetermineDescriptorLayout(img, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
     });
 
-    writes.emplace_back(VkWriteDescriptorSet{
+    writes.push_back({
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .dstBinding = binding,
         .dstArrayElement = arrayElement,
@@ -129,7 +145,7 @@ DescriptorWriter& DescriptorWriter::WriteCombinedImage(u32 binding, const GPUTex
 
 // Single Image or Single Sampler
 DescriptorWriter& DescriptorWriter::WriteImage(u32 binding, const GPUTexture* image, const GPUSampler* sampler,
-    DescriptorType type)
+                                               const DescriptorType type)
 {
     VkDescriptorType vkType = ToVk(type);
 
@@ -185,98 +201,51 @@ DescriptorWriter& DescriptorWriter::WriteImage(u32 binding, const GPUTexture* im
     return *this;
 }
 
-// Image Array
-DescriptorWriter& DescriptorWriter::WriteImageArray(u32 binding, const std::span<const GPUTexture*> images,
-                                                    const DescriptorType type)
-{
-    if (images.empty()) return *this;
 
-    const u32 start = static_cast<u32>(imageInfos.size());
-
-    for (const GPUTexture* baseImg : images)
-    {
-        const auto* img = static_cast<const VulkanTexture*>(baseImg);
-
-        VkImageLayout layout;
-        if (img->device->useUnifiedLayout)
-        {
-            layout = VK_IMAGE_LAYOUT_GENERAL;
-        }
-        else
-        {
-            layout = ToVk(img->imageLayout);
-        }
-
-        imageInfos.emplace_back(VkDescriptorImageInfo{
-            .sampler = VK_NULL_HANDLE,
-            .imageView = img->imageView,
-            .imageLayout = layout,
-        });
-    }
-
-    writes.emplace_back(VkWriteDescriptorSet{
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstBinding = binding,
-        .descriptorCount = static_cast<u32>(images.size()),
-        .descriptorType = ToVk(type),
-        .pImageInfo = &imageInfos.at(start)
-    });
-
-    return *this;
-}
-
-DescriptorWriter& DescriptorWriter::WriteBuffer(const u32 binding, const VulkanBuffer* buffer, const DescriptorType type)
-{
-	if (!buffer)
-		return *this;
-
-	bufferInfos.emplace_back(VkDescriptorBufferInfo{
-		.buffer = buffer->buffer,
-		.offset = 0,
-		.range  = buffer->info.size
-	});
-
-	writes.emplace_back(VkWriteDescriptorSet{
-		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.dstBinding      = binding,
-		.descriptorCount = 1,
-		.descriptorType  = ToVk(type),
-		.pBufferInfo     = &bufferInfos.back()
-	});
-
-	return *this;
-}
-
-DescriptorWriter& DescriptorWriter::WriteBuffer(u32 binding, const VulkanBuffer* buffer, size_t size, size_t offset,
-    DescriptorType type)
+DescriptorWriter& DescriptorWriter::WriteBuffer(const u32 binding, const GPUBuffer* buffer, DescriptorType type)
 {
     if (!buffer)
         return *this;
 
-    bufferInfos.emplace_back(VkDescriptorBufferInfo{
-        .buffer = buffer->buffer,
-        .offset = offset,
-        .range  = size
+    const auto* vkBuf = static_cast<const VulkanBuffer*>(buffer);
+
+    bufferInfos.push_back({
+        .buffer = vkBuf->buffer,
+        .offset = 0,
+        .range = vkBuf->GetSize()
     });
 
-    writes.emplace_back(VkWriteDescriptorSet{
+    writes.push_back({
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstBinding      = binding,
+        .dstBinding = binding,
         .descriptorCount = 1,
-        .descriptorType  = ToVk(type),
-        .pBufferInfo     = &bufferInfos.back()
+        .descriptorType = ToVk(type),
+        .pBufferInfo = &bufferInfos.back()
     });
-
     return *this;
 }
 
-DescriptorWriter& DescriptorWriter::WriteBuffers(std::span<const Binding> bindings, const VulkanBuffer* megaBuffer,
-                                                 std::span<const u32> offsets)
+// Above but with more options
+DescriptorWriter& DescriptorWriter::WriteBuffer(u32 binding, const GPUBuffer* buffer, size_t size, size_t offset,
+                                                DescriptorType type)
 {
-    for (size_t i = 0; i < bindings.size(); ++i)
-    {
-        WriteBuffer(bindings[i].binding, megaBuffer, bindings[i].size, offsets[i], bindings[i].type);
-    }
+    if (!buffer) return *this;
+    const auto* vkBuf = static_cast<const VulkanBuffer*>(buffer);
+
+    bufferInfos.push_back({
+        .buffer = vkBuf->buffer,
+        .offset = offset,
+        .range = size
+    });
+
+    writes.push_back({
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstBinding = binding,
+        .descriptorCount = 1,
+        .descriptorType = ToVk(type),
+        .pBufferInfo = &bufferInfos.back()
+    });
+
     return *this;
 }
 
@@ -287,144 +256,104 @@ void DescriptorWriter::Clear()
     writes.clear();
 }
 
-void DescriptorWriter::UpdateSet(const VulkanDevice* device, const DescriptorSet set)
+void DescriptorWriter::UpdateSet(const GPUDevice* device, const DescriptorSet set)
 {
     for (auto& write : writes)
     {
         write.dstSet = set;
     }
 
-    vkUpdateDescriptorSets(device->device, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
+    vkUpdateDescriptorSets(GetVkDevice(device), static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
 
-// Descriptor Allocator Growable
-void DescriptorAllocatorGrowable::Init(VulkanDevice* device, u32 setsPerPool, std::span<PoolSizes> poolRatios)
+void DescriptorAllocatorGrowable::Init(GPUDevice* inDevice, const u32 inSetsPerPool,
+                                       const std::span<PoolSizes> poolRatios)
 {
-    this->device = device;
-    this->setsPerPool = setsPerPool;
-
-    ratios.clear();
-    ratios.reserve(poolRatios.size());
-
-    for (const auto& ratio : poolRatios)
-    {
-        ratios.push_back(ratio);
-    }
+    this->device = inDevice;
+    this->setsPerPool = inSetsPerPool;
+    ratios.assign(poolRatios.begin(), poolRatios.end());
 }
 
 void DescriptorAllocatorGrowable::ResetPools()
 {
-    for (const auto& pool : readyPools)
-    {
-        vkResetDescriptorPool(device->device, pool, 0);
-    }
-
+    VkDevice vkDev = GetVkDevice(device);
+    for (const auto& pool : readyPools) vkResetDescriptorPool(vkDev, pool, 0);
     for (auto& pool : fullPools)
     {
-        vkResetDescriptorPool(device->device, pool, 0);
+        vkResetDescriptorPool(vkDev, pool, 0);
         readyPools.push_back(pool);
     }
-
     fullPools.clear();
 }
 
 void DescriptorAllocatorGrowable::DestroyPools()
 {
-    for (auto& pool : readyPools)
-    {
-        vkDestroyDescriptorPool(device->device, pool, nullptr);
-    }
+    VkDevice vkDev = GetVkDevice(device);
+    for (const auto& pool : readyPools) vkDestroyDescriptorPool(vkDev, pool, nullptr);
     readyPools.clear();
-
-    for (auto& pool : fullPools)
-    {
-        vkDestroyDescriptorPool(device->device, pool, nullptr);
-    }
+    for (const auto& pool : fullPools) vkDestroyDescriptorPool(vkDev, pool, nullptr);
     fullPools.clear();
 }
 
-DescriptorSet DescriptorAllocatorGrowable::Allocate(DescriptorLayout layout, const bool isBindless, const u32 bindlessCount)
+DescriptorSet DescriptorAllocatorGrowable::Allocate(DescriptorLayout layout, bool isBindless, u32 bindlessCount)
 {
-    VkDescriptorSet set = VK_NULL_HANDLE;
-    void* pNextChain = nullptr;
-    VkDescriptorSetVariableDescriptorCountAllocateInfo variableInfo = {};
+    VkDescriptorSetVariableDescriptorCountAllocateInfo variableInfo = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
+        .descriptorSetCount = 1,
+        .pDescriptorCounts = &bindlessCount
+    };
 
-    // Bindless? maybe.
-    if (isBindless && bindlessCount > 0)
+    for (int attempt = 0; attempt < 2; ++attempt)
     {
-        variableInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-        variableInfo.descriptorSetCount = 1;
-        variableInfo.pDescriptorCounts = &bindlessCount;
-        pNextChain = &variableInfo;
-    }
-
-    for (;;)
-    {
-        // Get or create a pool for allocation
         VkDescriptorPool pool = GetPool();
-        if (pool == VK_NULL_HANDLE)
-        {
-            LOG(Error, "GetPool() returned null pool");
-            return {set};
-        }
+        if (pool == VK_NULL_HANDLE) return {VK_NULL_HANDLE};
 
         VkDescriptorSetAllocateInfo allocInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .pNext = pNextChain,
+            .pNext = (isBindless && bindlessCount > 0) ? &variableInfo : nullptr,
             .descriptorPool = pool,
             .descriptorSetCount = 1,
             .pSetLayouts = &layout.vk
         };
 
-        VkResult result = vkAllocateDescriptorSets(device->device, &allocInfo, &set);
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        VkResult result = vkAllocateDescriptorSets(GetVkDevice(device), &allocInfo, &set);
 
-        // wtf
-        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL)
+        if (result == VK_SUCCESS)
         {
-            LOG(Warning, "Descriptor pool ran out of memory or fragmented for some reason. Creating a new pool.");
-            // Mark the current pool as full and retry with a new pool
-            fullPools.push_back(pool);
-            continue; // loop will grab a new pool from GetPool()
+            readyPools.push_back(pool);
+            return {set};
         }
 
-        if (result != VK_SUCCESS)
-        {
-            LOG(Error, "Failed to allocate descriptor set (VkResult: {})", static_cast<i32>(result));
-            return {set};;
-        }
-
-        // Allocation succeeded — pool is still usable, so push it back for reuse
-        readyPools.push_back(pool);
-        return {set};;
+        fullPools.push_back(pool);
+        if (attempt == 1)
+            LOG(Error, "Descriptor allocation failed on fresh pool.");
     }
-}
 
+    return {VK_NULL_HANDLE};
+}
 
 VkDescriptorPool DescriptorAllocatorGrowable::GetPool()
 {
     if (!readyPools.empty())
     {
-        VkDescriptorPool pool = readyPools.back();
+        const VkDescriptorPool pool = readyPools.back();
         readyPools.pop_back();
         return pool;
     }
 
     VkDescriptorPool pool = CreatePool(setsPerPool);
     if (pool == VK_NULL_HANDLE) return VK_NULL_HANDLE;
-    setsPerPool = std::min<u32>(setsPerPool, 4092);
-    // its 4096 for the hard limit but this is for funny alignment reasons
+    setsPerPool = std::min<u32>(static_cast<u32>(setsPerPool * 1.5f), 4092);
     return pool;
 }
 
 VkDescriptorPool DescriptorAllocatorGrowable::CreatePool(u32 setCount)
 {
     Vector<VkDescriptorPoolSize> poolSizes;
-    poolSizes.reserve(ratios.size());
-
     for (const auto& [type, ratio] : ratios)
     {
-        const u32 count = static_cast<u32>(std::ceil(ratio * static_cast<f32>(setCount)));
-        poolSizes.push_back({ToVk(type), count});
+        poolSizes.push_back({ToVk(type), static_cast<u32>(std::ceil(ratio * setCount))});
     }
 
     VkDescriptorPoolCreateInfo poolInfo = {
@@ -436,9 +365,7 @@ VkDescriptorPool DescriptorAllocatorGrowable::CreatePool(u32 setCount)
     };
 
     VkDescriptorPool newPool;
-    VkResult res = vkCreateDescriptorPool(device->device, &poolInfo, nullptr, &newPool);
-
-    if (res == VK_SUCCESS)
+    if (vkCreateDescriptorPool(GetVkDevice(device), &poolInfo, nullptr, &newPool) == VK_SUCCESS)
     {
         LOG(Info, "Created new descriptor pool with capacity: {}", setCount);
         return newPool;

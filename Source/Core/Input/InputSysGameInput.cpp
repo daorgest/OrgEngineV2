@@ -257,16 +257,14 @@ void InputSysGameInput::HandleMouse(GI::IGameInputReading* reading)
     }
 
     const GI::GameInputMouseState& prev = lastState;
-
-    // i64 deltas (GameInputMouseState uses INT64)
     const i64 dx = curr.positionX - prev.positionX;
     const i64 dy = curr.positionY - prev.positionY;
 
     // Motion
     if (dx != 0 || dy != 0)
     {
-        input.xrel = static_cast<f32>(dx);
-        input.yrel = static_cast<f32>(dy);
+        input.xrel += static_cast<f32>(dx);
+        input.yrel += static_cast<f32>(dy);
         input.usingMouse = true;
     }
 
@@ -292,8 +290,8 @@ void InputSysGameInput::HandleMouse(GI::IGameInputReading* reading)
 
     if (dwx || dwy)
     {
-        input.scrollX = dwx / WHEEL_DELTA;
-        input.scrollY = dwy / WHEEL_DELTA;
+        input.scrollX += dwx / WHEEL_DELTA;
+        input.scrollY += dwy / WHEEL_DELTA;
         input.usingMouse = true;
     }
 

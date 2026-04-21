@@ -112,6 +112,7 @@ Result<void> VulkanSwapchain::Init(GPUDevice* device, WindowHandle windowHandle_
 
     CreateImages();
     CreateDepthImage();
+    CreateMsaaColorImage();
     CreateShadowMap();
 
     LOG(Info, "Swapchain created successfully: {} x {}, format {}", width, height,
@@ -159,7 +160,7 @@ bool VulkanSwapchain::ResizeIfNeeded()
     return true;
 }
 
-GPUTexture* VulkanSwapchain::GetCurrentImage()
+VulkanTexture* VulkanSwapchain::GetCurrentImage()
 {
     if (currentImageIndex < images.size())
     {
@@ -188,6 +189,7 @@ void VulkanSwapchain::CreateImages()
         images[i].textureInfo.extent.height = height;
         images[i].textureInfo.mipLevels = 1;
         images[i].textureInfo.usage = ImageUsage::ColorAttachment;
+        images[i].textureInfo.sampleCount = SampleCount::X1;
         images[i].FillSubresourceInfo();
         images[i].CreateImageView(surfaceFormat.format);
 
@@ -196,6 +198,7 @@ void VulkanSwapchain::CreateImages()
         snprintf(nameBuffer, sizeof(nameBuffer), "Swapchain Image %u", i);
         images[i].SetName(nameBuffer);
     }
+
 }
 
 void VulkanSwapchain::DestroyImageViews()
@@ -216,7 +219,8 @@ void VulkanSwapchain::CreateDepthImage()
     TextureInfo depthInfo = {
         .extent = {width, height, 1},
         .format = TextureFormat::D32_SFLOAT,
-        .usage = ImageUsage::DepthStencil | ImageUsage::Sampled
+        .usage = ImageUsage::DepthStencil | ImageUsage::Sampled,
+        .sampleCount = currentSamples
     };
 
     depthTexture.Init(vkDev, depthInfo);
@@ -234,6 +238,23 @@ void VulkanSwapchain::CreateShadowMap()
     };
     shadowTexture.Init(vkDev, shadowMapInfo);
     shadowTexture.SetName("Shadow Map Atlas");
+    msaaColorImage.imageLayout = TextureLayout::Unknown;
+    msaaColorImage.currentLayout = TextureLayout::Unknown;
+}
+
+void VulkanSwapchain::CreateMsaaColorImage()
+{
+    TextureInfo msaaInfo = {
+        .extent = {width, height, 1},
+        .format = TextureFormat::BGRA8_SRGB,
+        .usage = ImageUsage::ColorAttachment | ImageUsage::Transient,
+        .sampleCount = currentSamples
+    };
+
+    msaaColorImage.Init(vkDev, msaaInfo);
+    msaaColorImage.SetName("MSAA Transient Color");
+    msaaColorImage.imageLayout = TextureLayout::Unknown;
+    msaaColorImage.currentLayout = TextureLayout::Unknown;
 }
 
 void VulkanSwapchain::DestroyDepthImage()
@@ -254,6 +275,14 @@ void VulkanSwapchain::SetBufferingMode(BufferingMode mode)
     if (mode == bufferingMode) return;
 
     bufferingMode = mode;
+    needsRecreation = true;
+}
+
+void VulkanSwapchain::SetMSAASamples(SampleCount samples)
+{
+    if (currentSamples == samples) return;
+
+    currentSamples = samples;
     needsRecreation = true;
 }
 
@@ -318,11 +347,12 @@ bool VulkanSwapchain::Recreate()
 
     CreateImages();
     CreateDepthImage();
+    CreateMsaaColorImage();
     needsRecreation = false;
     return true;
 }
 
-GPUTexture* VulkanSwapchain::GetImage(u32 index)
+VulkanTexture* VulkanSwapchain::GetImage(u32 index)
 {
     return &images[index];
 }
@@ -358,4 +388,9 @@ Result<u32> VulkanSwapchain::AcquireNextImage(GPUSemaphore* semaphore, u32& imag
 f32 VulkanSwapchain::GetAspectRatio() const
 {
     return static_cast<f32>(width / height);
+}
+
+SampleCount VulkanSwapchain::GetMSAASamples()
+{
+    return currentSamples;
 }

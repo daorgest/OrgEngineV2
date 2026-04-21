@@ -3,10 +3,9 @@
 //
 
 #pragma once
-#include "VulkanTexture.h"
-
 #include "RendererTypes.h"
 #include "RenderInterface.h"
+#include "VulkanTexture.h"
 #include "Tools/Vector.h"
 
 constexpr u32 UNDEFINED_EXTENT = UINT32_MAX;
@@ -26,7 +25,7 @@ namespace Renderer
         Result<void> Init(GPUDevice* devicePtr, WindowHandle windowHandle_) override;
         void Destroy() override;
         bool ResizeIfNeeded() override;
-        GPUTexture* GetCurrentImage() override;
+        [[nodiscard]] VulkanTexture* GetCurrentImage() override;
 
         [[nodiscard]] Extent2D GetExtent() const override
         {
@@ -37,12 +36,14 @@ namespace Renderer
         void DestroyImageViews();
         void CreateDepthImage();
         void CreateShadowMap();
+        void CreateMsaaColorImage();
         void DestroyDepthImage();
         void SetVsyncMode(PresentMode mode) override;
         void SetBufferingMode(BufferingMode mode) override;
+        void SetMSAASamples(SampleCount samples) override;
         bool Recreate();
 
-        [[nodiscard]] GPUTexture* GetImage(u32 index) override;
+        [[nodiscard]] VulkanTexture* GetImage(u32 index) override;
 
         // C++23: Delete copy, allow move
         VulkanSwapchain() = default;
@@ -56,6 +57,7 @@ namespace Renderer
         Result<u32> AcquireNextImage(GPUSemaphore* semaphore, u32& imageIndex) override;
         Platform::WindowHandle GetWindowHandle() const override { return handle; }
         [[nodiscard]] f32 GetAspectRatio() const override;
+        [[nodiscard]] SampleCount GetMSAASamples() override;
 
         // Public Vulkan handles for compatibility
         VulkanDevice* vkDev = nullptr;
@@ -63,19 +65,22 @@ namespace Renderer
         VkSwapchainKHR swapchain = VK_NULL_HANDLE;
         VkSurfaceKHR surface = VK_NULL_HANDLE;
         VkPresentModeKHR selectedPresentMode = VK_PRESENT_MODE_FIFO_KHR;
-        PresentMode presentMode = PresentMode::VSyncOn;
-        BufferingMode bufferingMode = BufferingMode::Double;
         VkSurfaceFormatKHR surfaceFormat = {
             .format = VK_FORMAT_B8G8R8A8_SRGB, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
         };
-        Vector<VulkanTexture> images;
-        VulkanTexture depthTexture;
-        VulkanTexture shadowTexture;
 
         u32 imageCount = 0;
         u32 width = 0;
         u32 height = 0;
         u32 currentImageIndex = 0;
+        PresentMode presentMode = PresentMode::VSyncOn;
+        BufferingMode bufferingMode = BufferingMode::Double;
+        SampleCount currentSamples = SampleCount::X4;
         bool needsRecreation = false;
+
+        Vector<VulkanTexture> images;
+        VulkanTexture depthTexture;
+        VulkanTexture msaaColorImage;
+        VulkanTexture shadowTexture;
     };
 } // namespace Renderer

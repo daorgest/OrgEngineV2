@@ -14,7 +14,7 @@ struct MikkUserData
 
 static i32 mikkGetNumFaces(const SMikkTSpaceContext* ctx)
 {
-    auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
+    const auto* d = static_cast<MikkUserData*>(ctx->m_pUserData);
     return static_cast<i32>(d->indices.size() / 3);
 }
 

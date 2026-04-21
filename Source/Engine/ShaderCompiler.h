@@ -3,35 +3,30 @@
 //
 
 #pragma once
-#include "../PrimTypes.h"
 #include <filesystem>
-#include <slang.h>
+
+#include "../PrimTypes.h"
+#include "Tools/Vector.h"
+#include <slang/slang.h>
+#include <slang/slang-com-ptr.h>
 
 #include "RendererTypes.h"
-#include "slang-com-ptr.h"
 
-struct CompiledShader
+namespace Renderer
 {
-	Slang::ComPtr<slang::IBlob> binary;
-	ShaderStage stage = ShaderStage::None;
-	std::string entryPoint;
-	Vector<Binding> bindings;
-	slang::IComponentType* reflection = nullptr;
+    struct CompileResult
+    {
+        Vector<u32> code;
+        PipelineLayoutDesc layoutDesc;
+    };
 
-	[[nodiscard]] bool IsValid() const
-	{
-		return binary && binary->getBufferSize() > 0 && stage != ShaderStage::None;
-	}
-};
+    struct ShaderCompiler
+    {
+        void Init();
+        CompileResult CompileShader(const std::filesystem::path& filePath) const;
+        static PipelineLayoutDesc ReflectLayout(slang::IComponentType* program);
+        static void ReflectPushConstants(slang::IComponentType* program, PipelineLayoutDesc& outLayout);
 
-class ShaderCompiler
-{
-public:
-	ShaderCompiler();
-	~ShaderCompiler();
-	Result<void> Init();
-	Result<CompiledShader> CompileShader(const std::filesystem::path& path) const;
-private:
-	slang::IGlobalSession* slangGlobalSession = nullptr;
-	slang::ISession* slangSession = nullptr;
-};
+        Slang::ComPtr<slang::IGlobalSession> globalSession;
+    };
+}

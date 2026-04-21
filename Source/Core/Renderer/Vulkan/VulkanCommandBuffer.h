@@ -68,6 +68,7 @@ namespace Renderer
 		void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) override;
 		void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset, u32 firstInstance) override;
 		void DrawIndirect(GPUBuffer* buffer, u64 offset, u32 drawCount, u32 stride) override;
+	    void DrawIndexedIndirect(GPUBuffer* buffer, u64 offset, u32 drawCount, u32 stride) override;
 
 		// Compute
 		void Dispatch(u32 groupCountX, u32 groupCountY, u32 groupCountZ) override;
@@ -76,7 +77,7 @@ namespace Renderer
 		// Synchronization
 		void PipelineBarrier(const BarrierInfo& info) override;
 	    void WaitForFence(GPUFence* fence) override;
-		void ExecuteCommands(std::span<GPUCommandBuffer*> secondaryBuffers);
+		void ExecuteCommands(std::span<GPUCommandBuffer*> secondaryBuffers) const;
 
 		// Viewport/Scissor
 		void SetViewport(const Viewport& viewport) override;
@@ -85,31 +86,29 @@ namespace Renderer
 		// Copy operations
 		void CopyBuffer(GPUBuffer* src, GPUBuffer* dst, u64 size, u64 srcOffset, u64 dstOffset) override;
 		void CopyBufferToTexture(GPUBuffer* src, GPUTexture* dst) override;
+	    void CopyTexture(GPUTexture* src, GPUTexture* dst) override;
 
 		// Debug markers
 		void BeginDebugLabel(const char* name, f32 r, f32 g, f32 b) override;
 		void EndDebugLabel() override;
 		void InsertDebugLabel(const char* name, f32 r, f32 g, f32 b) override;
 
+	    ~VulkanCommandBuffer() override { Destroy(); };
+	    void Destroy() const;
+
 
 		// Internal Vulkan-specific methods
-		void Init(VulkanDevice* dev, bool secondary = false);
-		void InitFromHandle(VulkanDevice* dev, VkCommandBuffer handle);
-		void Destroy() const;
+		void Init(VulkanDevice* dev, CommandBufferLevel level = CommandBufferLevel::Primary);
+	    [[nodiscard]] VkCommandBuffer GetVkHandle() const { return cmd; }
 
-
-		[[nodiscard]] VkCommandBuffer GetVkHandle() const { return cmd; }
-	    [[nodiscard]] VkCommandPool GetVkPool() const { return cmdPool; }
-		void CopyTexture(GPUTexture* src, GPUTexture* dst) override;
-
-		// Public for VulkanRenderer to set Tracy context
-		TracyVkCtx tracyCtx = nullptr;
+        // Tracy
+	    void CollectTracy();
+	    TracyVkCtx tracyCtx = nullptr;
 
 	private:
 		VkCommandBuffer cmd = VK_NULL_HANDLE;
 		VkCommandPool cmdPool = VK_NULL_HANDLE;
 		VulkanDevice* device = nullptr;
-		bool isSecondary = false;
 	};
 } // namespace Renderer
 

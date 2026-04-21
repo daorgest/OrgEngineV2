@@ -14,16 +14,7 @@ namespace Renderer
     // Shader Stage conversions
     [[nodiscard]] constexpr VkShaderStageFlags ToVk(ShaderStageFlags flags)
     {
-        VkShaderStageFlags vkFlags = 0;
-        if (HasAny(flags, ShaderStage::Vertex)) vkFlags |= VK_SHADER_STAGE_VERTEX_BIT;
-        if (HasAny(flags, ShaderStage::Fragment)) vkFlags |= VK_SHADER_STAGE_FRAGMENT_BIT;
-        if (HasAny(flags, ShaderStage::Compute)) vkFlags |= VK_SHADER_STAGE_COMPUTE_BIT;
-        if (HasAny(flags, ShaderStage::RayGen)) vkFlags |= VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-        if (HasAny(flags, ShaderStage::AnyHit)) vkFlags |= VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
-        if (HasAny(flags, ShaderStage::ClosestHit)) vkFlags |= VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-        if (HasAny(flags, ShaderStage::Miss)) vkFlags |= VK_SHADER_STAGE_MISS_BIT_KHR;
-        if (HasAny(flags, ShaderStage::Callable)) vkFlags |= VK_SHADER_STAGE_CALLABLE_BIT_KHR;
-        return vkFlags;
+        return std::to_underlying(flags);
     }
 
     // LoadOp conversions
@@ -63,7 +54,7 @@ namespace Renderer
         }
     }
 
-    constexpr VkCullModeFlags ToVk(CullMode mode)
+    [[nodiscard]] constexpr VkCullModeFlags ToVk(CullMode mode)
     {
         switch (mode)
         {
@@ -75,7 +66,7 @@ namespace Renderer
         }
     }
 
-    constexpr VkCompareOp ToVk(CompareOp op)
+    [[nodiscard]] constexpr VkCompareOp ToVk(CompareOp op)
     {
         switch (op)
         {
@@ -91,7 +82,7 @@ namespace Renderer
         }
     }
 
-    constexpr VkStencilOp ToVk(StencilOp op)
+    [[nodiscard]] constexpr VkStencilOp ToVk(StencilOp op)
     {
         switch (op)
         {
@@ -104,7 +95,7 @@ namespace Renderer
         }
     }
 
-    constexpr VkBlendFactor ToVk(BlendFactor factor)
+    [[nodiscard]] constexpr VkBlendFactor ToVk(BlendFactor factor)
     {
         switch (factor)
         {
@@ -119,7 +110,7 @@ namespace Renderer
     }
 
 
-    inline auto ToPreset(DescriptorType type) -> BufferPreset
+    [[nodiscard]] constexpr auto ToPreset(DescriptorType type) -> BufferPreset
     {
         switch (type)
         {
@@ -135,7 +126,7 @@ namespace Renderer
      * We pass the available modes from the swapchain because only FIFO is guaranteed;
      * requesting an unsupported mode like Mailbox or Immediate will cause a device crash.
      */
-    constexpr VkPresentModeKHR ToVkPresentMode(PresentMode mode, std::span<const VkPresentModeKHR> available)
+    [[nodiscard]] constexpr VkPresentModeKHR ToVkPresentMode(PresentMode mode, std::span<const VkPresentModeKHR> available)
     {
         auto has = [&](VkPresentModeKHR m)
         {
@@ -171,7 +162,7 @@ namespace Renderer
     };
 
     // Wanted to not go insane pasting this everywhere...layout transitions ew
-    constexpr SyncState GetSyncState(const TextureLayout layout, const bool isDestination)
+    [[nodiscard]] constexpr SyncState GetSyncState(const TextureLayout layout, const bool isDestination)
     {
         switch (layout)
         {
@@ -212,7 +203,7 @@ namespace Renderer
     }
 
     // Images
-    inline VkImageType ToVkImageType(TextureDimension dimension)
+    [[nodiscard]] constexpr VkImageType ToVkImageType(TextureDimension dimension)
     {
         switch (dimension)
         {
@@ -230,7 +221,7 @@ namespace Renderer
         }
     }
 
-    inline VkImageViewType ToImgViewType(TextureDimension dimension)
+    [[nodiscard]] constexpr VkImageViewType ToImgViewType(TextureDimension dimension)
     {
         switch (dimension)
         {
@@ -248,25 +239,43 @@ namespace Renderer
         }
     }
 
-    inline VkImageUsageFlags ToVkImageUsage(ImageUsageFlags usage) noexcept
+    [[nodiscard]] constexpr VkImageUsageFlags ToVkImageUsage(ImageUsageFlags usage)
     {
+        // Define a mapping between Engine flags and Vulkan flags
+        struct UsageMapping {
+            ImageUsage engine;
+            VkImageUsageFlagBits vk;
+        };
+
+        static constexpr UsageMapping table[] = {
+            { ImageUsage::TransferSrc,     VK_IMAGE_USAGE_TRANSFER_SRC_BIT },
+            { ImageUsage::TransferDst,     VK_IMAGE_USAGE_TRANSFER_DST_BIT },
+            { ImageUsage::Sampled,         VK_IMAGE_USAGE_SAMPLED_BIT },
+            { ImageUsage::ColorAttachment, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT },
+            { ImageUsage::DepthStencil,    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT },
+            { ImageUsage::Storage,         VK_IMAGE_USAGE_STORAGE_BIT },
+            { ImageUsage::InputAttachment, VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT },
+            { ImageUsage::ResolveDst,      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT },
+            { ImageUsage::ResolveSrc,      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT },
+            { ImageUsage::Transient,       VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT }
+        };
+
         VkImageUsageFlags flags = 0;
 
-        if (HasAny(usage, ImageUsage::TransferSrc)) flags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-        if (HasAny(usage, ImageUsage::TransferDst)) flags |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        if (HasAny(usage, ImageUsage::Sampled)) flags |= VK_IMAGE_USAGE_SAMPLED_BIT;
-        if (HasAny(usage, ImageUsage::ColorAttachment)) flags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        if (HasAny(usage, ImageUsage::DepthStencil)) flags |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-        if (HasAny(usage, ImageUsage::Storage)) flags |= VK_IMAGE_USAGE_STORAGE_BIT;
-        if (HasAny(usage, ImageUsage::InputAttachment)) flags |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
-        if (HasAny(usage, ImageUsage::ResolveDst)) flags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        if (HasAny(usage, ImageUsage::ResolveSrc)) flags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        // Use a constexpr-friendly loop
+        for (const auto& entry : table)
+        {
+            if (HasAny(usage, entry.engine))
+            {
+                flags |= entry.vk;
+            }
+        }
 
         return flags;
     }
 
 
-    inline VkFormat ToVkFormat(TextureFormat format)
+    [[nodiscard]] constexpr VkFormat ToVkFormat(TextureFormat format)
     {
         switch (format)
         {
@@ -338,7 +347,7 @@ namespace Renderer
         }
     }
 
-    [[nodiscard]] inline VkImageLayout ToVk(TextureLayout layout)
+    [[nodiscard]] constexpr VkImageLayout ToVk(TextureLayout layout)
     {
         switch (layout)
         {
@@ -356,7 +365,7 @@ namespace Renderer
         }
     }
 
-    [[nodiscard]] inline VkSampleCountFlagBits ToVk(SampleCount count)
+    [[nodiscard]] constexpr VkSampleCountFlagBits ToVk(SampleCount count)
     {
         switch (count)
         {
@@ -371,7 +380,7 @@ namespace Renderer
         }
     }
 
-    [[nodiscard]] inline bool IsDepthFormat(VkFormat format)
+    [[nodiscard]] constexpr bool IsDepthFormat(VkFormat format)
     {
         switch (format)
         {
@@ -387,7 +396,7 @@ namespace Renderer
         }
     }
 
-    [[nodiscard]] inline VkComponentSwizzle ToVk(TextureSwizzle s)
+    [[nodiscard]] constexpr VkComponentSwizzle ToVk(TextureSwizzle s)
     {
         switch (s)
         {
@@ -402,7 +411,7 @@ namespace Renderer
         return VK_COMPONENT_SWIZZLE_IDENTITY;
     }
 
-    [[nodiscard]] inline u32 BytesPerTexel(TextureFormat fmt)
+    [[nodiscard]] constexpr u32 BytesPerTexel(TextureFormat fmt)
     {
         switch (fmt)
         {
@@ -430,12 +439,12 @@ namespace Renderer
         }
     }
 
-    [[nodiscard]] inline VkFilter ToVk(SamplerFilter filter)
+    [[nodiscard]] constexpr VkFilter ToVk(SamplerFilter filter)
     {
         return filter == SamplerFilter::Linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     }
 
-    [[nodiscard]] inline VkSamplerMipmapMode ToVk(SamplerMipFilter mip)
+    [[nodiscard]] constexpr VkSamplerMipmapMode ToVk(SamplerMipFilter mip)
     {
         switch (mip)
         {
@@ -445,7 +454,7 @@ namespace Renderer
         }
     }
 
-    inline VkSamplerAddressMode ToVk(SamplerAddressMode mode)
+    [[nodiscard]] constexpr VkSamplerAddressMode ToVk(SamplerAddressMode mode)
     {
         switch (mode)
         {
@@ -457,7 +466,7 @@ namespace Renderer
         }
     }
 
-    inline VkBorderColor ToVk(SamplerBorderColor color)
+    [[nodiscard]] constexpr VkBorderColor ToVk(SamplerBorderColor color)
     {
         switch (color)
         {
@@ -469,7 +478,7 @@ namespace Renderer
     }
 
     // Descriptor
-    inline VkDescriptorType ToVk(DescriptorType type)
+    [[nodiscard]] constexpr VkDescriptorType ToVk(DescriptorType type)
     {
         switch (type)
         {
@@ -485,14 +494,14 @@ namespace Renderer
     }
 
     // Vertex description
-    inline VkVertexInputRate ToVk(VertexInputRate rate)
+    [[nodiscard]] constexpr VkVertexInputRate ToVk(VertexInputRate rate)
     {
         return (rate == VertexInputRate::Instance)
                    ? VK_VERTEX_INPUT_RATE_INSTANCE
                    : VK_VERTEX_INPUT_RATE_VERTEX;
     }
 
-    inline VkVertexInputBindingDescription ToVk(const VertexBindingDescription& desc)
+   [[nodiscard]] constexpr VkVertexInputBindingDescription ToVk(const VertexBindingDescription& desc)
     {
         return {
             .binding = desc.binding,
@@ -501,7 +510,7 @@ namespace Renderer
         };
     }
 
-    inline VkVertexInputAttributeDescription ToVk(const VertexAttributeDescription& desc)
+    [[nodiscard]] constexpr VkVertexInputAttributeDescription ToVk(const VertexAttributeDescription& desc)
     {
         return {
             .location = desc.location,
@@ -510,4 +519,21 @@ namespace Renderer
             .offset = desc.offset
         };
     }
+
+
+    [[nodiscard]] constexpr VkSpirvResourceTypeFlagsEXT ToSpirvType(DescriptorType type)
+    {
+        switch (type)
+        {
+        case DescriptorType::Sampler:               return VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT;
+        case DescriptorType::SampledImage:          return VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT;
+        case DescriptorType::StorageImage:          return VK_SPIRV_RESOURCE_TYPE_READ_WRITE_IMAGE_BIT_EXT;
+        case DescriptorType::UniformBuffer:         return VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT;
+        case DescriptorType::StorageBuffer:         return VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
+        case DescriptorType::CombinedImageSampler:  return VK_SPIRV_RESOURCE_TYPE_COMBINED_SAMPLED_IMAGE_BIT_EXT;
+
+        default: return 0;
+        }
+    }
+
 } // namespace Renderer

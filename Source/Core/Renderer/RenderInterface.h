@@ -8,10 +8,16 @@
 #include "Platform.h"
 #include "RendererTypes.h"
 #include "fmt/format.h"
-#include "glm/vec4.hpp"
+#include "glm/glm.hpp"
+#include "Tools/Vector.h"
+
+#include "../../../Engine/MeshData.h"
+#include "../../../Engine/AABB.h"
 
 namespace Renderer
 {
+    struct GPUShaderBuffer;
+    struct GPUTexture;
     struct ComputePipelineDesc;
     struct GPUCommandBuffer;
     struct GraphicsPipelineDesc;
@@ -19,6 +25,7 @@ namespace Renderer
     struct GPUSampler;
     struct GPUBuffer;
     struct GPUDevice;
+    struct GPUPipeline;
 
     /// Abstract GPU API instance (VkInstance, ID3D12Device factory, etc.)
 	struct GPUInterface
@@ -57,11 +64,65 @@ namespace Renderer
 		}
 	};
 
+
+    struct GPUModel
+    {
+        AABB modelBounds;
+        u64 vertexBufferAddress = 0;
+
+        Vector<MeshPart> parts;
+
+        std::unique_ptr<GPUBuffer> vertexBuffer;
+        std::unique_ptr<GPUBuffer> indexBuffer;
+        std::unique_ptr<GPUShaderBuffer> materialBuffer;
+    };
+
+    enum class DescriptorHeapType : u32
+    {
+        Resource,
+        Sampler
+    };
+
+    struct DescriptorHeapDesc
+    {
+        DescriptorHeapType type;
+        u32 maxDescriptors;
+        const char* name = nullptr;
+    };
+
+	// Abstract class for Descriptor Heaps (Inspired from DescriptorWriter)
+    struct GPUDescriptorHeap
+    {
+        virtual ~GPUDescriptorHeap() = default;
+
+        virtual void WriteBuffer(u32 index, const GPUBuffer* buffer, u64 offset, u64 range) = 0;
+        virtual void WriteImage(u32 index, const GPUTexture* texture, TextureLayout layout) = 0;
+        virtual void WriteSampler(u32 index, const SamplerInfo& info) = 0;
+
+
+        virtual u64 GetDeviceAddress() const = 0;
+        virtual u32 GetDescriptorSize() const = 0;
+        virtual DescriptorHeapType GetType() const = 0;
+    };
+
+
+    /// Abstract group of buffers (UBOs/SSBOs) mapped to a descriptor set
+    struct GPUShaderBuffer
+    {
+        virtual ~GPUShaderBuffer() = default;
+
+        // Standard RHI operations
+        virtual void UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size) = 0;
+        virtual void Bind(GPUCommandBuffer* cmd, GPUPipeline* pipeline, u32 frameIndex) = 0;
+
+        // Lifecycle operations
+        virtual void Destroy() = 0;
+    };
+
 	/// Abstract GPU texture/image
 	struct GPUTexture
 	{
 		virtual ~GPUTexture() = default;
-		virtual void Init(GPUDevice* device, const TextureInfo& info) = 0;
 		virtual void Destroy() = 0;
 
         virtual void SetName(const std::string& name) = 0;
@@ -92,14 +153,15 @@ namespace Renderer
 	};
 
 	/// Shader hot-reload manager (optional feature)
-	struct GPUShaderManager
-	{
-		virtual ~GPUShaderManager() = default;
-		virtual void Init(GPUDevice* device) = 0;
-		virtual void Destroy() = 0;
-		virtual void CheckForReloads() = 0; // Poll for file changes
-		virtual void RegisterPipeline(void* pipeline, const char* sourcePath) = 0;
-	};
+    struct GPUShaderManager
+    {
+        virtual ~GPUShaderManager() = default;
+        virtual void Init(GPUDevice* device, struct ShaderCompiler* compiler) = 0;
+        virtual void Destroy() = 0;
+        virtual void CheckForReloads() = 0;
+        virtual void RegisterPipeline(GPUPipeline* pipeline) = 0;
+        virtual void UnregisterPipeline(GPUPipeline* pipeline) = 0;
+    };
 
     enum class PipelineType : u32
     {
@@ -109,13 +171,35 @@ namespace Renderer
         Unknown
     };
 
+
 	/// Abstract graphics/compute pipeline
+    struct GraphicsPipelineDesc
+    {
+        std::shared_ptr<GPUShader> vertexShader;
+        std::shared_ptr<GPUShader> fragmentShader;
+
+        VertexInputLayout vertexLayout;
+        GpuRasterDesc raster;
+        PipelineLayoutDesc layout;
+
+        std::string slangSourcePath = "";
+    };
+
+    struct ComputePipelineDesc
+    {
+        std::shared_ptr<GPUShader> computeShader;
+        PipelineLayoutDesc layout;
+
+        std::string slangSourcePath = "";
+    };
+
 	struct GPUPipeline
 	{
 		virtual ~GPUPipeline() = default;
-		virtual void Destroy() = 0;
+	    virtual void Destroy() = 0;
 	    virtual void Rebuild() = 0;
 		[[nodiscard]] virtual bool IsValid() const = 0;
+	    [[nodiscard]] virtual const PipelineLayoutDesc& GetLayoutDesc() const = 0;
 	};
 
 	// Descriptors (Bindless Resources)
@@ -153,9 +237,11 @@ namespace Renderer
         // creations
         virtual std::unique_ptr<GPUTexture> CreateTexture(TextureInfo& info) = 0;
         virtual std::unique_ptr<GPUSampler> CreateSampler(SamplerInfo& info) = 0;
-        virtual std::unique_ptr<GPUShader> CreateShader(std::span<const u32> code) = 0;
-        virtual std::unique_ptr<GPUShader> CreateShaderPath(const char* path) = 0;
+        virtual std::shared_ptr<GPUShader> CreateShader(std::span<const u32> code) = 0;
+        virtual std::shared_ptr<GPUShader> CreateShaderPath(const char* path) = 0;
         virtual std::unique_ptr<GPUBuffer> CreateBuffer(BufferInfo& info) = 0;
+        virtual std::unique_ptr<GPUBuffer> CreateBuffer(BufferPreset preset, u64 size) = 0;
+        virtual std::unique_ptr<GPUShaderBuffer> CreateShaderBuffer(struct DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc) = 0;
         virtual std::unique_ptr<GPUPipeline> CreateGraphicsPipeline(const GraphicsPipelineDesc& desc) = 0;
         virtual std::unique_ptr<GPUPipeline> CreateComputePipeline(const ComputePipelineDesc& desc) = 0;
 
@@ -181,8 +267,12 @@ namespace Renderer
 	struct RenderAttachment
 	{
 		GPUTexture* texture = nullptr;
+	    GPUTexture* resolveTarget = nullptr;
+	    u32 baseLayer = 0;
+
         LoadOP loadOp = LoadOP::Clear;
         StoreOp storeOp = StoreOp::Store;
+	    ResolveMode resolveMode = ResolveMode::Average;
 
         union
         {
@@ -196,12 +286,15 @@ namespace Renderer
         } clearValue;
 
 
-        static RenderAttachment Color(GPUTexture* tex, LoadOP load = LoadOP::Clear, const glm::vec4& col = {0, 0, 0, 1})
+        static RenderAttachment Color(GPUTexture* tex, GPUTexture* resolve = nullptr, LoadOP load = LoadOP::Clear, const glm::vec4& col = {0, 0, 0, 1})
         {
             RenderAttachment ra =
             {
                 .texture = tex,
-                .loadOp = load
+                .resolveTarget = resolve,
+                .loadOp = load,
+                .storeOp = resolve ? StoreOp::DontCare : StoreOp::Store,
+                .resolveMode = resolve ? ResolveMode::Average : ResolveMode::None
             };
             std::memcpy(ra.clearValue.color, &col[0], sizeof(f32) * 4);
             return ra;
@@ -212,7 +305,8 @@ namespace Renderer
             RenderAttachment ra =
             {
                 .texture = tex,
-                .loadOp = load
+                .loadOp = load,
+                .storeOp = StoreOp::DontCare
             };
             ra.clearValue.ds.depth = depth;
             ra.clearValue.ds.stencil = stencil;
@@ -225,12 +319,12 @@ namespace Renderer
 		Extent2D extent = {};
 		std::span<RenderAttachment> colorAttachments;
 		RenderAttachment* depthAttachment = nullptr;
+	    RenderAttachment* stencilAttachment = nullptr; // future...
 	};
 
 	/// Command buffer begin information
     struct CommandBufferBeginInfo
     {
-        bool isSecondary = false;
         bool oneTimeSubmit = true;
         const RenderingInfo* renderPassInfo = nullptr; // For secondary buffers
 	};
@@ -251,6 +345,13 @@ namespace Renderer
 	{
 		virtual ~GPUSemaphore() = default;
 	};
+
+    enum class CommandBufferLevel : u8
+    {
+        Primary,
+        Secondary
+    };
+    ENUM_CLASS_BITOPS(CommandBufferLevel);
 
 
 	/// Abstract command buffer for GPU work
@@ -287,6 +388,7 @@ namespace Renderer
         virtual void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset,
                                  u32 firstInstance) = 0;
         virtual void DrawIndirect(GPUBuffer* buffer, u64 offset, u32 drawCount, u32 stride) = 0;
+	    virtual void DrawIndexedIndirect(GPUBuffer* buffer, u64 offset, u32 drawCount, u32 stride) = 0;
 
 		// Compute
 		virtual void Dispatch(u32 groupCountX, u32 groupCountY, u32 groupCountZ) = 0;
@@ -325,6 +427,7 @@ namespace Renderer
 		[[nodiscard]] virtual PresentMode GetPresentMode() = 0;
 		[[nodiscard]] virtual GPUTexture* GetImage(u32 index) = 0;
 		[[nodiscard]] virtual GPUTexture* GetCurrentImage() = 0;
+        [[nodiscard]] virtual SampleCount GetMSAASamples() = 0;
 
 		[[nodiscard]] virtual Extent2D GetExtent() const = 0;
         [[nodiscard]] virtual f32 GetAspectRatio() const = 0;
@@ -334,6 +437,7 @@ namespace Renderer
 
 		virtual void SetVsyncMode(PresentMode mode) = 0;
 		virtual void SetBufferingMode(BufferingMode mode) = 0;
+        virtual void SetMSAASamples(SampleCount samples) = 0;
 	};
 
 	// Frame Management

@@ -27,7 +27,7 @@ public:
     static void Shutdown();
 
     template <typename... Args>
-        static void Write(LogType type, const std::source_location& loc, fmt::format_string<Args...> format, Args&&... args)
+    static void Write(LogType type, const std::source_location& loc, fmt::format_string<Args...> format, Args&&... args)
     {
         WriteInternal(type, fmt::format(format, std::forward<Args>(args)...), loc);
     }

@@ -1,4 +1,6 @@
-# OrgEngine V2 (?)
+# OrgEngine V2
+
+![In Engine Image](https://i.imgur.com/oXzuE3h.jpeg)
 
 ## This is my 3rd attempt on making a game engine from scratch this time with some extra features such as:
  - RHI Support
@@ -8,9 +10,9 @@
     - A learning experience for getting the grasp of OOP.
  
  - Entity Components (without the System)
- - Bindless Textures
+ - Bindless Textures Pool
  - Standard PBR implementation
- - Slang Support
+ - Slang Support with shader hot reloading
  - SDL Support (other platforms not tested yet)
  - Model Support
     - fbx (with ufbx)
@@ -23,20 +25,19 @@
     git clone --recurse-submodules https://github.com/daorgest/OrgEngineV2.git
     ```
  
-    - if you already cloned this repo without the --recursive flag you can do this:
+    - If you already cloned this repo without the `--recursive` flag you can do this:
         ```bash
         git submodule update --init --recursive
         ```
- 2. Create a build directory
+ 2. Config the project
     ```bash
-    mkdir build
-    cd build
+    cmake -S . -B build
     ``` 
  3. Build
     ```bash
-    cmake --build . --config Release
+    cmake --build build --config Release
     ```
-## Some notes for myself and TODOS
+## Some notes for myself, details and TODOS
  - I'm aware that the platform layer is NOT OOP as its 1 header, n amount of implementation files
  - Audio implementation is still yet to be started on
  - **Unified Layouts**: While `VK_IMAGE_LAYOUT_GENERAL` is convenient, the RHI must still track the *logical* layout (like for example `TextureLayout::ColorWrite`). If you lose the logical state, barriers will fail validation because they can't transition from "Unknown" to "Present".
@@ -49,11 +50,12 @@
 ## Requirements to Run
  - Windows 10 64-Bit (22H2) or newer
  - CMake 4.0 or newer
- - Vulkan with these extensions supported
+ - Vulkan 1.3 with these extensions supported
    - VK_EXT_scalar_block_layout
    - VK_KHR_synchronization_2
    - VK_KHR_buffer_device_address
    - VK_KHR_unified_image_layouts
    - VK_EXT_descriptor_indexing
    - VK_EXT_present_mode_fifo_latest_ready (Optional)
+   - ...and more!
  

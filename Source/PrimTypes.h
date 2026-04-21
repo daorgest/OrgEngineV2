@@ -33,6 +33,7 @@ enum OrgErrCode
 	MaterialLoadFailed,
 	TextureLoadFailed,
 	MeshLoadFailed,
+	StaleHandle,
 
 	// Graphics / Vulkan
 	VulkanInitFailed,
@@ -109,6 +110,7 @@ using f64 = double;
 
 
 constexpr u32 INVALID_ID = 0xFFFFFFFF;
+constexpr u64 INVALID_ID_64 = 0xFFFFFFFFFFFFFFFF;
 
 // Size Constants
 constexpr u64 Kilobyte = 1024;
@@ -155,3 +157,23 @@ constexpr u32 MAX_SCENE_CAMERAS = 2;
 
 // Lights
 constexpr u32 MAX_LIGHTS = 8;
+
+
+template <typename T>
+struct ResourceHandle
+{
+    u64 id = INVALID_ID_64;
+
+    constexpr ResourceHandle() = default;
+    constexpr ResourceHandle(u32 index, u32 gen)
+        : id((static_cast<u64>(gen) << 32) | index) {}
+
+    constexpr u32 index(this auto&& self) noexcept { return static_cast<u32>(self.id & 0xFFFFFFFF); }
+    constexpr u32 gen(this auto&& self)   noexcept { return static_cast<u32>(self.id >> 32); }
+
+    auto operator<=>(const ResourceHandle&) const = default;
+    [[nodiscard]] constexpr bool IsValid() const noexcept { return id != INVALID_ID_64; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return IsValid(); }
+};
+
+using TextureHandle = ResourceHandle<u32>;

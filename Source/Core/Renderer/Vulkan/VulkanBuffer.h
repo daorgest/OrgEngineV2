@@ -10,19 +10,16 @@
 
 namespace Renderer
 {
-    struct GPUDevice;
     struct VulkanDevice;
 
     struct VulkanBuffer final : GPUBuffer
     {
-        VulkanBuffer() = default;
-        VulkanBuffer(VulkanDevice* devicePtr, const BufferInfo& bufferInfo);
-        VulkanBuffer(VulkanDevice* devicePtr, BufferPreset preset, u64 size);
+        VulkanBuffer(GPUDevice* devicePtr, const BufferInfo& bufferInfo);
+        VulkanBuffer(GPUDevice* devicePtr, BufferPreset preset, u64 size);
+
+        void Init(GPUDevice* devicePtr, BufferPreset preset, u64 size);
 
         void Init(GPUDevice* device, const BufferInfo& inputInfo) override;
-
-        // (Backward compatibility before my RHI shenanigans)
-        void Init(VulkanDevice* devicePtr, BufferPreset preset, u64 size);
 
         ~VulkanBuffer() override { Destroy(); }
         void Destroy() override;
@@ -52,10 +49,7 @@ namespace Renderer
         {
             if (this != &other)
             {
-                // Clean up existing resource before taking the new one
                 Destroy();
-
-                // Shallow copy the handles
                 buffer = other.buffer;
                 device = other.device;
                 allocation = other.allocation;
@@ -64,7 +58,6 @@ namespace Renderer
 
                 other.buffer = VK_NULL_HANDLE;
                 other.allocation = VK_NULL_HANDLE;
-                other.device = nullptr;
             }
             return *this;
         }

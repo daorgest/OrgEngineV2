@@ -11,22 +11,20 @@ template <typename T>
 struct ResourceSlot
 {
     T data{};
-#if defined(_DEBUG) || defined(ENGINE_DEBUG)
-    std::string name;
-#endif
+    std::string path;
     u32 refCount = 0;
     u32 generation = 0;
 };
 
 template <typename T>
-class ResourceManager
+class AssetPool
 {
     Vector<ResourceSlot<T>> resources;
     Vector<u32> freeList;
     std::unordered_map<std::string, u32> registry;
 
 public:
-    explicit ResourceManager(u32 initialCapacity = 2048)
+    explicit AssetPool(u32 initialCapacity = 2048)
     {
         resources.reserve(initialCapacity);
         LOG(Info, "ResourceManager: Initialized with {} slots.", initialCapacity);
@@ -37,40 +35,37 @@ public:
     {
         const std::string pathStr = path.string();
 
-        if (const auto it = registry.find(pathStr); it != registry.end())
+        if (auto it = registry.find(pathStr); it != registry.end())
         {
             u32 idx = it->second;
             ++resources[idx].refCount;
-            LOG(Debug, "ResourceManager: Resource '{}' already loaded at index {}. RefCount: {}.",
-                pathStr, idx, resources[idx].refCount);
             return ResourceHandle<T>(idx, resources[idx].generation);
         }
 
         u32 idx = PrepareNextIndex();
+        auto& slot = resources[idx];
+
 
         auto result = loader(pathStr);
         if (!result)
         {
             CleanupFailedIndex(idx);
-            LOG(Error, "ResourceManager: Failed to load resource from path: '{}'.", pathStr);
             return std::unexpected(result.error());
         }
 
-        auto& slot = resources[idx];
-#if defined(_DEBUG) || defined(ENGINE_DEBUG)
-        slot.name = pathStr;
-#endif
-        slot.refCount = 1;
+
         slot.data = std::move(*result);
+        slot.path = pathStr;
+        slot.refCount = 1;
         registry[pathStr] = idx;
 
-        LOG(Info, "ResourceManager: Loaded '{}' into slot {} (Gen: {}).", pathStr, idx, slot.generation);
         return ResourceHandle<T>(idx, slot.generation);
     }
 
     [[nodiscard]] auto Get(this auto&& self, ResourceHandle<T> handle) noexcept
     {
         using PtrType = decltype(&self.resources[0].data);
+
         if (!handle.IsValid()) return Result<PtrType>(std::unexpected(OrgErrCode::AssetNotFound));
 
         u32 idx = handle.index();
@@ -79,7 +74,6 @@ public:
         auto& slot = self.resources[idx];
         if (slot.generation != handle.gen())
         {
-            LOG(Error, "ResourceManager: Accessing stale handle at index {}.", idx);
             return Result<PtrType>(std::unexpected(OrgErrCode::StaleHandle));
         }
 
@@ -90,29 +84,24 @@ public:
     {
         if (!handle.IsValid()) return;
 
-        u32 index = handle.index();
-        if (index >= resources.size()) return;
+        u32 idx = handle.index();
+        if (idx >= resources.size()) return;
 
-        auto& slot = resources[index];
+        auto& slot = resources[idx];
         if (slot.generation != handle.gen()) return;
 
         if (--slot.refCount == 0)
         {
-            // Registry lookup still needs a key even if slot.name is ifdef'd out
-            // We find it by searching the registry for the index
-            for (auto it = registry.begin(); it != registry.end(); ++it)
-            {
-                if (it->second == index)
-                {
-                    registry.erase(it);
-                    break;
-                }
-            }
+            // O(1) Removal: We stored the path in the slot specifically for this
+            registry.erase(slot.path);
 
+            // Clean up
             slot.data = T{};
+            slot.path.clear();
+
+            // Increment generation to invalidate all existing handles to this slot
             ++slot.generation;
-            freeList.push_back(index);
-            LOG(Info, "ResourceManager: Releasing resource at index {}. Returning to freeList.", index);
+            freeList.push_back(idx);
         }
     }
 

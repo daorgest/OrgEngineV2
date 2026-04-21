@@ -3,16 +3,18 @@ cmake_minimum_required(VERSION 4.0)
 project(OrgEngineV2 LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/App)
+set(CMAKE_CXX_STANDARD 23)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-# --- Compiler Configuration ---
+# --- Output Directory Configuration ---
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/App)
 if(MSVC)
-    add_compile_options(/std:c++latest /Zc:__cplusplus /W4 /MP /Zf)
-else()
-    set(CMAKE_CXX_STANDARD 26)
-    set(CMAKE_CXX_STANDARD_REQUIRED ON)
-    add_compile_options(-Wall -Wextra -Wpedantic)
+    foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
+        string(TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG)
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+    endforeach()
 endif()
 
 # --- Path Definitions ---
@@ -22,14 +24,19 @@ set(ENGINE_DIR    ${CMAKE_SOURCE_DIR}/Source/Engine)
 set(GAME_DIR      ${CMAKE_SOURCE_DIR}/Source/Game)
 set(TOOLS_DIR     ${CMAKE_SOURCE_DIR}/Source/Core/Tools)
 
-# --- Versioning ---
+# --- Versioning (with GitHub ZIP fallback) ---
+# If a user downloads the repo as a ZIP instead of 'git clone', git rev-parse fails.
 execute_process(
         COMMAND git rev-parse --short HEAD
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         OUTPUT_VARIABLE GIT_HASH
+        RESULT_VARIABLE GIT_RESULT
         OUTPUT_STRIP_TRAILING_WHITESPACE
         ERROR_QUIET
 )
+if(NOT GIT_RESULT EQUAL 0)
+    set(GIT_HASH "zip-download")
+endif()
 
 # --- Platform Selection ---
 set(ENGINE_PLATFORM "WIN32" CACHE STRING "Platform backend")
@@ -55,13 +62,20 @@ set(SRC_FILES
         ${CORE_DIR}/Renderer/Vulkan/VulkanShaderBuffer.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanQueryPool.cpp
         ${CORE_DIR}/Renderer/Vulkan/VulkanMesh.cpp
+        ${CORE_DIR}/Renderer/Vulkan/VulkanShaderManager.cpp
+        ${CORE_DIR}/Renderer/Vulkan/VulkanShaderManager.h
         ${CORE_DIR}/Math/MikkWrapper.cpp
         ${CORE_DIR}/Input/InputSys.cpp
+        ${CORE_DIR}/Audio/AudioFMOD.cpp
         ${ENGINE_DIR}/TextureLoader.cpp
         ${ENGINE_DIR}/MeshLoader.cpp
         ${ENGINE_DIR}/Camera.cpp
         ${ENGINE_DIR}/EditorUi.cpp
         ${ENGINE_DIR}/FPSCamera.cpp
+        ${ENGINE_DIR}/ShaderCompiler.h
+        ${ENGINE_DIR}/ShaderCompiler.cpp
+        ${ENGINE_DIR}/BindlessManager.h
+        ${ENGINE_DIR}/Ray.h
         ${GAME_DIR}/Application.cpp
         ${GAME_DIR}/DebugRenderer.cpp
         ${GAME_DIR}/SceneRenderer.cpp
@@ -84,7 +98,6 @@ foreach(shader ${SLANG_ALL})
     get_filename_component(name "${shader}" NAME_WE)
     set(out "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/${name}.spv")
 
-    # Define entry points as a list
     set(ENTRY_POINTS "")
     if(shader MATCHES "(_comp|\\.comp)\\.slang$")
         list(APPEND ENTRY_POINTS -entry compMain)
@@ -103,16 +116,13 @@ foreach(shader ${SLANG_ALL})
             ${ENTRY_POINTS}
             -emit-spirv-directly
             -fvk-use-scalar-layout
+            -matrix-layout-column-major
             DEPENDS "${shader}" "${3RDPARTY_DIR}/slang/bin/slangc.exe"
             VERBATIM
     )
     list(APPEND COMPILED_SHADERS "${out}")
 endforeach()
 add_custom_target(CompileShaders ALL DEPENDS ${COMPILED_SHADERS})
-
-# --- Executable and Dependencies ---
-add_executable(OrgEngineV2 ${SRC_FILES} ${IMGUI_FILES})
-add_dependencies(OrgEngineV2 CompileShaders)
 
 # --- 3rd Party Subdirectories ---
 add_subdirectory(${3RDPARTY_DIR}/fmt)
@@ -122,8 +132,17 @@ add_subdirectory(${3RDPARTY_DIR}/meshoptimizer)
 add_subdirectory(${3RDPARTY_DIR}/mikktspace)
 add_subdirectory(${3RDPARTY_DIR}/glm)
 add_subdirectory(${3RDPARTY_DIR}/ufbx)
+add_subdirectory(${3RDPARTY_DIR}/fmod)
+
 option(TRACY_ENABLE "" OFF)
+option(TRACY_ON_DEMAND "" ON)
+option(TRACY_CALLSTACK "" 6)
 add_subdirectory(${3RDPARTY_DIR}/tracy)
+
+# --- Main Executable Target ---
+add_executable(OrgEngineV2 ${SRC_FILES} ${IMGUI_FILES})
+add_dependencies(OrgEngineV2 CompileShaders)
+target_precompile_headers(OrgEngineV2 PRIVATE ${CMAKE_SOURCE_DIR}/Source/PrimTypes.h)
 
 # --- Core Target Configuration ---
 target_compile_definitions(OrgEngineV2 PRIVATE
@@ -137,10 +156,14 @@ target_compile_definitions(OrgEngineV2 PRIVATE
         _CRT_SECURE_NO_WARNINGS
         ENABLE_GPU_TIMING
         ENGINE_COMMIT_HASH="${GIT_HASH}"
+        ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        # Conditional Debug Definitions
+        $<$<NOT:$<CONFIG:Release>>:VULKAN_DEBUG_MODE ENGINE_ENABLE_LOGGING>
 )
 
 target_include_directories(OrgEngineV2 PRIVATE
-        ${CORE_DIR} ${CORE_DIR}/Platform
+        ${CORE_DIR}
+        ${CORE_DIR}/Platform
         ${CORE_DIR}/Renderer
         ${CORE_DIR}/Renderer/Vulkan
         ${CORE_DIR}/Math
@@ -162,6 +185,7 @@ target_include_directories(OrgEngineV2 SYSTEM PRIVATE
         ${3RDPARTY_DIR}/glm
         ${3RDPARTY_DIR}/ufbx
         ${3RDPARTY_DIR}/tracy/public
+        ${3RDPARTY_DIR}/slang/include
 )
 
 target_link_libraries(OrgEngineV2 PRIVATE
@@ -173,7 +197,35 @@ target_link_libraries(OrgEngineV2 PRIVATE
         glm
         ufbx
         Tracy::TracyClient
+        FMOD::FMOD
+        ${3RDPARTY_DIR}/slang/lib/slang.lib
 )
+
+# --- Target Optimizations (Multi-Config Safe) ---
+if(MSVC)
+    target_compile_options(OrgEngineV2 PRIVATE
+            /MP /Zc:__cplusplus /permissive- /W4
+
+            # Release specific:
+            $<$<CONFIG:Release>:/O2 /Oi /Ot /GL /Gy /Gw /Zc:inline>
+    )
+    target_link_options(OrgEngineV2 PRIVATE
+            $<$<CONFIG:Release>:/LTCG /OPT:REF /OPT:ICF>
+            $<$<CONFIG:Debug>:/DEBUG:FASTLINK /INCREMENTAL>
+            $<$<CONFIG:RelWithDebInfo>:/DEBUG /INCREMENTAL>
+    )
+    # Target-specific C++ Flags appending
+    set_property(TARGET OrgEngineV2 APPEND_STRING PROPERTY COMPILE_FLAGS_DEBUG " /RTC1 /MDd")
+else()
+    target_compile_options(OrgEngineV2 PRIVATE
+            -Wall -Wextra -Wpedantic -Wshadow
+            # Release specific:
+            $<$<CONFIG:Release>:-O3 -flto -fno-plt -ffunction-sections -fdata-sections>
+    )
+    target_link_options(OrgEngineV2 PRIVATE
+            $<$<CONFIG:Release>:-Wl,--gc-sections>
+    )
+endif()
 
 # --- Platform Specific Block ---
 if (ENGINE_PLATFORM STREQUAL "SDL")
@@ -185,7 +237,15 @@ if (ENGINE_PLATFORM STREQUAL "SDL")
     )
     add_subdirectory(${3RDPARTY_DIR}/sdl EXCLUDE_FROM_ALL)
     target_link_libraries(OrgEngineV2 PRIVATE SDL3::SDL3)
-else()
+
+    # Copy SDL3 DLL to output dir
+    add_custom_command(TARGET OrgEngineV2 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SDL3::SDL3>
+            "$<TARGET_FILE_DIR:OrgEngineV2>/"
+            COMMENT "Copying SDL3 DLL..."
+    )
+else() # WIN32 Platform
     target_compile_definitions(OrgEngineV2 PRIVATE ENGINE_PLATFORM_WIN32 VK_USE_PLATFORM_WIN32_KHR)
     target_sources(OrgEngineV2 PRIVATE
             ${CORE_DIR}/Platform/PlatformWindows.cpp
@@ -201,15 +261,7 @@ else()
     )
 endif()
 
-# --- Post-Build Assets ---
-if(MSVC)
-    foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
-        string(TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG)
-        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-    endforeach()
-endif()
+# --- Post-Build Steps (Copy Assets, Slang, & FMOD) ---
 
 add_custom_command(TARGET OrgEngineV2 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -218,20 +270,17 @@ add_custom_command(TARGET OrgEngineV2 POST_BUILD
         COMMENT "Copying Assets to output directory..."
         VERBATIM
 )
-# --- Debug/Release Specifics ---
-if(MSVC)
-    target_link_options(OrgEngineV2 PRIVATE
-            $<$<CONFIG:Debug>:/DEBUG:FASTLINK /INCREMENTAL>
-            $<$<CONFIG:RelWithDebInfo>:/DEBUG /INCREMENTAL>
-    )
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /RTC1 /MDd")
-endif()
+add_custom_command(TARGET OrgEngineV2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${3RDPARTY_DIR}/slang/bin/slang.dll"
+        "$<TARGET_FILE_DIR:OrgEngineV2>/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${3RDPARTY_DIR}/slang/bin/slang-compiler.dll"
+        "$<TARGET_FILE_DIR:OrgEngineV2>/"
+        COMMENT "Copying Slang DLLs to output directory..."
+        VERBATIM
+)
 
-target_precompile_headers(OrgEngineV2 PRIVATE ${CMAKE_SOURCE_DIR}/Source/PrimTypes.h)
-
-if (NOT CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_definitions(OrgEngineV2 PRIVATE
-            VULKAN_DEBUG_MODE
-            ENGINE_ENABLE_LOGGING
-    )
+if(COMMAND fmod_copy_dlls)
+    fmod_copy_dlls(OrgEngineV2)
 endif()

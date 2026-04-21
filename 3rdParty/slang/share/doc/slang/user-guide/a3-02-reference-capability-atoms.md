@@ -271,6 +271,14 @@ Versions
 > HLSL shader model 6.1 and related capabilities of other targets.
 > Includes related GLSL/SPIRV extensions.
 
+`sm_6_10`
+> HLSL shader model 6.10 and related capabilities of other targets.
+> Includes related GLSL/SPIRV extensions.
+
+`sm_6_10_version`
+> HLSL shader model 6.10 and related capabilities of other targets.
+> Does not include related GLSL/SPIRV extensions.
+
 `sm_6_1_version`
 > HLSL shader model 6.1 and related capabilities of other targets.
 > Does not include related GLSL/SPIRV extensions.
@@ -576,8 +584,14 @@ Extensions
 `SPV_EXT_demote_to_helper_invocation`
 > Represents the SPIR-V extension for demoting to helper invocation.
 
+`SPV_EXT_descriptor_heap`
+> Represents the SPIR-V extension for descriptor heaps.
+
 `SPV_EXT_descriptor_indexing`
 > Represents the SPIR-V extension for descriptor indexing.
+
+`SPV_EXT_float8`
+> Represents the SPIR-V extension for SPV_EXT_float8.
 
 `SPV_EXT_fragment_fully_covered`
 > Represents the SPIR-V extension for SPV_EXT_fragment_fully_covered.
@@ -610,6 +624,9 @@ Extensions
 
 `SPV_GOOGLE_user_type`
 > Represents the SPIR-V extension for SPV_GOOGLE_user_type.
+
+`SPV_KHR_bfloat16`
+> Represents the SPIR-V extension for BFloat16 types.
 
 `SPV_KHR_compute_shader_derivatives`
 > Represents the SPIR-V extension for compute shader derivatives.
@@ -648,6 +665,9 @@ Extensions
 `SPV_KHR_subgroup_rotate`
 > Represents the SPIR-V extension enables rotating values across invocations within a subgroup.
 
+`SPV_KHR_untyped_pointers`
+> Represents the SPIR-V extension for untyped pointers.
+
 `SPV_KHR_vulkan_memory_model`
 > Represents the SPIR-V extension for SPV_KHR_vulkan_memory_model.
 
@@ -677,7 +697,7 @@ Extensions
 
 `SPV_NV_shader_invocation_reorder`
 > Represents the SPIR-V extension for shader invocation reorder (NVIDIA-specific).
-> Requires SPV_KHR_ray_tracing.
+> Inherits from SPV_EXT_shader_invocation_reorder so NV implies EXT.
 
 `SPV_NV_shader_subgroup_partitioned`
 > Represents the SPIR-V extension for shader subgroup partitioned.
@@ -705,6 +725,9 @@ Extensions
 
 `spvAtomicFloat64MinMaxEXT`
 > Represents the SPIR-V capability for atomic float 64 min/max operations.
+
+`spvBFloat16KHR`
+> Represents the SPIR-V capability for using bf16 floating point type.
 
 `spvBindlessTextureNV`
 > Represents the SPIR-V capability for the bindless texture.
@@ -742,8 +765,14 @@ Extensions
 `spvDerivativeControl`
 > Represents the SPIR-V capability for 'derivative control' operations.
 
+`spvDescriptorHeapEXT`
+> Represents the SPIR-V capability for descriptor heaps.
+
 `spvDeviceGroup`
 > Represents the SPIR-V capability for DeviceGroup.
+
+`spvFloat8EXT`
+> Represents the SPIR-V capability for using 8-bit floating point types.
 
 `spvFragmentBarycentricKHR`
 > Represents the SPIR-V capability for using SPV_KHR_fragment_shader_barycentric.
@@ -839,6 +868,7 @@ Extensions
 
 `spvShaderInvocationReorderNV`
 > Represents the SPIR-V capability for shader invocation reorder (NVIDIA-specific).
+> Inherits from spvShaderInvocationReorderEXT so that NV implies EXT capability.
 
 `spvShaderNonUniform`
 > Represents the SPIR-V capability for non-uniform resource indexing.
@@ -898,6 +928,9 @@ Compound Capabilities
 `atomic64`
 > Capabilities needed for int64/uint64 atomic operations
 
+`atomic_bfloat16`
+> Atomic operations on BFloat16 types. Requires SM 9.0 (Hopper) or higher on CUDA.
+
 `atomic_glsl`
 > (GLSL/SPIRV) Capabilities required to use GLSL-400 atomic operations
 
@@ -939,6 +972,10 @@ Compound Capabilities
 
 `atomic_hlsl_sm_6_6`
 > (hlsl only) Capabilities required to use hlsl sm_6_6 atomics
+
+`atomic_reduce`
+> Atomic reduction operations using PTX `red` instruction. Requires SM 7.0 on CUDA.
+> On non-CUDA targets, falls back to regular atomic operations with no additional requirement.
 
 `atomicfloat`
 > Capabilities needed to use GLSL-tier-1 float-atomic operations
@@ -1124,6 +1161,9 @@ Compound Capabilities
 
 `cuda_spirv`
 > CUDA and SPIRV code-gen targets
+
+`descriptor_handle`
+> Targets that support DescriptorHandle types for bindless descriptor access.
 
 `domain_hull`
 > Collection of shader stages
@@ -1494,6 +1534,9 @@ Other
 
 `DX_6_1`
 > Use `sm_6_1` instead
+
+`DX_6_10`
+> Use `sm_6_10` instead
 
 `DX_6_2`
 > Use `sm_6_2` instead

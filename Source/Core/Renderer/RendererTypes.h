@@ -5,10 +5,11 @@
 #pragma once
 #include <cassert>
 #include <cmath>
-#include <optional>
 #include <string>
 #include <type_traits>
 #include <variant>
+#include <format>
+
 #include "Tools/Vector.h"
 
 
@@ -71,7 +72,7 @@ struct Viewport
 
 // Present Modes
 
-enum class PresentMode
+enum class PresentMode : u8
 {
     VSyncOn, // Synchronized to vertical blank (tearing-free)
     VSyncOff, // Present as fast as possible (tearing allowed)
@@ -92,8 +93,25 @@ static constexpr PresentModeInfo kVsyncModes[] = {
     {PresentMode::LowLatency, "Mailbox"}
 };
 
+enum class SampleCount : u8 { X1, X2, X4, X8, X16, X32, X64 };
 
-enum class BufferingMode : u32
+struct MSAAModeInfo
+{
+    SampleCount count;
+    const char* label;
+};
+
+static constexpr MSAAModeInfo kMSAAModes[] = {
+    {SampleCount::X1, "1x"},
+    {SampleCount::X2, "2x"},
+    {SampleCount::X4, "4x"},
+    {SampleCount::X8, "8x"},
+    {SampleCount::X16, "16x"},
+    {SampleCount::X32, "32x"},
+    {SampleCount::X64, "64x"}
+};
+
+enum class BufferingMode : u8
 {
     Double = 2,
     Triple = 3,
@@ -117,8 +135,6 @@ enum class CullMode : u8 { None, Front, Back, FrontAndBack };
 
 enum class FrontFace : u8 { CounterClockwise, Clockwise };
 
-enum class SampleCount : u8 { X1, X2, X4, X8, X16, X32, X64 };
-
 enum class StencilOp : u8
 {
     Keep, // Don't change the value in the buffer
@@ -141,7 +157,6 @@ enum class CompareOp : u8
     Always
 };
 
-// “Dynamic state” list is API-neutral; backends map to their own dynamic states.
 enum class DynamicState : u8
 {
     Viewport,
@@ -262,7 +277,7 @@ enum class DepthFormat
     DEPTH_FORMAT_COUNT
 };
 
-enum class TextureDimension
+enum class TextureDimension : u8
 {
     Texture1D,
     Texture2D,
@@ -272,7 +287,7 @@ enum class TextureDimension
 };
 
 
-enum class TextureViewDimension
+enum class TextureViewDimension : u8
 {
     Auto,
     Texture2D,
@@ -312,11 +327,27 @@ enum class ImageUsage : u32
     InputAttachment = 1 << 6,
     ResolveDst = 1 << 7,
     ResolveSrc = 1 << 8,
+    Transient  = 1 << 9,
 };
 
 ENUM_CLASS_BITOPS(ImageUsage)
 using ImageUsageFlags = ImageUsage;
 
+enum class MemoryProperty : u8
+{
+    DeviceLocal,
+    HostVisible,
+    LazilyAllocated
+};
+
+enum class ResolveMode : u8
+{
+    None,
+    Average,
+    Min,
+    Max,
+    SampleZero
+};
 
 // Blending
 enum class BlendFactor : u8
@@ -358,7 +389,7 @@ struct GpuRasterDesc
     GpuBlendDesc blend;
     GpuStencilDesc stencil;
 
-    SampleCount sampleCount = SampleCount::X1;
+    SampleCount sampleCount = SampleCount::X4;
     bool alphaToCoverage = false;
 
     Vector<TextureFormat> colorFormats;
@@ -423,20 +454,20 @@ struct GpuRasterDesc
 };
 
 // Samplers
-enum class SamplerFilter
+enum class SamplerFilter : u8
 {
     Nearest,
     Linear
 };
 
-enum class SamplerMipFilter
+enum class SamplerMipFilter : u8
 {
     None, // No mipmapping (use base LOD)
     Nearest,
     Linear
 };
 
-enum class SamplerAddressMode
+enum class SamplerAddressMode : u8
 {
     Repeat,
     MirroredRepeat,
@@ -444,7 +475,7 @@ enum class SamplerAddressMode
     ClampToBorder
 };
 
-enum class SamplerBorderColor
+enum class SamplerBorderColor : u8
 {
     FloatTransparentBlack,
     FloatOpaqueBlack,
@@ -474,7 +505,14 @@ struct SamplerInfo
 };
 
 // Buffers
-enum class GPUHeapType : u8 { Default, Upload, Readback, Unknown };
+enum class GPUHeapType : u8
+{
+    Default,
+    Upload,
+    Readback,
+    Unknown
+};
+ENUM_CLASS_BITOPS(GPUHeapType)
 
 inline const char* GPUHeapTypeToString(GPUHeapType t)
 {
@@ -497,6 +535,7 @@ enum class GPUBufferFlag : u32
     ShaderDeviceAddress = 1 << 4,
     ShaderBindingTable = 1 << 5,
     Indirect = 1 << 6,
+    DescriptorHeap = 1 << 7
 };
 
 ENUM_CLASS_BITOPS(GPUBufferFlag)
@@ -528,7 +567,11 @@ enum class BufferPreset
     StagingUpload,
     StagingDownload,
     StorageGPU,
-    StorageHostPersistent
+    StorageHostPersistent,
+    SamplerHeapGPU,
+    ResourceHeapGPU,
+    IndirectHost,
+    IndirectGPU
 };
 
 struct BufferInfo
@@ -569,7 +612,18 @@ struct BufferInfo
 
         case BufferPreset::StorageHostPersistent:
             return {size, GPUHeapType::Upload, GPUBufferFlag::Storage, true};
+        case BufferPreset::SamplerHeapGPU:
+            return {
+                size, GPUHeapType::Upload,
+                GPUBufferFlag::DescriptorHeap | GPUBufferFlag::ShaderDeviceAddress
+            };
 
+        case BufferPreset::ResourceHeapGPU:
+            return {size, GPUHeapType::Upload, GPUBufferFlag::DescriptorHeap | GPUBufferFlag::ShaderDeviceAddress};
+        case BufferPreset::IndirectHost:
+            return {size, GPUHeapType::Upload, GPUBufferFlag::Indirect};
+        case BufferPreset::IndirectGPU:
+            return {size, GPUHeapType::Default, GPUBufferFlag::Indirect | GPUBufferFlag::Storage};
         default:
             assert(false && "Unknown BufferPreset");
             return {};
@@ -592,46 +646,28 @@ enum class DescriptorType
 
 enum class ShaderStage : u32
 {
-    None = 0,
-    Vertex = 1 << 0,
-    Fragment = 1 << 1,
-    Compute = 1 << 2,
-    RayGen = 1 << 3,
-    AnyHit = 1 << 4,
-    ClosestHit = 1 << 5,
-    Miss = 1 << 6,
-    Callable = 1 << 7,
+    None            = 0,
+    Vertex          = 0x00000001,
+    TessControl     = 0x00000002,
+    TessEvaluation  = 0x00000004,
+    Geometry        = 0x00000008,
+    Fragment        = 0x00000010,
+    Compute         = 0x00000020,
+    Task            = 0x00000040,
+    Mesh            = 0x00000080,
+    RayGen          = 0x00000100,
+    AnyHit          = 0x00000200,
+    ClosestHit      = 0x00000400,
+    Miss            = 0x00000800,
+    Intersection    = 0x00001000,
+    Callable        = 0x00002000,
 
-    AllGraphics = Vertex | Fragment,
-    All = 0xFFFFFFFF
+    AllGraphics     = Vertex | Fragment,
+    All             = 0x7FFFFFFF
 };
 
 ENUM_CLASS_BITOPS(ShaderStage)
 using ShaderStageFlags = ShaderStage;
-
-inline std::string ToString(ShaderStage stage)
-{
-    if (stage == ShaderStage::None) return "None";
-    if (stage == ShaderStage::All) return "All";
-
-    Vector<const char*> parts;
-    if (u32(stage) & u32(ShaderStage::Vertex)) parts.push_back("Vertex");
-    if (u32(stage) & u32(ShaderStage::Fragment)) parts.push_back("Fragment");
-    if (u32(stage) & u32(ShaderStage::Compute)) parts.push_back("Compute");
-    if (u32(stage) & u32(ShaderStage::RayGen)) parts.push_back("RayGen");
-    if (u32(stage) & u32(ShaderStage::AnyHit)) parts.push_back("AnyHit");
-    if (u32(stage) & u32(ShaderStage::ClosestHit)) parts.push_back("ClosestHit");
-    if (u32(stage) & u32(ShaderStage::Miss)) parts.push_back("Miss");
-    if (u32(stage) & u32(ShaderStage::Callable)) parts.push_back("Callable");
-
-    std::string result;
-    for (size_t i = 0; i < parts.size(); ++i)
-    {
-        result += parts[i];
-        if (i < parts.size() - 1) result += " | ";
-    }
-    return result.empty() ? "Unknown" : result;
-}
 
 enum class ShaderFormat
 {
@@ -672,6 +708,17 @@ enum class GPUDeviceType
     CPU
 };
 
+// For Descriptor Heap
+struct HeapProperties
+{
+    u64 samplerDescriptorSize;
+    u64 resourceDescriptorSize;
+    u64 samplerReservedSize;
+    u64 resourceReservedSize;
+    u64 samplerHeapAlignment;
+    u64 resourceHeapAlignment;
+};
+
 struct GPUDeviceDesc
 {
     std::string name = "Unknown";
@@ -681,6 +728,7 @@ struct GPUDeviceDesc
     u64 dedicatedVideoMemory = 0;
     std::string driverVersionString;
     std::string apiName;
+    HeapProperties heapProperties;
 };
 
 // NOTE: ImageType is 2D by default
@@ -694,6 +742,7 @@ struct TextureInfo
     TextureDimension dimension = TextureDimension::Texture2D;
     ImageUsageFlags usage = ImageUsage::None;
     SampleCount sampleCount = SampleCount::X1;
+    MemoryProperty memoryMode = MemoryProperty::DeviceLocal;
 
     void EnableMipmaps()
     {
@@ -745,6 +794,8 @@ struct Binding
     // bindless stuff
     u32 count = 1;
     bool isBindless = false;
+
+    bool operator==(const Binding& o) const = default;
 };
 
 
@@ -752,6 +803,10 @@ struct DescriptorSetLayoutDesc
 {
     u32 setIndex = 0;
     Vector<Binding> bindings; // resource bindings
+
+    bool operator==(const DescriptorSetLayoutDesc& o) const {
+        return setIndex == o.setIndex && bindings == o.bindings;
+    }
 };
 
 struct PushConstantDesc
@@ -759,12 +814,74 @@ struct PushConstantDesc
     u32 size = 0;
     u32 offset = 0;
     ShaderStage stages = ShaderStage::None;
+
+    bool operator==(const PushConstantDesc& o) const = default;
 };
+
+enum class MappingSourceType
+{
+    ConstantOffset, // Fixed slot (e.g., Global UBO at index 0)
+    PushIndex       // Dynamic index (e.g., Material Texture Index from PushData)
+};
+
+struct DescriptorHeapMapping
+{
+    u32 setIndex;
+    u32 binding;
+    u32 bindingCount = 1;
+    DescriptorType type;
+
+    MappingSourceType sourceType = MappingSourceType::PushIndex;
+    u32 heapBaseIndex = 0;
+
+    u32 pushDataOffset = 0;
+
+    static DescriptorHeapMapping PushImage(u32 set, u32 binding, u32 offset, u32 base = 0) {
+        return { set, binding, 1, DescriptorType::SampledImage, MappingSourceType::PushIndex, base, offset };
+    }
+
+    static DescriptorHeapMapping PushSampler(u32 set, u32 binding, u32 offset, u32 base = 0) {
+        return { set, binding, 1, DescriptorType::Sampler, MappingSourceType::PushIndex, base, offset };
+    }
+
+    static DescriptorHeapMapping PushStorage(u32 set, u32 binding, u32 offset, u32 base = 0) {
+        return { set, binding, 1, DescriptorType::StorageBuffer, MappingSourceType::PushIndex, base, offset };
+    }
+
+    static DescriptorHeapMapping PushUniform(u32 set, u32 binding, u32 offset, u32 base = 0) {
+        return { set, binding, 1, DescriptorType::UniformBuffer, MappingSourceType::PushIndex, base, offset };
+    }
+
+    // Static Preset for Fixed resources
+    static DescriptorHeapMapping StaticResource(u32 set, u32 binding, DescriptorType type, u32 index) {
+        return { set, binding, 1, type, MappingSourceType::ConstantOffset, index, 0 };
+    }
+};
+
+template<typename T>
+void SortBindings(Vector<T>& bindings)
+{
+    for (u32 i = 1; i < bindings.size(); ++i)
+    {
+        const T key = bindings[i];
+        u32 j = i;
+        while (j > 0 && bindings[j - 1].binding > key.binding)
+        {
+            bindings[j] = bindings[j - 1];
+            --j;
+        }
+        bindings[j] = key;
+    }
+}
 
 struct PipelineLayoutDesc
 {
     Vector<DescriptorSetLayoutDesc> setLayouts;
     Vector<PushConstantDesc> pushConstants;
+
+    bool operator==(const PipelineLayoutDesc& o) const {
+        return setLayouts == o.setLayouts && pushConstants == o.pushConstants;
+    }
 };
 
 
@@ -810,6 +927,7 @@ enum class DebugView : i32
     Metallic,       // Identify dielectric vs conductor issues
     WorldPos,       // Useful for debugging world-space effects/lighting
     UVs,
+    Mip
 };
 
 struct DebugViewMode
@@ -827,6 +945,7 @@ inline constexpr DebugViewMode kDebugViews[] = {
     {DebugView::Metallic,  "Metallic"},
     {DebugView::WorldPos,  "World Position"},
     {DebugView::UVs,       "UV Coordinates"},
+    {DebugView::Mip,       "Mipmap View"}
 };
 constexpr i32 debugViewCount = std::size(kDebugViews);
 

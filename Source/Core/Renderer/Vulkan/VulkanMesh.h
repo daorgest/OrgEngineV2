@@ -4,21 +4,17 @@
 
 #pragma once
 #include "../../../Engine/MeshData.h"
-#include "../../../Engine/AABB.h"
-#include "Tools/Vector.h"
 
-#include <glm/glm.hpp>
-
-#include "VulkanBuffer.h"
+#include "RenderInterface.h"
 #include "VulkanDescriptors.h"
-#include "VulkanShaderBuffer.h"
-#include "VulkanTexture.h"
+#include "Tools/AssetPool.h"
 
 struct SceneStats;
 
 namespace Renderer
 {
-	struct VulkanPipeline;
+    struct BindlessManager;
+    struct VulkanPipeline;
 	struct TextureDefaults;
 	struct DescriptorAllocatorGrowable;
 	struct VulkanSampler;
@@ -26,55 +22,48 @@ namespace Renderer
 	struct VulkanDevice;
 	struct VulkanBuffer;
 
-	struct VulkanModel
-	{
-		Vector<MeshPart> parts;
-		VulkanBuffer vertexBuffer;
-		VulkanBuffer indexBuffer;
-		u64 vertexBufferAddress = 0;
-
-		Vector<MaterialProperties> materials;
-		std::deque<VulkanTexture> images;
-
-		std::unique_ptr<VulkanShaderBuffer> materialBuffer;
-		AABB modelBounds;
-
-		// Materials soon...AABB, etc
-		VulkanModel() = default;
-		VulkanModel(VulkanDevice* device, LoadedModel& loadedModel, DescriptorAllocatorGrowable& globalAllocator,
-		            TextureDefaults& defaults);
-
-		void Destroy();
-	};
+    // Just a method now :3
+    Result<GPUModel> CreateVulkanModel(GPUDevice* device, LoadedModel& loadedModel, BindlessManager& bindless,
+                        AssetPool<TextureData>& texturePool, DescriptorAllocatorGrowable& allocator);
 
 	enum class RenderPath
 	{
 		Standard,
 		Instance,
-		Indirect // No support yet
+		Indirect
 	};
 
 
-	struct ModelComponent
-	{
-		VulkanModel* model = nullptr;
-		glm::mat4 transform = {1.0f};
+    struct ModelComponent
+    {
+        ResourceHandle<GPUModel> modelHandle;
 
-		RenderPath path = RenderPath::Standard;
+        glm::mat4 transform = glm::mat4(1.0f);
 
-		f32 roughness = 0.5f;  // Surface roughness [0=smooth, 1=rough]
-		f32 metallic = 0.0f;   // Metallic property [0=dielectric, 1=metal]
+        RenderPath path = RenderPath::Standard;
+
+		f32 roughness = 1.0f;  // Surface roughness [0=smooth, 1=rough]
+		f32 metallic = 1.0f;   // Metallic property [0=dielectric, 1=metal]
 		u32 materialIndex = 0;
 	};
 
-	struct DrawCache
-	{
-		GPUPipeline* activePipeline = nullptr;
-		GPUCommandBuffer* cmd = nullptr; // Current command buffer
-		SceneStats* stats = nullptr; // Pointer to stats for tracking
+    struct DrawCache
+    {
+        // Pointers to currently bound RHI objects
+        GPUPipeline* activePipeline = nullptr;
+        GPUBuffer* lastIndexBuffer = nullptr;
 
-		DescriptorSet lastMaterialSet;
-		VulkanBuffer* lastIndexBuffer = nullptr;
-		u32 frameIndex = 0;
-	};
+        VkDescriptorSet lastMaterialSet = VK_NULL_HANDLE;
+
+        // Context data for the draw calls
+        GPUCommandBuffer* cmd = nullptr;
+        SceneStats* stats = nullptr;
+        u32 frameIndex = 0;
+
+        void Flush() {
+            activePipeline = nullptr;
+            lastIndexBuffer = nullptr;
+            lastMaterialSet = VK_NULL_HANDLE;
+        }
+    };
 }

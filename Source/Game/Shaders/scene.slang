@@ -68,48 +68,56 @@ struct GPUInstanceData
 	float metalic;
 };
 
-struct LightMeta
+struct LightSceneData
 {
+    Light lights[16];
     uint lightCount;
 };
 
 // Scene Options
-struct DebugUBO
-{
+struct DebugUBO {
     int   debugViewMode;
     float debugDepthRange;
     uint  disableNormalMap;
     uint  disableSpecular;
+
     float iblStrength;
     float iblRoughnessMipBias;
     float ambientStrength;
     float aoStrength;
+
     float metallicReflectScale;
     float roughnessReflectScale;
+
+    // --- Toon Tuning Params ---
+    float toonThreshold;
+    float toonSmoothness;
+    float rimThreshold;
+    float rimSmoothness;
+    float rimIntensity;
+    float3 shadowTint;
 };
 
 [[vk::binding(2, 0)]] ConstantBuffer<DebugUBO>   debugUBO;
 [[vk::binding(3, 0)]] ConstantBuffer<CameraUBO>  cameraUBO;
-[[vk::binding(4, 0)]] StructuredBuffer<Light>    lights;
-[[vk::binding(5, 0)]] ConstantBuffer<LightMeta>  lightMeta;
+[[vk::binding(4, 0)]] ConstantBuffer<LightSceneData>  sceneLights;
 [[vk::binding(6, 0)]] ConstantBuffer<SceneUBO>   sceneUBO;
 
 [[vk::binding(0, 1)]] StructuredBuffer<MaterialProperties> materialBuffer;
-[[vk::binding(0, 3)]] StructuredBuffer<GPUInstanceData> instanceBuffer;
-
-[[vk::binding(1, 1)]] Sampler2D globalTextures[];
-[[vk::binding(0, 2)]] SamplerCube envCubemap;
+[[vk::binding(0, 2)]] Sampler2D globalTextures[];
+[[vk::binding(0, 3)]] SamplerCube envCubemap;
+[[vk::binding(0, 4)]] StructuredBuffer<GPUInstanceData> instanceBuffer;
 
 struct PushConstants
 {
     float4x4 model;
-    float3x3 normalMatrix;
-    uint     vertexOffset;
     uint64_t vertexBufferAddress;
+    uint     vertexOffset;
 	uint     isInstanced;
 	float    instRoughness;
 	float    instMetallic;
 	uint     materialIndex;
+	uint     _padding; //
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
@@ -201,6 +209,39 @@ inline float3 TonemapACES(float3 color)
     return saturate(color);
 }
 
+/** * Calculates world-space normals while supporting non-uniform scaling without
+ * the expensive inverse-transpose matrix.
+ *
+ * Logic: "Counter-stretching" the normal by the reciprocal of the squared scale.
+ * Source: Optimized implementation derived from Unity URP SpaceTransforms and
+ * Fabian Giesen (The ryg blog). See Eric Lengyel, "Foundations of Game Engine
+ * Development, Vol 1" for the underlying matrix orthogonality proof.
+ *
+ * Downsides:
+ * - Assumes basis vectors are orthogonal. Does NOT support skew or shear.
+ * - Adds per-vertex overhead (3 dots, 3 reciprocals) vs. a pre-computed CPU matrix.
+ * - Potential NaNs if an axis scale is zero (guarded by 1e-8).
+ */
+float3 CalculateWorldNormal(float3 localNormal, float4x4 worldMatrix)
+{
+    // 1. Extract the 3x3 basis vectors (X, Y, Z)
+    float3x3 m3x3 = (float3x3)worldMatrix;
+
+    // 2. Calculate the reciprocal of the squared scale for each axis
+    // This replaces the expensive inverse-transpose operation
+    float3 invSqScale;
+    invSqScale.x = 1.0 / max(dot(m3x3[0], m3x3[0]), 1e-8);
+    invSqScale.y = 1.0 / max(dot(m3x3[1], m3x3[1]), 1e-8);
+    invSqScale.z = 1.0 / max(dot(m3x3[2], m3x3[2]), 1e-8);
+
+    // 3. Reconstruct the world normal by "counter-stretching" the local normal
+    float3 worldNormal = localNormal.x * invSqScale.x * m3x3[0] +
+                         localNormal.y * invSqScale.y * m3x3[1] +
+                         localNormal.z * invSqScale.z * m3x3[2];
+
+    return normalize(worldNormal);
+}
+
 // Vertex Shader
 [shader("vertex")]
 VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
@@ -210,44 +251,37 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
     Ptr<Vertex> verts = Ptr<Vertex>(pc.vertexBufferAddress);
     Vertex v = verts[pc.vertexOffset + vertexID];
 
-    float roughness = materialBuffer[pc.materialIndex].roughness;
-    float metallic  = materialBuffer[pc.materialIndex].metallic;
-    uint matIdx     = pc.materialIndex;
-
     float4x4 worldMatrix;
-    float3x3 normalMatrix;
+    float roughness;
+    float metallic;
+    uint matIdx;
 
     if (pc.isInstanced == 1)
     {
         GPUInstanceData data = instanceBuffer[instanceID];
-        worldMatrix  = data.worldMatrix;
-        matIdx = data.materialIndex + pc.materialIndex;
-
-        roughness  = data.roughness;
-        metallic   = data.metalic;
-
-        normalMatrix = (float3x3)worldMatrix;
+        worldMatrix = data.worldMatrix;
+        matIdx      = data.materialIndex + pc.materialIndex;
+        roughness   = data.roughness;
+        metallic    = data.metalic;
     }
     else
     {
-        worldMatrix  = pc.model;
-        normalMatrix = pc.normalMatrix;
-        matIdx       = pc.materialIndex;
-
-        roughness = pc.instRoughness;
-        metallic  = pc.instMetallic;
+        worldMatrix = pc.model;
+        matIdx      = pc.materialIndex;
+        roughness   = pc.instRoughness;
+        metallic    = pc.instMetallic;
     }
 
     float4 posWS = mul(worldMatrix, float4(v.position, 1.0));
     o.worldPosition = posWS.xyz;
     o.position = mul(sceneUBO.proj, mul(sceneUBO.view, posWS));
 
-    // Transform Normal & Tangent using the correct normal matrix
-    float3 N = normalize(mul(normalMatrix, v.normal));
-    float3 T = normalize(mul(normalMatrix, v.tangent.xyz));
-    T = normalize(T - N * dot(N, T));
+    o.worldNormal = CalculateWorldNormal(v.normal, worldMatrix);
 
-    o.worldNormal   = N;
+    float3x3 rotPart = (float3x3)worldMatrix;
+    float3 T = normalize(mul(rotPart, v.tangent.xyz));
+
+    T = normalize(T - o.worldNormal * dot(o.worldNormal, T));
     o.worldTangent  = float4(T, v.tangent.w);
     o.color         = v.color;
     o.texCoord      = v.uv;
@@ -258,19 +292,29 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
     return o;
 }
 
-// Fragment Shader
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Target
 {
     MaterialProperties mat = materialBuffer[input.materialIndex];
-    float3 albedo    = globalTextures[mat.albedoIndex].Sample(input.texCoord).rgb * mat.baseColor.rgb;
-    float roughness = clamp(input.instRoughness, 0.025, 1.0);
-    float metallic  = saturate(input.instMetallic);
+    float4 albedoSample = globalTextures[mat.albedoIndex].Sample(input.texCoord);
+
+    if (mat.type == MaterialType::AlphaMask && albedoSample.a < 0.5)
+    {
+        discard;
+    }
+
+    float3 albedo = albedoSample.rgb * mat.baseColor.rgb;
+
+    float roughness = clamp(input.instRoughness * mat.roughness, 0.025, 1.0);
+    float metallic  = saturate(input.instMetallic * mat.metallic);
     float alpha     = roughness * roughness;
 
     float3 N = normalize(input.worldNormal);
     float3 V = normalize(cameraUBO.camPosition - input.worldPosition);
 
+    float NdotV = max(dot(N, V), 0.0001);
+    float G_V = GeometrySchlickGGX(NdotV, roughness);
+    float specPreCalc = G_V / (4.0 * NdotV);
     switch (debugUBO.debugViewMode)
     {
         case 1: return float4(albedo, 1.0);
@@ -287,7 +331,7 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
         default: break;
     }
 
-    if (debugUBO.disableNormalMap == 0)
+    if (debugUBO.disableNormalMap == 0 && mat.normalIndex != 0)
     {
         float3 nTex = globalTextures[mat.normalIndex].Sample(input.texCoord).rgb;
         float3 T = normalize(input.worldTangent.xyz - N * dot(N, input.worldTangent.xyz));
@@ -298,19 +342,30 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
             N = normalize(mul(DecodeTangentSpaceNormal(nTex), TBN));
     }
 
+    if (debugUBO.debugViewMode == 8)
+    {
+        float lod = globalTextures[mat.albedoIndex].CalculateLevelOfDetail(input.texCoord);
+        // Visualize: Mip 0 is Black, Mip 10 is White
+        return float4(lod.xxx / 10.0, 1.0);
+    }
+
     if (debugUBO.debugViewMode == 2) return float4(N * 0.6 + 0.5, 1.0);
 
-    // Direct Lighting
+    // 4. Lighting Setup
     float3 F0 = lerp(float3(0.04), albedo, metallic);
     float3 Lo = 0.0;
+    float maxToonDiffuse = 0.0;
+    float toonSmoothInv = 1.0 / max(debugUBO.toonSmoothness, 1e-4);
 
+    // 5. Direct Lighting Loop
     [loop]
-    for (uint i = 0; i < lightMeta.lightCount; i++)
+    for (uint i = 0; i < sceneLights.lightCount; i++)
     {
-        Light light = lights[i];
+        Light light = sceneLights.lights[i];
         float3 L;
         float attenuation = 1.0;
 
+        // Light vector and attenuation math
         if (light.type == LightTypes.Directional)
         {
             L = normalize(-light.direction);
@@ -334,6 +389,13 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
             }
         }
 
+        // Toon Diffuse logic
+        float NdotL = dot(N, L);
+        float halfLambert = NdotL * 0.5 + 0.5;
+        float toonDiffuse = saturate((halfLambert - (debugUBO.toonThreshold - debugUBO.toonSmoothness)) * toonSmoothInv);
+        maxToonDiffuse = max(maxToonDiffuse, toonDiffuse);
+
+        // PBR Specular math
         float3 H = normalize(V + L);
         float3 radiance = light.color * light.intensity * attenuation;
 
@@ -341,25 +403,38 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
         float G   = GeometrySmith(N, V, L, roughness);
         float3 F  = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
-        float3 specular = (NDF * G * F) / (4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001);
+        float3 specular = (NDF * G * F * specPreCalc) / NdotL;
         if (debugUBO.disableSpecular != 0) specular = 0.0.xxx;
 
         float3 kD = (1.0.xxx - F) * (1.0 - metallic);
-        Lo += (kD * albedo / PI + specular) * radiance * max(dot(N, L), 0.0);
+
+        // Accumulate final direct light
+        Lo += (kD * albedo / PI + specular) * radiance * toonDiffuse;
     }
 
-    float ao = debugUBO.aoStrength;
-    float3 ambient = debugUBO.ambientStrength.xxx * albedo * ao;
+    // 6. Ambient & Shadow Tinting
+    // We use maxToonDiffuse to determine if we are in shadow across ALL lights
+    float3 shadowColor = albedo * debugUBO.shadowTint;
+    float3 ambient = lerp(shadowColor, albedo, maxToonDiffuse) * debugUBO.ambientStrength * debugUBO.aoStrength;
 
+    // 7. IBL Reflections
     float3 R = reflect(-V, N);
-    float mipLevel = saturate(roughness + debugUBO.iblRoughnessMipBias) * 6.0; // 6.0 = maxMip
+    float mipLevel = saturate(roughness + debugUBO.iblRoughnessMipBias) * 6.0;
     float3 envColor = envCubemap.SampleLevel(R, mipLevel).rgb;
 
     float3 F_ambient = fresnelSchlick(max(dot(N, V), 0.0), F0);
     float iblContribution = metallic * debugUBO.metallicReflectScale * (1.0 - roughness * debugUBO.roughnessReflectScale);
     float3 specularIBL = envColor * F_ambient * iblContribution * debugUBO.iblStrength;
 
-    float3 color = ambient + Lo + (specularIBL * ao);
+    // 8. Toon Rim Light
+    float rim = saturate(dot(V, N));
+    float rimValue = smoothstep(debugUBO.rimThreshold - debugUBO.rimSmoothness,
+                                debugUBO.rimThreshold + debugUBO.rimSmoothness,
+                                rim);
+    float3 finalRim = rimValue * debugUBO.rimIntensity * debugUBO.aoStrength;
+
+    // 9. Final Composition
+    float3 color = ambient + Lo + (specularIBL * debugUBO.aoStrength) + finalRim;
+
     return float4(TonemapACES(color), 1.0);
 }
-

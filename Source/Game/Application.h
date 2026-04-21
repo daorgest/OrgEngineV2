@@ -4,24 +4,26 @@
 
 #pragma once
 
+#include "BindlessManager.h"
 #include "Camera.h"
 #include "DebugRenderer.h"
 #include "DefaultTextures.h"
 #include "EditorUi.h"
 #include "Platform.h"
 #include "SceneRenderer.h"
+#include "ShaderCompiler.h"
 #include "ShaderParams.h"
 #include "SkyboxManager.h"
 #include "VulkanCommands.h"
 #include "VulkanDevice.h"
 #include "VulkanInit.h"
 #include "VulkanMesh.h"
-#include "VulkanPipeline.h"
-#include "VulkanShader.h"
 #include "VulkanShaderBuffer.h"
+#include "VulkanShaderManager.h"
 #include "VulkanSwapchain.h"
 #include "../Core/Tools/Arena.h"
 #include "../Engine/MeshStats.h"
+#include "Audio/Audio.h"
 
 // Forward declaration to break circular dependency with EditorUi.h
 struct EditorUI;
@@ -30,8 +32,10 @@ struct EditorUI;
 struct Application
 {
 	// Core components
-	ArenaAllocator coreArena{Megabyte};    // Entire app lifetime
-	ArenaAllocator renderArena{Megabyte};  // Per-scene (resettable)(ew)(I don't know why im so scared of smart pointers)
+	// ArenaAllocator coreArena{Megabyte};    // Entire app lifetime
+	// ArenaAllocator renderArena{Megabyte};  // Per-scene (resettable)(ew)(I don't know why im so scared of smart pointers)
+
+    Platform::WindowContext windowContext;
 
 	Renderer::VulkanInstance instance;
 	Renderer::VulkanDevice device;
@@ -43,22 +47,16 @@ struct Application
 	DebugRenderer debugRenderer;
 	SceneRenderer sceneRenderer;
 
-	std::unique_ptr<Renderer::VulkanShaderBuffer> sceneUBO;
+    Renderer::ShaderCompiler compiler;
+    Renderer::VulkanShaderManager shaderManager;
+    Audio::System audioSys;
+    EditorUI editorUI;
 
-	Renderer::TextureDefaults texDefaults;
+    AssetPool<TextureData> texturePool;
+    AssetPool<Renderer::GPUModel> modelPool;
+    Renderer::BindlessManager bindlessManager;
 
-	std::unique_ptr<Renderer::GPUSampler> checkerboardSampler;
-	std::unique_ptr<Renderer::GPUSampler> normalFallbackSampler;
-
-	// model and cube
-	std::unique_ptr<Renderer::VulkanModel> modelInst;
-	// std::unique_ptr<Renderer::VulkanModel> cubeMesh; // not used
-	std::unique_ptr<Renderer::VulkanModel> sphereMesh;
 	Vector<Renderer::ModelComponent> models;
-	Vector<LightUBO> lights;
-
-	Platform::WindowContext windowContext;
-	EditorUI editorUI;
 
     CameraMode camMode = CameraMode::FreeFly;
     Array<CameraComponent, MAX_SCENE_CAMERAS> sceneCameras;
@@ -67,13 +65,14 @@ struct Application
     u32 activeCamIdx = 0;
     u32 selectedCameraIdx = 0;
     u32 frustumIdx = 0;
-    bool freezeFrustum = false;
 
-	// Plain Old Data (POD) structs
+
+    std::unique_ptr<Renderer::VulkanShaderBuffer> sceneUBO;
 	SceneUBO sceneData;
 	DebugUBO debugData;
 	CameraUBO camUBO;
-	LightUBOCount lightMeta;
+	LightSceneData lightUBO;
+    Vector<LightUBO> lights;
 	SceneStats sceneStats;
 
 	f32 aspectRatio;
@@ -81,21 +80,21 @@ struct Application
 	f32 cameraSpeedPopupTime = 0.0f;
     f32 debugViewPopupTime = 0.0f;
 	f32 lastFrameMs = 0.0f;
-	bool showGPUInfo = true;
-	bool showMenuBar = true;
-	bool showEditorTools = true;
+	bool freezeFrustum = false;
 
 	bool Init();
-    static void InitDefaultKeyBindings();
+
     void Run();
-	void Cleanup();
+    void RenderLoadingSplash(const char* text);
+    void RenderScene(u32 imageIndex);
+    void RenderImGui(u32 imageIndex);
+    void Cleanup();
+    static void InitDefaultKeyBindings();
+    void ComputeStaticSceneStats();
+    void UpdateSceneUBOAtIndex(u32 frameIndex) const;
+    void UpdateSceneUBO();
+    void ApplyFreeFlyMovement(u32 idx, f32 dt);
 	void UpdateCamera();
     void QueueFrustumVisualizer(u32 camIdx, const glm::vec4& color);
-    void ApplyFreeFlyMovement(u32 idx, f32 dt);
-    void UpdateSceneUBO();
-	void RenderScene(u32 imageIndex);
-	void RenderImGui(u32 imageIndex);
-	void DrawLoadingSplash(const char* text);
-	void CreatePBRSphereGrid();
-	void ComputeStaticSceneStats();
+    void CreatePBRSphereGrid();
 };

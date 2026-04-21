@@ -5,95 +5,125 @@
 #pragma once
 #include <unordered_map>
 
-#include "DefaultTextures.h"
-#include "MeshLoader.h"
 #include "../PrimTypes.h"
 
 #include "RenderInterface.h"
+#include "ShaderConstants.h"
 #include "VulkanDescriptors.h"
+#include "Tools/AssetPool.h"
+
+#include "MathFuncs.h"
+#include "Tools/Array.h"
 
 namespace Renderer
 {
     struct BindlessManager
     {
         GPUDevice* device = nullptr;
-        Assets::AssetRegistry* registry = nullptr;
+        AssetPool<TextureData>* texturePool = nullptr;
 
         // Reserved static indices for engine fallbacks
-        static constexpr u32 WhiteIdx   = 0;
-        static constexpr u32 NormalIdx  = 1;
+        static constexpr u32 WhiteIdx = 0;
+        static constexpr u32 NormalIdx = 1;
         static constexpr u32 CheckerIdx = 2;
+        static constexpr u32 BlackIdx = 3;
 
         Vector<std::unique_ptr<GPUTexture>> globalTextures;
-        std::unordered_map<u32, u32> handleIdToIndex;
+        std::unordered_map<u64, u32> handleIdToIndex;
         DescriptorSet set;
 
         std::unique_ptr<GPUSampler> linearSampler;
         std::unique_ptr<GPUSampler> pointSampler;
 
-        void Init(GPUDevice* inDevice, Assets::AssetRegistry& inRegistry, DescriptorAllocatorGrowable& allocator)
+        void Init(GPUDevice* inDevice, AssetPool<TextureData>& inPool, DescriptorAllocatorGrowable& allocator)
         {
             device = inDevice;
-            registry = &inRegistry;
+            texturePool = &inPool;
 
-            // 1. Setup Descriptor Layout
+
             const auto layout = DescriptorLayoutBuilder()
-                                .AddBindings(Constants::Bindless)
+                                .AddBindings(Constants::BindlessTextures)
                                 .Build(device);
 
-            set = allocator.Allocate(layout, Constants::Bindless[0].count);
+            set = allocator.Allocate(layout, true, Constants::BindlessTextures[0].count);
 
-            // 2. Initialize Samplers
-            SamplerInfo linearInfo = {}; // Defaults to Linear/Repeat
+
+            SamplerInfo linearInfo = {
+                .minLod = 0.0f,
+                .maxLod = 12.0f,
+                .maxAnisotropy = 16,
+                .anisotropyEnable = true
+            };
             linearSampler = device->CreateSampler(linearInfo);
 
             SamplerInfo pointInfo = {
                 .minFilter = SamplerFilter::Nearest,
                 .magFilter = SamplerFilter::Nearest,
                 .mipFilter = SamplerMipFilter::None,
-                .addressU  = SamplerAddressMode::ClampToEdge,
-                .addressV  = SamplerAddressMode::ClampToEdge
+                .addressU = SamplerAddressMode::ClampToEdge,
+                .addressV = SamplerAddressMode::ClampToEdge
             };
             pointSampler = device->CreateSampler(pointInfo);
 
-            // 3. Force-upload defaults into indices 0, 1, 2
-            UploadInternalDefault("internal://white",        GenerateWhite(),   WhiteIdx,   linearSampler.get());
-            UploadInternalDefault("internal://normal",       GenerateNormal(),  NormalIdx,  linearSampler.get());
-            UploadInternalDefault("internal://checkerboard", GenerateChecker(), CheckerIdx, pointSampler.get());
+            // Slot 0: White
+            constexpr u32 whitePixel = 0xFFFFFFFF;
+            UploadRawFallback(WhiteIdx, 1, 1, TextureFormat::RGBA8_SRGB, &whitePixel, "Default White");
+
+            // Slot 1: Normal (128, 128, 255)
+            const u32 flatNormal = PackUnorm4x8({0.5f, 0.5f, 1.0f, 1.0f});
+            UploadRawFallback(NormalIdx, 1, 1, TextureFormat::RGBA8_UNORM, &flatNormal, "Default Normal");
+
+            // Slot 2: Checkerboard
+            constexpr u32 cSize = 16;
+            Array<u32, cSize * cSize> pixels;
+            for (u32 y = 0; y < cSize; ++y)
+            {
+                for (u32 x = 0; x < cSize; ++x)
+                {
+                    pixels[y * cSize + x] = ((x / 4 + y / 4) % 2 == 0) ? 0xFFFF00FF : 0xFF000000;
+                }
+            }
+            UploadRawFallback(CheckerIdx, cSize, cSize, TextureFormat::RGBA8_SRGB, pixels.data(), "Default Checker");
         }
 
-        u32 GetOrUpload(const TextureHandle handle)
+        u32 GetOrUpload(const ResourceHandle<TextureData> handle)
         {
-            if (!handle.IsValid()) return WhiteIdx;
+            if (!handle.IsValid()) return CheckerIdx;
 
-            if (auto it = handleIdToIndex.find(handle.id); it != handleIdToIndex.end()) {
+            if (auto it = handleIdToIndex.find(handle.id); it != handleIdToIndex.end())
+            {
                 return it->second;
             }
 
-            auto res = registry->texturePool.Get(handle);
-            if (!res) return WhiteIdx;
+            const auto res = texturePool->Get(handle);
+            if (!res) return CheckerIdx;
             TextureData* cpuData = *res;
 
-            // Using your exact TextureInfo struct
+
             TextureInfo info = {
-                .extent = { static_cast<u32>(cpuData->width), static_cast<u32>(cpuData->height), 1 },
+                .extent = {static_cast<u32>(cpuData->width), static_cast<u32>(cpuData->height), 1},
                 .format = cpuData->format,
-                .usage  = ImageUsage::Sampled | ImageUsage::TransferDst
+                .usage = ImageUsage::Sampled | ImageUsage::TransferDst
             };
+
+            info.EnableMipmaps();
 
             auto gpuTex = device->CreateTexture(info);
 
             // Safe variant pointer extraction
             const void* pixelData = nullptr;
-            if (auto* u8Vec = std::get_if<Vector<u8>>(&cpuData->data)) {
+            if (auto* u8Vec = std::get_if<Vector<u8>>(&cpuData->data))
+            {
                 pixelData = u8Vec->data();
-            } else if (auto* f32Vec = std::get_if<Vector<f32>>(&cpuData->data)) {
+            }
+            else if (auto* f32Vec = std::get_if<Vector<f32>>(&cpuData->data))
+            {
                 pixelData = f32Vec->data();
             }
 
             gpuTex->UploadData(pixelData);
 
-            u32 newIndex = static_cast<u32>(globalTextures.size());
+            const u32 newIndex = static_cast<u32>(globalTextures.size());
             globalTextures.push_back(std::move(gpuTex));
             handleIdToIndex[handle.id] = newIndex;
 
@@ -101,63 +131,30 @@ namespace Renderer
             return newIndex;
         }
 
-        void UpdateMaterialBuffer(const VulkanBuffer* buffer) const
-        {
-            DescriptorWriter(1, 0, 1)
-                .WriteBuffer(Constants::Material[0].binding, buffer, DescriptorType::StorageBuffer)
-                .UpdateSet(device, set);
-        }
-
     private:
-        void UpdateDescriptor(const u32 idx, const GPUTexture* tex, const GPUSampler* sampler) const
+        void UpdateDescriptor(u32 idx, const GPUTexture* tex, const GPUSampler* sampler) const
         {
-            DescriptorWriter(1, 1, 0)
-                .WriteCombinedImage(Constants::Bindless[0].binding, tex, sampler, idx)
-                .UpdateSet(device, set);
+            DescriptorWriter writer;
+            // Write to Set 2, Binding 0
+            writer.WriteCombinedImage(0, tex, sampler, idx);
+            writer.UpdateSet(device, set);
         }
 
-        void UploadInternalDefault(const std::string& name, TextureData&& data, const u32 targetIdx, const GPUSampler* sampler)
+        void UploadRawFallback(u32 idx, u32 w, u32 h, TextureFormat fmt, const void* data, const char* name)
         {
-
-            auto handle = registry->texturePool.Load(
-                name, [d = std::move(data)](const std::string&) mutable -> Result<TextureData>
-                {
-                    return std::move(d);
-                }).value();
-
-            TextureData* cpuData = *registry->texturePool.Get(handle);
             TextureInfo info = {
-                .extent = { static_cast<u32>(cpuData->width), static_cast<u32>(cpuData->height), 1 },
-                .format = cpuData->format,
-                .usage  = ImageUsage::Sampled | ImageUsage::TransferDst
+                .extent = {w, h, 1},
+                .format = fmt,
+                .usage = ImageUsage::Sampled | ImageUsage::TransferDst
             };
-            auto gpuTex = device->CreateTexture(info);
 
-            gpuTex->UploadData(std::get<Vector<u8>>(cpuData->data).data());
+            auto tex = device->CreateTexture(info);
+            tex->UploadData(data);
+            tex->SetName(name);
 
-            globalTextures.push_back(std::move(gpuTex));
-            handleIdToIndex[handle.id] = targetIdx;
-            UpdateDescriptor(targetIdx, globalTextures.back().get(), sampler);
-        }
-
-        // Generators
-        static TextureData GenerateWhite() {
-            u32 pixel = 0xFFFFFFFF;
-            return TextureLoader::BuildProceduralData((u8*)&pixel, 1, 1, true).value();
-        }
-        static TextureData GenerateNormal() {
-            const u32 flatNormal = PackUnorm4x8({0.5f, 0.5f, 1.0f, 1.0f});
-            return TextureLoader::BuildProceduralData((u8*)&flatNormal, 1, 1, false).value();
-        }
-        static TextureData GenerateChecker() {
-            constexpr u32 size = 16;
-            Array<u32, size * size> pixels;
-            for (u32 y = 0; y < size; ++y) {
-                for (u32 x = 0; x < size; ++x) {
-                    pixels[y * size + x] = ((x / 4 + y / 4) % 2 == 0) ? 0xFFFFFFFF : 0xFF333333;
-                }
-            }
-            return TextureLoader::BuildProceduralData((u8*)pixels.data(), size, size, true).value();
+            if (globalTextures.size() <= idx) globalTextures.resize(idx + 1);
+            globalTextures[idx] = std::move(tex);
+            UpdateDescriptor(idx, globalTextures[idx].get(), linearSampler.get());
         }
     };
 }

@@ -5,33 +5,36 @@
 #pragma once
 #include "RendererTypes.h"
 #include "ShaderParams.h"
-#include "../Core/Tools/Array.h"
 
 namespace Constants
 {
     // Scene Global Data
     inline const Vector<Binding> Scene = {
-        {2, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(DebugUBO), 1, false},
-        {3, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(CameraUBO), 1, false},
-        {4, DescriptorType::StorageBuffer, ShaderStage::AllGraphics,    sizeof(LightUBO) * MAX_LIGHTS, 1, false},
-        {5, DescriptorType::UniformBuffer, ShaderStage::AllGraphics,    sizeof(LightUBOCount), 1, false},
-        {6, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(SceneUBO), 1, false}
+        {2, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(DebugUBO) },
+        {3, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(CameraUBO)},
+        {4, DescriptorType::UniformBuffer, ShaderStage::AllGraphics,    sizeof(LightSceneData)},
+        {6, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(SceneUBO)}
+
     };
 
     // PBR Material
-    inline const Vector<Binding> Material = {
-        {0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics, sizeof(MaterialProperties) * 1000, 1, false},
-        {1, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics, 0, 1000, true}
+    inline const Vector<Binding> MaterialBuffer = {
+        {0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics, sizeof(MaterialProperties) * 1000, 1, false}
     };
 
     // Instance Data SSBO (Set 3)
-    inline const Vector<Binding> InstanceData = {
-        {0, DescriptorType::StorageBuffer, ShaderStage::Vertex, sizeof(GPUInstanceSSBO) * 10000, 1, false}
+    inline const Vector<Binding> BindlessTextures = {
+        {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics, 0, 1000, true}
     };
 
-    // Skybox
+    // Set 3: Skybox
     inline const Vector<Binding> Skybox = {
         {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics}
+    };
+
+    // Set 4: Instance Data SSBO
+    inline const Vector<Binding> InstanceData = {
+        {0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics, sizeof(GPUInstanceSSBO) * 10000, 1, false}
     };
 
     // Compute Shader

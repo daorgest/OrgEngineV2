@@ -3,7 +3,6 @@
 //
 
 #pragma once
-#include <volk.h>
 
 #include "RendererTypes.h"
 #include "VulkanDescriptors.h"
@@ -16,10 +15,9 @@ namespace Renderer
 	struct GPUCommandBuffer;
 	struct VulkanBuffer;
 	struct VulkanSampler;
-	struct VulkanImage;
 	struct VulkanDevice;
 	struct VulkanPipeline;
-	struct VulkanShaderBuffer
+	struct VulkanShaderBuffer final : GPUShaderBuffer
 	{
 		VulkanDevice* device = nullptr;
 		DescriptorAllocatorGrowable* allocator = nullptr;
@@ -30,20 +28,18 @@ namespace Renderer
 		Vector<u32> bindingToSlot;       // binding -> slot index
 		u32 slotCount = 0;               // number of actual UBOs/SSBOs
 
-		[[nodiscard]] auto index(const u32 frame, const u32 binding) const noexcept -> u32
-		{
-			const u32 slot = bindingToSlot[binding];
-			return (frame * slotCount) + slot;
-		}
+	    VulkanShaderBuffer(GPUDevice* device, DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc);
+	    ~VulkanShaderBuffer() override { Destroy(); }
 
-		VulkanShaderBuffer(GPUDevice* device, DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc);
+	    void UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size) override;
+        void Update(u32 frameIndex, const void* data, size_t size);
+        void Bind(GPUCommandBuffer* cmd, GPUPipeline* pipeline, u32 frameIndex) override;
+	    void Destroy() override;
 
-		// Raw update with manual size
-		void UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size) const;
-
-		void Update(u32 frameIndex, const void* data, size_t size) const;
-		void Bind(GPUCommandBuffer* cmd, GPUPipeline* pipeline, u32 frameIndex) const;
-		void AllocateDescriptorSets(bool isBindless = false, u32 bindlessCount = 1);
-		void Destroy();
+	    // Internal setup helpers
+	    void Initialize();
+	    void AllocateDescriptorSets(bool isBindless = false, u32 bindlessCount = 1);
+	private:
+	    [[nodiscard]] u32 index(u32 frame, u32 binding) const noexcept;
 	};
 }

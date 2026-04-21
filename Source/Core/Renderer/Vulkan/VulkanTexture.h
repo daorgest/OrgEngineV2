@@ -16,18 +16,18 @@ namespace Renderer
 	/// Vulkan implementation of GPUTexture
 	struct VulkanTexture final : GPUTexture
 	{
-		// RHI interface implementation
-		void Init(GPUDevice* device, const TextureInfo& info) override;
-		void Destroy() override;
-		void UploadData(const void* data) override;
-
-		// Vulkan-specific initialization (backward compatibility)
-		void Init(VulkanDevice* device, TextureInfo& info);
-
 		// Constructors
 		VulkanTexture() = default;
 		VulkanTexture(VulkanDevice* device, TextureInfo& info);
-		VulkanTexture(VulkanDevice* device, VkImage image);
+		VulkanTexture(VulkanDevice* device, const VkImage image) : image(image), device(device) {};
+		~VulkanTexture() override { Destroy(); }
+
+		// Vulkan-specific initialization (backward compatibility)
+		void Init(VulkanDevice* inDevice, TextureInfo& info);
+
+		// RHI interface implementation
+		void Destroy() override;
+		void UploadData(const void* data) override;
 
 		VulkanTexture(const VulkanTexture&) = delete;
 		VulkanTexture& operator=(const VulkanTexture&) = delete;
@@ -62,15 +62,12 @@ namespace Renderer
 			return *this;
 		}
 
-		~VulkanTexture() override { Destroy(); }
-
 		// Vulkan-specific helpers
 		void UploadTextureToGPU(const void* data, const TextureInfo& texInfo);
 		void CreateImageView(VkFormat format);
 		void FillSubresourceInfo();
 		void SetName(const std::string& name) override;
 
-		// Public Vulkan handles for compatibility
 		VkImage                 image = VK_NULL_HANDLE;
 		VkImageView             imageView = VK_NULL_HANDLE;
 		VmaAllocation           allocation = VK_NULL_HANDLE;
@@ -82,16 +79,6 @@ namespace Renderer
 		TextureInfo             textureInfo = {};
 		bool owns = false;
 	};
-
-	struct VulkanImageView
-	{
-		VkImageView imageView = VK_NULL_HANDLE;
-		VulkanTexture* image = nullptr;
-
-		VulkanImageView(VulkanTexture* device, TextureViewInfo& texViewInfo);
-		~VulkanImageView();
-	};
-
 
 	struct VulkanSampler final : GPUSampler
 	{

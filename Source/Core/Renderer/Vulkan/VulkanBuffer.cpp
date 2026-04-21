@@ -12,18 +12,18 @@
 using namespace Renderer;
 
 // constructors
-VulkanBuffer::VulkanBuffer(VulkanDevice* devicePtr, const BufferInfo& bufferInfo)
+VulkanBuffer::VulkanBuffer(GPUDevice* devicePtr, const BufferInfo& bufferInfo)
 {
-    VulkanBuffer::Init(devicePtr, bufferInfo);
+    Init(devicePtr, bufferInfo);
 }
 
-VulkanBuffer::VulkanBuffer(VulkanDevice* devicePtr, BufferPreset preset, u64 size)
+VulkanBuffer::VulkanBuffer(GPUDevice* devicePtr, BufferPreset preset, u64 size)
 {
     Init(devicePtr, preset, size);
 }
 
 // Vulkan-specific Init overload for presets
-void VulkanBuffer::Init(VulkanDevice* devicePtr, BufferPreset preset, u64 size)
+void VulkanBuffer::Init(GPUDevice* devicePtr, BufferPreset preset, u64 size)
 {
     Init(devicePtr, BufferInfo::FromPreset(preset, size));
 }
@@ -44,8 +44,7 @@ void VulkanBuffer::Init(GPUDevice* inputDevice, const BufferInfo& inputInfo)
     if (HasAny(inputInfo.usage, GPUBufferFlag::Storage)) usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     if (HasAny(inputInfo.usage, GPUBufferFlag::Constant)) usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     if (HasAny(inputInfo.usage, GPUBufferFlag::ShaderDeviceAddress)) usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    if (HasAny(inputInfo.usage, GPUBufferFlag::ShaderBindingTable)) usage |=
-        VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR;
+    if (HasAny(inputInfo.usage, GPUBufferFlag::ShaderBindingTable)) usage |= VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR;
     if (HasAny(inputInfo.usage, GPUBufferFlag::Indirect)) usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
     // Create buffer info AFTER usage is finalized
@@ -57,7 +56,7 @@ void VulkanBuffer::Init(GPUDevice* inputDevice, const BufferInfo& inputInfo)
     };
 
     // Memory behavior based on heap type
-    VmaAllocationCreateInfo allocInfo{};
+    VmaAllocationCreateInfo allocInfo = {};
     allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
     allocInfo.flags = VMA_ALLOCATION_CREATE_CAN_ALIAS_BIT; // for Nsight
 
@@ -100,6 +99,8 @@ void VulkanBuffer::Destroy()
     if (buffer != VK_NULL_HANDLE)
     {
         vmaDestroyBuffer(device->allocator, buffer, this->allocation);
+        buffer = VK_NULL_HANDLE;
+        allocation = VK_NULL_HANDLE;
     }
 }
 

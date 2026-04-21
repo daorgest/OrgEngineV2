@@ -5,6 +5,7 @@
 #include "VulkanCommandBuffer.h"
 
 #include <algorithm>
+#include <ranges>
 
 #include "VulkanPipeline.h"
 #include "VulkanBuffer.h"
@@ -19,10 +20,9 @@
 
 using namespace Renderer;
 
-void VulkanCommandBuffer::Init(VulkanDevice* dev, bool secondary)
+void VulkanCommandBuffer::Init(VulkanDevice* dev, const CommandBufferLevel level)
 {
 	device = dev;
-	isSecondary = secondary;
 
     const VkCommandPoolCreateInfo poolInfo = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -35,19 +35,11 @@ void VulkanCommandBuffer::Init(VulkanDevice* dev, bool secondary)
 	const VkCommandBufferAllocateInfo allocInfo = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 		.commandPool = cmdPool,
-		.level = secondary ? VK_COMMAND_BUFFER_LEVEL_SECONDARY : VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.level = (level == CommandBufferLevel::Secondary) ? VK_COMMAND_BUFFER_LEVEL_SECONDARY : VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 		.commandBufferCount = 1
 	};
 
 	VK_CHECK(vkAllocateCommandBuffers(device->device, &allocInfo, &cmd));
-}
-
-void VulkanCommandBuffer::InitFromHandle(VulkanDevice* dev, const VkCommandBuffer handle)
-{
-	device = dev;
-	cmd = handle;
-	cmdPool = VK_NULL_HANDLE;
-	isSecondary = false;
 }
 
 void VulkanCommandBuffer::Destroy() const
@@ -66,6 +58,14 @@ void VulkanCommandBuffer::Destroy() const
 void VulkanCommandBuffer::CopyTexture(GPUTexture* src, GPUTexture* dst)
 {
 	// TODO (Orgest): oop
+}
+
+void VulkanCommandBuffer::CollectTracy()
+{
+    if (tracyCtx)
+    {
+        TracyVkCollect(tracyCtx, cmd);
+    }
 }
 
 VulkanFence::VulkanFence(VulkanDevice* device)
@@ -111,20 +111,14 @@ void VulkanCommandBuffer::Begin(const CommandBufferBeginInfo* inheritanceInfo)
 {
     vkResetCommandBuffer(cmd, 0);
 
-	VkCommandBufferBeginInfo beginInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = 0
-	};
+    VkCommandBufferBeginInfo beginInfo = {
+       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+    };
 
 	if (inheritanceInfo)
 	{
 		if (inheritanceInfo->oneTimeSubmit)
 			beginInfo.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-		if (inheritanceInfo->isSecondary)
-		{
-			beginInfo.flags |= VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
-		}
 	}
 	else
 	{
@@ -132,23 +126,9 @@ void VulkanCommandBuffer::Begin(const CommandBufferBeginInfo* inheritanceInfo)
 	}
 
 	VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
-
-	// Tracy profiling
-	if (tracyCtx && !isSecondary)
-	{
-		CmdBeginLabel(cmd, "Frame CommandBuffer", 0.0f, 0.7f, 1.0f);
-	}
 }
-
 void VulkanCommandBuffer::End()
 {
-	TracyVkCollect(tracyCtx, cmd);
-
-	if (tracyCtx && !isSecondary)
-	{
-		CmdEndLabel(cmd);
-	}
-
 	VK_CHECK(vkEndCommandBuffer(cmd));
 }
 
@@ -190,28 +170,64 @@ void VulkanCommandBuffer::BeginRendering(const RenderingInfo& info)
 
 	for (u32 i = 0; i < actualAttachmentCount; i++)
 	{
-		const auto& attachment = info.colorAttachments[i];
+	    const auto& attachment = info.colorAttachments[i];
+	    auto* vkTex = static_cast<VulkanTexture*>(attachment.texture);
 
 		// Map clear colors from our RenderAttachment structure
 		VkClearValue clear;
 		// The compiler will turn this into a single SIMD instruction in Release
 		std::memcpy(&clear.color.float32, &attachment.clearValue.color, 16);
 
+
+	    VkImageView targetView = vkTex->imageView;
+
+	    // If the texture has multiple layers (like a cubemap) but we are rendering to one face
+	    if (vkTex->textureInfo.arrayLayers > 1)
+	    {
+	        VkImageViewCreateInfo viewInfo = {
+	            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = vkTex->image,
+                .viewType = VK_IMAGE_VIEW_TYPE_2D, // Must be 2D for single-layer attachment
+                .format = ToVkFormat(vkTex->textureInfo.format),
+                .subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = attachment.baseLayer, // Targeted face index (0-5)
+                    .layerCount = 1 // FIXED: Matches VkRenderingInfo.layerCount
+                }
+	        };
+
+	        // For the HDR baking pass, creating this on-the-fly is acceptable.
+	        // For a high-perf "Source 2" engine, you should eventually cache these 6 views in VulkanTexture.
+	        VK_CHECK(vkCreateImageView(device->device, &viewInfo, nullptr, &targetView));
+	    }
+
 		colorAttachments[i] = {
 			.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
 			.pNext       = nullptr,
 			.imageView   = static_cast<VulkanTexture*>(attachment.texture)->imageView,
-			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+		    .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 			.loadOp      = ToVk(attachment.loadOp),
 			.storeOp     = ToVk(attachment.storeOp),
 			.clearValue  = clear
 		};
+
+	    if (attachment.resolveTarget)
+	    {
+	        const auto* vkResolve = static_cast<VulkanTexture*>(attachment.resolveTarget);
+	        colorAttachments[i].resolveImageView = vkResolve->imageView;
+	        colorAttachments[i].resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+	        // Standard MSAA resolve uses Average (box filter)
+	        colorAttachments[i].resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+	    }
 	}
 
 	VkRenderingAttachmentInfo depthAttachment = {};
 	if (info.depthAttachment)
 	{
-		auto* vkDepth = static_cast<VulkanTexture*>(info.depthAttachment->texture);
+		const auto* vkDepth = static_cast<VulkanTexture*>(info.depthAttachment->texture);
 
         VkClearValue clearValue;
         clearValue.depthStencil = {
@@ -222,7 +238,7 @@ void VulkanCommandBuffer::BeginRendering(const RenderingInfo& info)
 		depthAttachment = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
 			.imageView = vkDepth->imageView,
-			.imageLayout = ToVk(vkDepth->imageLayout),
+			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 			.loadOp = ToVk(info.depthAttachment->loadOp),
 			.storeOp = ToVk(info.depthAttachment->storeOp),
 			.clearValue = clearValue
@@ -260,10 +276,10 @@ void VulkanCommandBuffer::BindDescriptorSet(const DescriptorSet* set, u32 setInd
 
 void VulkanCommandBuffer::PushConstants(GPUPipeline* pipeline, ShaderStageFlags stages, u32 offset, u32 size, const void* data)
 {
-	const auto* vkPipeline = static_cast<VulkanPipeline*>(pipeline);
-	VkShaderStageFlags vkStages = ToVk(stages);
-	vkCmdPushConstants(cmd, vkPipeline->vkLayout, vkStages, offset, size, data);
+    auto* vkPipeline = static_cast<VulkanPipeline*>(pipeline);
+    vkCmdPushConstants(cmd, vkPipeline->vkLayout, static_cast<VkShaderStageFlags>(stages), offset, size, data);
 }
+
 // Internal
 static VkImageLayout ResolveLayout(VkImageLayout layout, bool useUnified)
 {
@@ -330,17 +346,22 @@ void VulkanCommandBuffer::TransitionLayout(GPUTexture* texture, TextureLayout ol
 
 void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
 {
-	auto* vkTexture = static_cast<VulkanTexture*>(texture);
+    const auto* vkTexture = static_cast<VulkanTexture*>(texture);
+    const auto& info = vkTexture->textureInfo;
 
-	const u32 mipLevels = vkTexture->textureInfo.mipLevels;
-	i32 mipWidth = static_cast<i32>(vkTexture->textureInfo.extent.width);
-	i32 mipHeight = static_cast<i32>(vkTexture->textureInfo.extent.height);
+    const u32 mipLevels = info.mipLevels;
+    const u32 layers = (info.type == ImageType::CubeMap) ? 6u : info.arrayLayers;
+    const VkImageAspectFlags aspect = vkTexture->subresourceRange.aspectMask;
 
 	if (mipLevels <= 1)
 	{
 		LOG(Warning, "No need to generate mipmaps if only 1 level exists, skipping...");
 		return;
 	}
+
+    i32 mipWidth  = static_cast<i32>(info.extent.width);
+    i32 mipHeight = static_cast<i32>(info.extent.height);
+
     const VkImageLayout unifiedSrc = ResolveLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, device->useUnifiedLayout);
     const VkImageLayout unifiedDst = ResolveLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, device->useUnifiedLayout);
 
@@ -361,11 +382,11 @@ void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
             .newLayout = unifiedSrc,
             .image = vkTexture->image,
             .subresourceRange = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .aspectMask = aspect,
                 .baseMipLevel = mipLevel - 1,
                 .levelCount = 1,
                 .baseArrayLayer = 0,
-                .layerCount = 1
+                .layerCount = layers
             }
         };
 
@@ -380,11 +401,11 @@ void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
             .newLayout = unifiedDst,
             .image = vkTexture->image,
             .subresourceRange = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = mipLevel,
+                .aspectMask = aspect,
+                .baseMipLevel = mipLevel - 1,
                 .levelCount = 1,
                 .baseArrayLayer = 0,
-                .layerCount = 1
+                .layerCount = layers
             }
         };
 
@@ -396,12 +417,12 @@ void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
         vkCmdPipelineBarrier2(cmd, &depInfo);
 
         // Blit operation for downscaling
-        VkImageBlit2 blit{
+        VkImageBlit2 blit = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
-            .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mipLevel - 1, 0, 1},
-            .srcOffsets = { { 0, 0, 0 }, { mipWidth, mipHeight, 1 } },
-            .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mipLevel, 0, 1},
-            .dstOffsets = { { 0, 0, 0 }, { std::max(1, mipWidth / 2), std::max(1, mipHeight / 2), 1 } }
+            .srcSubresource = {aspect, mipLevel - 1, 0, layers},
+            .srcOffsets = {{0, 0, 0}, {mipWidth, mipHeight, 1}},
+            .dstSubresource = {aspect, mipLevel, 0, layers},
+            .dstOffsets = {{0, 0, 0}, {std::max(1, mipWidth / 2), std::max(1, mipHeight / 2), 1}}
         };
 
         VkBlitImageInfo2 blitInfo{
@@ -426,11 +447,10 @@ void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
     TransitionLayout(texture, TextureLayout::ShaderReadOnly);
 }
 
-void VulkanCommandBuffer::BindVertexBuffer(GPUBuffer* buffer, u32 binding, u64 offset)
+void VulkanCommandBuffer::BindVertexBuffer(GPUBuffer* buffer, const u32 binding, const u64 offset)
 {
-	auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
-	VkDeviceSize vkOffset = offset;
-	vkCmdBindVertexBuffers(cmd, binding, 1, &vkBuffer->buffer, &vkOffset);
+	const auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
+	vkCmdBindVertexBuffers(cmd, binding, 1, &vkBuffer->buffer, &offset);
 }
 
 void VulkanCommandBuffer::BindIndexBuffer(GPUBuffer* buffer, u64 offset)
@@ -451,8 +471,14 @@ void VulkanCommandBuffer::DrawIndexed(u32 indexCount, u32 instanceCount, u32 fir
 
 void VulkanCommandBuffer::DrawIndirect(GPUBuffer* buffer, u64 offset, u32 drawCount, u32 stride)
 {
-	auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
+	const auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
 	vkCmdDrawIndirect(cmd, vkBuffer->buffer, offset, drawCount, stride);
+}
+
+void VulkanCommandBuffer::DrawIndexedIndirect(GPUBuffer* buffer, const u64 offset, const u32 drawCount, const u32 stride)
+{
+    const auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
+    vkCmdDrawIndexedIndirect(cmd, vkBuffer->buffer, offset, drawCount, stride);
 }
 
 void VulkanCommandBuffer::Dispatch(u32 groupCountX, u32 groupCountY, u32 groupCountZ)
@@ -497,15 +523,16 @@ void VulkanCommandBuffer::WaitForFence(GPUFence* fence)
     }
 }
 
-void VulkanCommandBuffer::ExecuteCommands(std::span<GPUCommandBuffer*> secondaryBuffers)
+void VulkanCommandBuffer::ExecuteCommands(std::span<GPUCommandBuffer*> secondaryBuffers) const
 {
-	if (isSecondary)
-	{
-		LOG(Error, "Cannot execute commands from a secondary command buffer");
-		return;
-	}
+	// if (isSecondary)
+	// {
+	// 	LOG(Error, "Cannot execute commands from a secondary command buffer");
+	// 	return;
+	// }
 
-	Vector<VkCommandBuffer> vkCmds;
+	thread_local Vector<VkCommandBuffer> vkCmds(secondaryBuffers.size());
+
 	vkCmds.reserve(secondaryBuffers.size());
 
 	for (auto* buffer : secondaryBuffers)
@@ -541,8 +568,8 @@ void VulkanCommandBuffer::SetScissor(u32 x, u32 y, u32 width, u32 height)
 
 void VulkanCommandBuffer::CopyBuffer(GPUBuffer* src, GPUBuffer* dst, u64 size, u64 srcOffset, u64 dstOffset)
 {
-	auto* vkSrc = static_cast<VulkanBuffer*>(src);
-	auto* vkDst = static_cast<VulkanBuffer*>(dst);
+	const auto* vkSrc = static_cast<VulkanBuffer*>(src);
+	const auto* vkDst = static_cast<VulkanBuffer*>(dst);
 
 	VkBufferCopy2 copyRegion = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
@@ -615,6 +642,10 @@ void VulkanCommandBuffer::CopyBufferToTexture(GPUBuffer* src, GPUTexture* dst)
 
 void VulkanCommandBuffer::BeginDebugLabel(const char* name, f32 r, f32 g, f32 b)
 {
+    if (tracyCtx)
+    {
+        TracyVkCollect(tracyCtx, cmd);
+    }
 #ifdef VULKAN_DEBUG_MODE
 	CmdBeginLabel(cmd, name, r, g, b);
 #endif

@@ -4,67 +4,87 @@
 
 #pragma once
 #include "AABB.h"
+#include "BindlessManager.h"
+#include "MeshStats.h"
 #include "Platform.h"
 #include "RenderInterface.h"
 #include "VulkanMesh.h"
-#include "VulkanPipeline.h"
-#include "VulkanShaderBuffer.h"
-
-struct Camera;
-struct GPUInstanceSSBO;
 
 namespace Renderer
 {
-	struct VulkanModel;
-	struct ModelComponent;
+    struct ModelComponent;
 }
+
+struct Camera;
+struct GPUInstanceSSBO;
 
 class DebugRenderer;
 class SkyboxManager;
 
 struct SceneRenderConfig
 {
-	Renderer::VulkanDevice* device = nullptr; // will abstract soon, but vulkan pipeline depends on it
-	Renderer::DescriptorAllocatorGrowable* descriptorAllocator;
-	Renderer::VulkanShaderBuffer* sceneUBO = nullptr;
-	SkyboxManager* skybox = nullptr;
-	DebugRenderer* debugRenderer = nullptr;
+    Renderer::GPUDevice* device = nullptr;
+    Renderer::DescriptorAllocatorGrowable* descriptorAllocator = nullptr;
+    Renderer::BindlessManager* bindless = nullptr;
+    Renderer::GPUShaderManager* shaderManager = nullptr;
+    AssetPool<Renderer::GPUModel>* modelPool = nullptr;
 
-	std::span<Renderer::ModelComponent> models;
-	u32 drawLimit = 100000;
+    Renderer::GPUShaderBuffer* sceneUBO = nullptr;
+    SkyboxManager* skybox = nullptr;
+    DebugRenderer* debugRenderer = nullptr;
+
+    std::span<Renderer::ModelComponent> models;
 };
 
 class SceneRenderer
 {
 public:
-	SceneRenderer() = default;
+    void Init(SceneRenderConfig& cfg);
+    void PrepareFrame(const Platform::WindowContext* window, const Camera* camera);
+    void RenderModels(Renderer::GPUCommandBuffer* cmd, u32 frameIndex, SceneStats& stats);
 
-	void Init(SceneRenderConfig& cfg);
-	void PrepareFrame(const Platform::WindowContext* window, const Camera* camera);
-	void DrawStandardObject(const Renderer::ModelComponent* inst, Renderer::DrawCache& dc) const;
-    static void DrawInstancedBatch(Renderer::VulkanModel* model, u32 count, u32 offset, Renderer::DrawCache& dc);
-	void RenderModels(Renderer::GPUCommandBuffer* cmd, u32 frameIndex, SceneStats& stats);
+    // RHI-based Accessors
+    Renderer::GPUPipeline* GetOpaquePipeline() const { return opaquePipeline.get(); }
+    Renderer::GPUShaderBuffer* GetMaterialBuffer() const { return materialBuffer.get(); }
+    Renderer::GPUShaderBuffer* GetInstanceBuffer() const { return instanceBuffer.get(); }
 
+
+    void UpdateInstanceBuffer(u32 frameIndex);
 private:
-	struct InstanceBatch {
-		Renderer::VulkanModel* model;
-		Vector<GPUInstanceSSBO> instanceData; // the models instance data. imagine 1 model of grass with multiple properties for each
-	};
+    size_t totalVisibleInstances = 0;
+    size_t totalFlattenedEntries = 0;
 
-	Vector<const Renderer::ModelComponent*> standardBucket; // Opaque objects
-	Vector<const Renderer::ModelComponent*> transparentBucket; // Transparent objects
-    Vector<InstanceBatch> instanceBucket; // Visibles instances
-    size_t totalVisibleInstances = 0; // Count of instances based on frustum culling test
-    Vector<GPUInstanceSSBO> megaStagingData; // the massive buffer for instance data..... won't realloc unless the visible instance count grows
-	std::unique_ptr<Renderer::VulkanShaderBuffer> instanceBuffer; // instance data for vertex shader
-	std::unique_ptr<Renderer::VulkanShaderBuffer> materialBuffer; // material data for texture indices, material properties
+    // --- State & Buckets ---
+    struct InstanceBatch {
+        Renderer::GPUModel* model = nullptr;
+        Vector<GPUInstanceSSBO> instanceData;
+    };
 
-	Frustum frustum;
-	SceneRenderConfig config;
+    void BindGlobalState(Renderer::DrawCache& dc, Renderer::GPUPipeline* pipeline) const;
 
-    std::unique_ptr<Renderer::GPUShader> sceneShader;
+    void RenderInstancedPass(Renderer::DrawCache& dc);
+    void RenderIndirectPass(Renderer::DrawCache& dc); // NEW
 
-    // Pipelines for the render states
+    void DrawObject(const Renderer::ModelComponent* inst, const Renderer::DrawCache& dc) const;
+    static void DrawInstancedBatch(Renderer::GPUModel* model, u32 count, u32 globalInstanceOffset, Renderer::DrawCache& dc);
+
+    static InstanceBatch* GetOrAddBatch(Vector<InstanceBatch>& bucket, Renderer::GPUModel* model);
+
+    Vector<const Renderer::ModelComponent*> standardBucket;
+    Vector<const Renderer::ModelComponent*> transparentBucket;
+    Vector<InstanceBatch> instanceBucket;
+    Vector<InstanceBatch> indirectBucket;
+
+    Vector<GPUIndirectCommand> indirectCommands;
+    Vector<GPUInstanceSSBO> megaStagingData;
+
+    std::unique_ptr<Renderer::GPUShaderBuffer> instanceBuffer;
+    std::unique_ptr<Renderer::GPUShaderBuffer> materialBuffer;
+    std::unique_ptr<Renderer::GPUBuffer> indirectBuffer;
+
+    Frustum frustum;
+    SceneRenderConfig config = {};
+    std::shared_ptr<Renderer::GPUShader> sceneShader;
     std::unique_ptr<Renderer::GPUPipeline> opaquePipeline;
     std::unique_ptr<Renderer::GPUPipeline> transparentPipeline;
 };

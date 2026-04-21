@@ -1,11 +1,8 @@
 #pragma once
 
 #include "Camera.h"
+#include "RenderInterface.h"
 #include "VulkanDescriptors.h"
-#include "VulkanPipeline.h"
-#include "VulkanShader.h"
-#include "VulkanTexture.h"
-#include "../Core/Tools/Arena.h"
 #include "Tools/Array.h"
 
 struct SkyPushConstants
@@ -28,33 +25,32 @@ struct SphericalHarmonics
 class SkyboxManager
 {
 public:
-	bool Initialize(Renderer::VulkanDevice* device);
+    bool Initialize(Renderer::GPUDevice* device);
 
-	[[nodiscard]] Renderer::VulkanTexture CreateCubeMapFromSource(CubeSource source);
-	Renderer::VulkanTexture               CreateHDRTexture(const char* path) const;
-	[[nodiscard]] Renderer::VulkanTexture CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const;
 
-	void Render(Renderer::GPUCommandBuffer* cmd, const Camera& camera, f32 aspectRatio) const;
-	void Cleanup();
+    [[nodiscard]] std::unique_ptr<Renderer::GPUTexture> CreateCubeMapFromSource(CubeSource source);
+    std::unique_ptr<Renderer::GPUTexture>               CreateHDRTexture(const char* path) const;
+    std::unique_ptr<Renderer::GPUTexture> CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const;
 
-	// Getters for IBL integration
-	[[nodiscard]] Renderer::DescriptorLayout GetLayout() const { return layout; }
-	[[nodiscard]] Renderer::DescriptorSet GetDescriptorSet() const { return descriptorSet; }
-	Renderer::VulkanTexture& GetCubemap() { return cubemap; }
+    void Render(Renderer::GPUCommandBuffer* cmd, const Camera& camera) const;
+    void Cleanup() const;
+
+
+   [[nodiscard]] Renderer::GPUTexture* GetCubemap() const { return cubemap.get(); }
+   [[nodiscard]] Renderer::DescriptorSet GetDescriptorSet() const { return descriptorSet; }
 
 private:
-	bool CreateCubemap();
-	void CreateSampler();
-	bool CreateShaderAndPipeline();
+    std::unique_ptr<Renderer::GPUTexture> CreateProceduralFallback() const;
+    bool CreateShaderAndPipeline();
 
-	Renderer::VulkanDevice* devicePtr = nullptr;
+    Renderer::GPUDevice* devicePtr = nullptr;
 
-	// Skybox resources
-	Renderer::VulkanTexture cubemap;
-	Renderer::VulkanSampler sampler;
-	std::unique_ptr<Renderer::GPUShader> shader;
-	std::unique_ptr<Renderer::GPUPipeline> pipeline;
-	Renderer::DescriptorLayout layout;
-	Renderer::DescriptorSet descriptorSet;
+    // Skybox resources
+    std::unique_ptr<Renderer::GPUTexture> cubemap;
+    std::unique_ptr<Renderer::GPUSampler> sampler;
+    std::shared_ptr<Renderer::GPUShader> shader;
+    std::unique_ptr<Renderer::GPUPipeline> pipeline;
+    Renderer::DescriptorLayout layout;
+    Renderer::DescriptorSet descriptorSet;
 };
 

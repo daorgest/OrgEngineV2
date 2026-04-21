@@ -4,6 +4,8 @@
 
 #pragma once
 #include <span>
+
+#include "Ray.h"
 #include "Tools/Array.h"
 #include "glm/glm.hpp"
 struct Vertex;
@@ -111,6 +113,25 @@ struct AABB
 
 	[[nodiscard]] glm::vec3 Min() const { return center - extents; }
 	[[nodiscard]] glm::vec3 Max() const { return center + extents; }
+
+    bool IntersectsRay(const Ray& ray, float& tMin, float& tMax) const
+    {
+	    // Compute intersection with each slab
+	    const glm::vec3 invDir = 1.0f / ray.direction;
+	    const glm::vec3 t0 = (Min() - ray.origin) * invDir;
+	    const glm::vec3 t1 = (Max() - ray.origin) * invDir;
+
+	    // Handle negative directions
+	    const glm::vec3 tSmaller = glm::min(t0, t1);
+	    const glm::vec3 tBigger = glm::max(t0, t1);
+
+	    // Find entry and exit points
+	    tMin = glm::max(tSmaller.x, glm::max(tSmaller.y, tSmaller.z));
+	    tMax = glm::min(tBigger.x, glm::min(tBigger.y, tBigger.z));
+
+	    // Check if there's a valid intersection
+	    return tMax >= tMin && tMax > 0;
+	}
 };
 
 struct Frustum

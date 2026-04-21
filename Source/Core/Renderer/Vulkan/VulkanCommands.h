@@ -30,7 +30,7 @@ namespace Renderer
 		void Destroy() override;
 		void Reset() override;
 
-		GPUCommandBuffer* GetCommandBuffer() override { return &commandBuffer; }
+	    [[nodiscard]] VulkanCommandBuffer* GetCommandBuffer() override { return &commandBuffer; }
 
 	private:
 		VulkanDevice* device = nullptr;
@@ -44,7 +44,7 @@ namespace Renderer
 		void EndFrame(u32 frameIndex, u32 imageIndex) override;
 		void Destroy() override;
 
-		GPUFrameData* GetCurrentFrameData() override { return &frames[frameNumber % framesActive]; }
+		VulkanFrameData* GetCurrentFrameData() override { return &frames[frameNumber % framesActive]; }
 		u32 GetFrameIndex() const override { return frameNumber % framesActive; }
 
 		TracyVkCtx tracyCtx = nullptr;

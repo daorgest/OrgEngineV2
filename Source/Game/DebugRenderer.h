@@ -32,7 +32,7 @@ public:
 	void SetDepthBias(f32 bias) { depthBias = bias; }
 	void SetFlags(u32 f) { flags = f; }
 
-	std::unique_ptr<Renderer::GPUShader> shader;
+	std::shared_ptr<Renderer::GPUShader> shader;
 	std::unique_ptr<Renderer::VulkanShaderBuffer> instanceBuffer;    // internal
 	Renderer::VulkanShaderBuffer* sceneUBO = nullptr;          // external
 	std::unique_ptr<Renderer::GPUPipeline> pipeline;

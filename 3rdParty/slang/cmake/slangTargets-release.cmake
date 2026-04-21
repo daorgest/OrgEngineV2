@@ -83,5 +83,14 @@ set_target_properties(slang::slangc PROPERTIES
 list(APPEND _cmake_import_check_targets slang::slangc )
 list(APPEND _cmake_import_check_files_for_slang::slangc "${_IMPORT_PREFIX}/bin/slangc.exe" )
 
+# Import target "slang::slang-dispatcher" for configuration "Release"
+set_property(TARGET slang::slang-dispatcher APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
+set_target_properties(slang::slang-dispatcher PROPERTIES
+  IMPORTED_LOCATION_RELEASE "${_IMPORT_PREFIX}/bin/slang.exe"
+  )
+
+list(APPEND _cmake_import_check_targets slang::slang-dispatcher )
+list(APPEND _cmake_import_check_files_for_slang::slang-dispatcher "${_IMPORT_PREFIX}/bin/slang.exe" )
+
 # Commands beyond this point should not need to know the version.
 set(CMAKE_IMPORT_FILE_VERSION)

@@ -29,9 +29,8 @@ struct MaterialProperties
 struct PushConstants
 {
 	glm::mat4 model;
-	glm::mat3 normalMatrix;
-	u32 vertexOffset = 0; // For dynamic vertex indexing
-	u64 vertexBufferAddress = 0;
+    u64 vertexBufferAddress = 0;
+    u32 vertexOffset;
 	u32 isInstanced = 0;
 	f32 instRoughness = 1.0f;
 	f32 instMetallic = 1.0f;
@@ -70,20 +69,29 @@ struct DebugUBO
 {
 	DebugView debugMode;
 	f32 debugDepthRange;
-	u32 disableNormalMap = 1;  // 1 = don't sample/use normalTexture
-	u32 disableSpecular = 0;    // 1 = skip specular BRDF term
+	u32 disableNormalMap = 0;
+	u32 disableSpecular = 0;
 
 	// PBR/IBL Runtime Tuning Parameters
-	f32 iblStrength = 1.5f;
-	f32 iblRoughnessMipBias = 0.0f;
-	f32 ambientStrength = 0.1f;
-	f32 aoStrength = 0.3f;
-	f32 metallicReflectScale = 1.2f;
-	f32 roughnessReflectScale = 1.0f;
+    f32 iblStrength = 1.0f;
+    f32 iblRoughnessMipBias = 0.0f;
+    f32 ambientStrength = 0.2f;
+    f32 aoStrength = 1.0f;
+    f32 metallicReflectScale = 1.0f;
+    f32 roughnessReflectScale = 1.0f;
+
+    // --- Toon/Deadlock Tuning Defaults ---
+    f32 toonThreshold = 0.24f;
+    f32 toonSmoothness = 0.105f;
+    f32 rimThreshold = 0.83f;
+    f32 rimSmoothness = 0.25f;
+    f32 rimIntensity = 0.07f;
+    glm::vec3 shadowTint = glm::vec3(0.5f, 0.5f, 0.7f);
 };
 
-struct LightUBOCount
+struct LightSceneData
 {
+    LightUBO lights[16];
 	u32 count;
 };
 
@@ -92,4 +100,15 @@ struct CameraUBO
 	glm::vec3 position;
 	f32  nearPlane;
 	f32  farPlane;
+};
+
+static_assert(sizeof(CameraUBO) == 20);
+
+struct GPUIndirectCommand
+{
+    u32 indexCount;
+    u32 instanceCount;
+    u32 firstIndex;
+    i32 vertexOffset;
+    u32 firstInstance;
 };
