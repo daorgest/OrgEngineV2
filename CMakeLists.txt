@@ -4,18 +4,14 @@ project(OrgEngineV2 LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 23)
-set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 # --- Output Directory Configuration ---
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/App)
-if(MSVC)
-    foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
-        string(TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG)
-        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-    endforeach()
-endif()
+
+# Force MSVC to dump all executables into the base App folder
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/App)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/App)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/App)
 
 # --- Path Definitions ---
 set(3RDPARTY_DIR  ${CMAKE_SOURCE_DIR}/3rdParty)
@@ -80,15 +76,19 @@ set(SRC_FILES
         ${GAME_DIR}/DebugRenderer.cpp
         ${GAME_DIR}/SceneRenderer.cpp
         ${GAME_DIR}/SkyboxManager.cpp
-)
-
-set(IMGUI_FILES
-        ${3RDPARTY_DIR}/imgui/imgui.cpp
-        ${3RDPARTY_DIR}/imgui/imgui_demo.cpp
-        ${3RDPARTY_DIR}/imgui/imgui_draw.cpp
-        ${3RDPARTY_DIR}/imgui/imgui_tables.cpp
-        ${3RDPARTY_DIR}/imgui/imgui_widgets.cpp
-        ${3RDPARTY_DIR}/imgui/backends/imgui_impl_vulkan.cpp
+        ${CORE_DIR}/Renderer/RenderEnums.h
+        ${CORE_DIR}/Renderer/RenderResources.h
+        ${CORE_DIR}/Tools/DDSHeader.h
+        ${CORE_DIR}/Tools/JSONParser.h
+        ${CORE_DIR}/Tools/JsonParser.cpp
+        ${CORE_DIR}/Tools/TOMLParser.cpp
+        ${CORE_DIR}/Tools/TOMLParser.h
+        ${ENGINE_DIR}/BindlessManager.cpp
+        ${CORE_DIR}/Tools/EnumBitmask.h
+        ${GAME_DIR}/ComputeDemonstration.h
+        ${GAME_DIR}/ComputeDemonstration.cpp
+        ${CORE_DIR}/Renderer/Vulkan/VulkanImGuiHelpets.h
+        ${CORE_DIR}/Tools/Span.h
 )
 
 # --- Shader Compilation Logic ---
@@ -113,9 +113,11 @@ foreach(shader ${SLANG_ALL})
             -o "${out}"
             -target spirv
             -profile sm_6_6
+            -g
             ${ENTRY_POINTS}
             -emit-spirv-directly
             -fvk-use-scalar-layout
+            -fvk-use-entrypoint-name
             -matrix-layout-column-major
             DEPENDS "${shader}" "${3RDPARTY_DIR}/slang/bin/slangc.exe"
             VERBATIM
@@ -133,14 +135,33 @@ add_subdirectory(${3RDPARTY_DIR}/mikktspace)
 add_subdirectory(${3RDPARTY_DIR}/glm)
 add_subdirectory(${3RDPARTY_DIR}/ufbx)
 add_subdirectory(${3RDPARTY_DIR}/fmod)
+add_subdirectory(${3RDPARTY_DIR}/fastgltf)
 
-option(TRACY_ENABLE "" OFF)
+option(TRACY_ENABLE "" ON)
 option(TRACY_ON_DEMAND "" ON)
-option(TRACY_CALLSTACK "" 6)
+set(TRACY_CALLSTACK 6 CACHE STRING "Tracy callstack depth")
 add_subdirectory(${3RDPARTY_DIR}/tracy)
 
+add_library(ImGui STATIC
+        ${3RDPARTY_DIR}/imgui/imgui.cpp
+        ${3RDPARTY_DIR}/imgui/imgui_demo.cpp
+        ${3RDPARTY_DIR}/imgui/imgui_draw.cpp
+        ${3RDPARTY_DIR}/imgui/imgui_tables.cpp
+        ${3RDPARTY_DIR}/imgui/imgui_widgets.cpp
+        ${3RDPARTY_DIR}/imgui/backends/imgui_impl_vulkan.cpp
+)
+
+target_include_directories(ImGui PUBLIC
+        ${3RDPARTY_DIR}/imgui
+        ${3RDPARTY_DIR}/imgui/backends
+)
+
+target_compile_definitions(ImGui PRIVATE IMGUI_IMPL_VULKAN_USE_VOLK)
+target_link_libraries(ImGui PRIVATE volk)
+set_target_properties(ImGui PROPERTIES CXX_CLANG_TIDY "")
+
 # --- Main Executable Target ---
-add_executable(OrgEngineV2 ${SRC_FILES} ${IMGUI_FILES})
+add_executable(OrgEngineV2 ${SRC_FILES})
 add_dependencies(OrgEngineV2 CompileShaders)
 target_precompile_headers(OrgEngineV2 PRIVATE ${CMAKE_SOURCE_DIR}/Source/PrimTypes.h)
 
@@ -149,16 +170,17 @@ target_compile_definitions(OrgEngineV2 PRIVATE
         UNICODE
         VK_NO_PROTOTYPES
         VOLK_STATIC_DEFINES
+        VMA_VULKAN_HEADERS_ALREADY_INCLUDED
         NOMINMAX
         EDITORUI
         VULKAN_BUILD
-        IMGUI_IMPL_VULKAN_USE_VOLK
         _CRT_SECURE_NO_WARNINGS
         ENABLE_GPU_TIMING
         ENGINE_COMMIT_HASH="${GIT_HASH}"
         ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-        # Conditional Debug Definitions
-        $<$<NOT:$<CONFIG:Release>>:VULKAN_DEBUG_MODE ENGINE_ENABLE_LOGGING>
+        $<$<NOT:$<CONFIG:Release>>:ENGINE_ENABLE_LOGGING>
+
+        $<$<NOT:$<CONFIG:Release>>:VULKAN_DEBUG_MODE>
 )
 
 target_include_directories(OrgEngineV2 PRIVATE
@@ -174,23 +196,15 @@ target_include_directories(OrgEngineV2 PRIVATE
 target_include_directories(OrgEngineV2 SYSTEM PRIVATE
         ${3RDPARTY_DIR}/stb
         ${3RDPARTY_DIR}/tinyobjloader
-        ${3RDPARTY_DIR}/imgui
-        ${3RDPARTY_DIR}/imgui/backends
         ${3RDPARTY_DIR}/imoguizmo
-        ${3RDPARTY_DIR}/fmt/include
-        ${3RDPARTY_DIR}/volk
-        ${3RDPARTY_DIR}/vma/include
-        ${3RDPARTY_DIR}/meshoptimizer/src
         ${3RDPARTY_DIR}/mikktspace
-        ${3RDPARTY_DIR}/glm
-        ${3RDPARTY_DIR}/ufbx
-        ${3RDPARTY_DIR}/tracy/public
         ${3RDPARTY_DIR}/slang/include
 )
 
 target_link_libraries(OrgEngineV2 PRIVATE
         fmt::fmt
         volk
+        ImGui
         GPUOpen::VulkanMemoryAllocator
         meshoptimizer
         mikktspace
@@ -198,6 +212,7 @@ target_link_libraries(OrgEngineV2 PRIVATE
         ufbx
         Tracy::TracyClient
         FMOD::FMOD
+        fastgltf::fastgltf
         ${3RDPARTY_DIR}/slang/lib/slang.lib
 )
 
@@ -205,27 +220,15 @@ target_link_libraries(OrgEngineV2 PRIVATE
 if(MSVC)
     target_compile_options(OrgEngineV2 PRIVATE
             /MP /Zc:__cplusplus /permissive- /W4
-
-            # Release specific:
-            $<$<CONFIG:Release>:/O2 /Oi /Ot /GL /Gy /Gw /Zc:inline>
     )
-    target_link_options(OrgEngineV2 PRIVATE
-            $<$<CONFIG:Release>:/LTCG /OPT:REF /OPT:ICF>
-            $<$<CONFIG:Debug>:/DEBUG:FASTLINK /INCREMENTAL>
-            $<$<CONFIG:RelWithDebInfo>:/DEBUG /INCREMENTAL>
-    )
-    # Target-specific C++ Flags appending
-    set_property(TARGET OrgEngineV2 APPEND_STRING PROPERTY COMPILE_FLAGS_DEBUG " /RTC1 /MDd")
 else()
     target_compile_options(OrgEngineV2 PRIVATE
             -Wall -Wextra -Wpedantic -Wshadow
-            # Release specific:
-            $<$<CONFIG:Release>:-O3 -flto -fno-plt -ffunction-sections -fdata-sections>
-    )
-    target_link_options(OrgEngineV2 PRIVATE
-            $<$<CONFIG:Release>:-Wl,--gc-sections>
     )
 endif()
+
+set_property(TARGET OrgEngineV2 PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+set_property(TARGET OrgEngineV2 PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
 
 # --- Platform Specific Block ---
 if (ENGINE_PLATFORM STREQUAL "SDL")
@@ -233,32 +236,28 @@ if (ENGINE_PLATFORM STREQUAL "SDL")
     target_sources(OrgEngineV2 PRIVATE
             ${CORE_DIR}/Platform/PlatformSDL.cpp
             ${CORE_DIR}/Input/InputSystemSDL.cpp
-            ${3RDPARTY_DIR}/imgui/backends/imgui_impl_sdl3.cpp
     )
+
+    target_sources(ImGui PRIVATE ${3RDPARTY_DIR}/imgui/backends/imgui_impl_sdl3.cpp)
     add_subdirectory(${3RDPARTY_DIR}/sdl EXCLUDE_FROM_ALL)
     target_link_libraries(OrgEngineV2 PRIVATE SDL3::SDL3)
-
-    # Copy SDL3 DLL to output dir
-    add_custom_command(TARGET OrgEngineV2 POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:SDL3::SDL3>
-            "$<TARGET_FILE_DIR:OrgEngineV2>/"
-            COMMENT "Copying SDL3 DLL..."
-    )
 else() # WIN32 Platform
     target_compile_definitions(OrgEngineV2 PRIVATE ENGINE_PLATFORM_WIN32 VK_USE_PLATFORM_WIN32_KHR)
     target_sources(OrgEngineV2 PRIVATE
             ${CORE_DIR}/Platform/PlatformWindows.cpp
             ${CORE_DIR}/Input/InputSysGameInput.cpp
-            ${3RDPARTY_DIR}/imgui/backends/imgui_impl_win32.cpp
     )
+    target_sources(ImGui PRIVATE ${3RDPARTY_DIR}/imgui/backends/imgui_impl_win32.cpp)
     target_include_directories(OrgEngineV2 PRIVATE ${3RDPARTY_DIR}/gameinput/include)
     target_link_directories(OrgEngineV2 PRIVATE ${3RDPARTY_DIR}/gameinput/lib)
     target_link_libraries(OrgEngineV2 PRIVATE ${3RDPARTY_DIR}/gameinput/lib/x64/GameInput.lib)
 
-    set_target_properties(OrgEngineV2 PROPERTIES
-            WIN32_EXECUTABLE $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:TRUE>
-    )
+    if (MSVC)
+        target_link_options(OrgEngineV2 PRIVATE
+                $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>
+                $<$<NOT:$<CONFIG:Release>>:/SUBSYSTEM:CONSOLE>
+        )
+    endif ()
 endif()
 
 # --- Post-Build Steps (Copy Assets, Slang, & FMOD) ---

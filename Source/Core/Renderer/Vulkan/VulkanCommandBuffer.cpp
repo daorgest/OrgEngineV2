@@ -42,75 +42,151 @@ void VulkanCommandBuffer::Init(VulkanDevice* dev, const CommandBufferLevel level
 	VK_CHECK(vkAllocateCommandBuffers(device->device, &allocInfo, &cmd));
 }
 
-void VulkanCommandBuffer::Destroy() const
+void VulkanCommandBuffer::Destroy()
 {
-	if (cmd != VK_NULL_HANDLE)
-	{
-		vkFreeCommandBuffers(device->device, cmdPool, 1, &cmd);
-	}
-
     if (cmdPool != VK_NULL_HANDLE)
     {
         vkDestroyCommandPool(device->device, cmdPool, nullptr);
+        cmdPool = VK_NULL_HANDLE;
+        cmd = VK_NULL_HANDLE;
     }
+}
+
+// Internal
+static VkImageLayout ResolveLayout(const VkImageLayout layout, const bool useUnified)
+{
+    // If Unified is OFF, trust the explicit layout.
+    if (!useUnified) return layout;
+
+    if (layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    if (layout == VK_IMAGE_LAYOUT_UNDEFINED)
+        return VK_IMAGE_LAYOUT_UNDEFINED;
+
+    return VK_IMAGE_LAYOUT_GENERAL;
 }
 
 void VulkanCommandBuffer::CopyTexture(GPUTexture* src, GPUTexture* dst)
 {
-	// TODO (Orgest): oop
+	const auto* vkSrc = static_cast<VulkanTexture*>(src);
+	const auto* vkDst = static_cast<VulkanTexture*>(dst);
+
+	// Resolve the layouts based on the unified layout feature
+	const VkImageLayout srcLayout = ResolveLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, device->useUnifiedLayout);
+	const VkImageLayout dstLayout = ResolveLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, device->useUnifiedLayout);
+
+	VkImageCopy2 region = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_COPY_2,
+		.srcSubresource = { vkSrc->subresourceRange.aspectMask, 0, 0, 1 },
+		.dstSubresource = { vkDst->subresourceRange.aspectMask, 0, 0, 1 },
+		.extent = {
+			std::min(vkSrc->textureInfo.extent.width, vkDst->textureInfo.extent.width),
+			std::min(vkSrc->textureInfo.extent.height, vkDst->textureInfo.extent.height),
+			1
+		}
+	};
+
+	VkCopyImageInfo2 copyInfo = {
+		.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2,
+		.srcImage = vkSrc->image,
+		.srcImageLayout = srcLayout,
+		.dstImage = vkDst->image,
+		.dstImageLayout = dstLayout,
+		.regionCount = 1,
+		.pRegions = &region
+	};
+
+	vkCmdCopyImage2(cmd, &copyInfo);
 }
 
-void VulkanCommandBuffer::CollectTracy()
+void VulkanCommandBuffer::BlitTexture(GPUTexture* src, GPUTexture* dst)
 {
+	const auto* vkSrc = static_cast<VulkanTexture*>(src);
+	const auto* vkDst = static_cast<VulkanTexture*>(dst);
+
+	const VkImageLayout srcLayout = ResolveLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, device->useUnifiedLayout);
+	const VkImageLayout dstLayout = ResolveLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, device->useUnifiedLayout);
+
+	VkImageBlit2 blit = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+		.srcSubresource = { vkSrc->subresourceRange.aspectMask, 0, 0, 1 },
+		.srcOffsets = { {0, 0, 0}, {(i32)vkSrc->textureInfo.extent.width, (i32)vkSrc->textureInfo.extent.height, 1} },
+		.dstSubresource = { vkDst->subresourceRange.aspectMask, 0, 0, 1 },
+		.dstOffsets = { {0, 0, 0}, {(i32)vkDst->textureInfo.extent.width, (i32)vkDst->textureInfo.extent.height, 1} }
+	};
+
+	VkBlitImageInfo2 blitInfo = {
+		.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+		.srcImage = vkSrc->image,
+		.srcImageLayout = srcLayout,
+		.dstImage = vkDst->image,
+		.dstImageLayout = dstLayout,
+		.regionCount = 1,
+		.pRegions = &blit,
+		.filter = VK_FILTER_LINEAR
+	};
+
+	vkCmdBlitImage2(cmd, &blitInfo);
+}
+
+void VulkanCommandBuffer::CollectTracy() const
+{
+#ifdef TRACY_ENABLE
     if (tracyCtx)
     {
         TracyVkCollect(tracyCtx, cmd);
     }
+#endif
+    void(0);
 }
 
-VulkanFence::VulkanFence(VulkanDevice* device)
+void VulkanFence::Init(VulkanDevice* dev, const bool createSignaled)
 {
-	this->device = device;
+    device = dev;
 
-    constexpr VkFenceCreateInfo fenceInfo = {
-		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-		.flags = VK_FENCE_CREATE_SIGNALED_BIT
-	};
-
-	VK_CHECK(vkCreateFence(device->device, &fenceInfo, nullptr, &fence));
+    const VkFenceCreateInfo fenceInfo = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = createSignaled ? VK_FENCE_CREATE_SIGNALED_BIT : 0u
+    };
+    VK_CHECK(vkCreateFence(device->device, &fenceInfo, nullptr, &fence));
 }
 
-VulkanFence::~VulkanFence()
+void VulkanFence::Destroy()
 {
-	if (device && fence)
-	{
-		vkDestroyFence(device->device, fence, nullptr);
-	}
+    if (device && fence)
+    {
+        vkDestroyFence(device->device, fence, nullptr);
+        fence = VK_NULL_HANDLE;
+    }
+};
+
+void VulkanFence::Reset()
+{
+    VK_CHECK(vkResetFences(device->device, 1, &fence));
 }
 
-VulkanSemaphore::VulkanSemaphore(VulkanDevice* device)
+void VulkanSemaphore::Init(VulkanDevice* dev)
 {
-	this->device = device;
+    device = dev;
 
-	VkSemaphoreCreateInfo semInfo = {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-	};
+    constexpr VkSemaphoreCreateInfo semInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    };
 
-	VK_CHECK(vkCreateSemaphore(device->device, &semInfo, nullptr, &semaphore));
+    VK_CHECK(vkCreateSemaphore(device->device, &semInfo, nullptr, &semaphore));
 }
 
-VulkanSemaphore::~VulkanSemaphore()
+void VulkanSemaphore::Destroy()
 {
-	if (device && semaphore)
-	{
-		vkDestroySemaphore(device->device, semaphore, nullptr);
-	}
+    if (device && semaphore)
+    {
+        vkDestroySemaphore(device->device, semaphore, nullptr);
+        semaphore = VK_NULL_HANDLE;
+    }
 }
 
 void VulkanCommandBuffer::Begin(const CommandBufferBeginInfo* inheritanceInfo)
 {
-    vkResetCommandBuffer(cmd, 0);
-
     VkCommandBufferBeginInfo beginInfo = {
        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
     };
@@ -127,6 +203,7 @@ void VulkanCommandBuffer::Begin(const CommandBufferBeginInfo* inheritanceInfo)
 
 	VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
 }
+
 void VulkanCommandBuffer::End()
 {
 	VK_CHECK(vkEndCommandBuffer(cmd));
@@ -139,95 +216,65 @@ void VulkanCommandBuffer::Reset()
 
 void VulkanCommandBuffer::BeginRendering(const RenderingInfo& info)
 {
-	if (device->useUnifiedLayout)
-	{
-	    VkMemoryBarrier2 barrier = {
-	        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-            // Only wait for previous writes that actually matter for rendering
+    if (device->useUnifiedLayout)
+    {
+        VkMemoryBarrier2 barrier = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
             .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
                             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
                             VK_PIPELINE_STAGE_2_TRANSFER_BIT,
             .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
                              VK_ACCESS_2_SHADER_WRITE_BIT |
                              VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            // Only block the specific stages of the upcoming render pass
             .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
-                            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+                            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
             .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
-                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_2_SHADER_READ_BIT
         };
 
-		VkDependencyInfo dep = {
-			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-			.memoryBarrierCount = 1,
-			.pMemoryBarriers = &barrier
-		 };
-		vkCmdPipelineBarrier2(cmd, &dep);
-	}
+        VkDependencyInfo dep = {
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers = &barrier
+        };
+        vkCmdPipelineBarrier2(cmd, &dep);
+    }
 
 	const u32 actualAttachmentCount = static_cast<u32>(info.colorAttachments.size());
 	Array<VkRenderingAttachmentInfo, MAX_RENDER_TARGETS> colorAttachments = {};
 
-	for (u32 i = 0; i < actualAttachmentCount; i++)
-	{
-	    const auto& attachment = info.colorAttachments[i];
-	    auto* vkTex = static_cast<VulkanTexture*>(attachment.texture);
+    for (const auto& [i, attachment] : std::views::enumerate(info.colorAttachments))
+    {
+        const auto* vkView = static_cast<VulkanTextureView*>(attachment.view);
 
-		// Map clear colors from our RenderAttachment structure
-		VkClearValue clear;
-		// The compiler will turn this into a single SIMD instruction in Release
-		std::memcpy(&clear.color.float32, &attachment.clearValue.color, 16);
+        VkClearValue clear{};
+        std::ranges::copy(attachment.clearValue.color, clear.color.float32);
 
+        colorAttachments[i] = {
+            .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .pNext       = nullptr,
+            .imageView   = vkView->imageView,
+            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .loadOp      = ToVk(attachment.loadOp),
+            .storeOp     = ToVk(attachment.storeOp),
+            .clearValue  = clear
+        };
 
-	    VkImageView targetView = vkTex->imageView;
-
-	    // If the texture has multiple layers (like a cubemap) but we are rendering to one face
-	    if (vkTex->textureInfo.arrayLayers > 1)
-	    {
-	        VkImageViewCreateInfo viewInfo = {
-	            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = vkTex->image,
-                .viewType = VK_IMAGE_VIEW_TYPE_2D, // Must be 2D for single-layer attachment
-                .format = ToVkFormat(vkTex->textureInfo.format),
-                .subresourceRange = {
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = attachment.baseLayer, // Targeted face index (0-5)
-                    .layerCount = 1 // FIXED: Matches VkRenderingInfo.layerCount
-                }
-	        };
-
-	        // For the HDR baking pass, creating this on-the-fly is acceptable.
-	        // For a high-perf "Source 2" engine, you should eventually cache these 6 views in VulkanTexture.
-	        VK_CHECK(vkCreateImageView(device->device, &viewInfo, nullptr, &targetView));
-	    }
-
-		colorAttachments[i] = {
-			.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-			.pNext       = nullptr,
-			.imageView   = static_cast<VulkanTexture*>(attachment.texture)->imageView,
-		    .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.loadOp      = ToVk(attachment.loadOp),
-			.storeOp     = ToVk(attachment.storeOp),
-			.clearValue  = clear
-		};
-
-	    if (attachment.resolveTarget)
-	    {
-	        const auto* vkResolve = static_cast<VulkanTexture*>(attachment.resolveTarget);
-	        colorAttachments[i].resolveImageView = vkResolve->imageView;
-	        colorAttachments[i].resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-	        // Standard MSAA resolve uses Average (box filter)
-	        colorAttachments[i].resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
-	    }
-	}
+        if (attachment.resolveView)
+        {
+            const auto* vkResolveView = static_cast<VulkanTextureView*>(attachment.resolveView);
+            colorAttachments[i].resolveImageView = vkResolveView->imageView;
+            colorAttachments[i].resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            colorAttachments[i].resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+        }
+    }
 
 	VkRenderingAttachmentInfo depthAttachment = {};
 	if (info.depthAttachment)
 	{
-		const auto* vkDepth = static_cast<VulkanTexture*>(info.depthAttachment->texture);
+	    const auto* vkDepthView = static_cast<VulkanTextureView*>(info.depthAttachment->view);
 
         VkClearValue clearValue;
         clearValue.depthStencil = {
@@ -237,7 +284,7 @@ void VulkanCommandBuffer::BeginRendering(const RenderingInfo& info)
 
 		depthAttachment = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-			.imageView = vkDepth->imageView,
+			.imageView = vkDepthView->imageView,
 			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 			.loadOp = ToVk(info.depthAttachment->loadOp),
 			.storeOp = ToVk(info.depthAttachment->storeOp),
@@ -268,10 +315,11 @@ void VulkanCommandBuffer::BindPipeline(GPUPipeline* pipeline)
 	vkCmdBindPipeline(cmd, vkPipeline->bindPoint, vkPipeline->vkPipeline);
 }
 
-void VulkanCommandBuffer::BindDescriptorSet(const DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline)
+void VulkanCommandBuffer::BindDescriptorSet(const GPUDescriptorSet* set, u32 setIndex, GPUPipeline* pipeline)
 {
-	const auto* vkPipeline = static_cast<const VulkanPipeline*>(pipeline);
-	vkCmdBindDescriptorSets(cmd, vkPipeline->bindPoint, vkPipeline->vkLayout, setIndex, 1, &set->vk, 0, nullptr);
+    const auto* vkPipeline = static_cast<const VulkanPipeline*>(pipeline);
+    const auto* vkSet = static_cast<const VulkanDescriptorSet*>(set);
+    vkCmdBindDescriptorSets(cmd, vkPipeline->bindPoint, vkPipeline->vkLayout, setIndex, 1, &vkSet->vk, 0, nullptr);
 }
 
 void VulkanCommandBuffer::PushConstants(GPUPipeline* pipeline, ShaderStageFlags stages, u32 offset, u32 size, const void* data)
@@ -280,68 +328,88 @@ void VulkanCommandBuffer::PushConstants(GPUPipeline* pipeline, ShaderStageFlags 
     vkCmdPushConstants(cmd, vkPipeline->vkLayout, static_cast<VkShaderStageFlags>(stages), offset, size, data);
 }
 
-// Internal
-static VkImageLayout ResolveLayout(VkImageLayout layout, bool useUnified)
-{
-    // If Unified is OFF, trust the explicit layout.
-    if (!useUnified) return layout;
-
-    if (layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    if (layout == VK_IMAGE_LAYOUT_UNDEFINED) return VK_IMAGE_LAYOUT_UNDEFINED;
-
-    return VK_IMAGE_LAYOUT_GENERAL;
-}
-
 void VulkanCommandBuffer::TransitionLayout(GPUTexture* texture, TextureLayout newLayout)
 {
-	TransitionLayout(texture, texture->currentLayout, newLayout);
+    if (!texture) return;
+    if (texture->currentLayout == newLayout) return;
+
+    pendingTransitions.push_back({
+        .texture = texture,
+        .oldLayout = texture->currentLayout,
+        .newLayout = newLayout
+    });
+
+    texture->currentLayout = newLayout;
 }
 
-void VulkanCommandBuffer::TransitionLayout(GPUTexture* texture, TextureLayout oldLayout, TextureLayout newLayout)
+void VulkanCommandBuffer::FlushBarriers()
 {
-	if (oldLayout == newLayout && !device->useUnifiedLayout) return;
+    if (pendingTransitions.empty()) return;
 
-	auto* vkTexture = static_cast<VulkanTexture*>(texture);
+    TransitionLayouts(pendingTransitions);
 
-	VkImageLayout vkOld = ToVk(oldLayout);
-	VkImageLayout vkNew = ToVk(newLayout);
+    pendingTransitions.clear();
+}
 
-    vkOld = ResolveLayout(vkOld, device->useUnifiedLayout);
-    vkNew = ResolveLayout(vkNew, device->useUnifiedLayout);
+void VulkanCommandBuffer::TransitionLayouts(Span<const TextureTransition> transitions)
+{
+    if (transitions.empty()) return;
 
-	const SyncState src = GetSyncState(oldLayout, false);
-	const SyncState dst = GetSyncState(newLayout, true);
+    thread_local Vector<VkImageMemoryBarrier2> barriers;
+    barriers.clear();
 
-	VkImageMemoryBarrier2 imageBarrier = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-		.srcStageMask = src.stageMask,
-		.srcAccessMask = src.accessMask,
-		.dstStageMask = dst.stageMask,
-		.dstAccessMask = dst.accessMask,
-		.oldLayout = vkOld,
-		.newLayout = vkNew,
-		.image = vkTexture->image,
-		.subresourceRange = vkTexture->subresourceRange
-	};
+    if (barriers.capacity() < transitions.size()) {
+        barriers.reserve(transitions.size());
+    }
 
-	VkDependencyInfo depInfo = {
-		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-		.imageMemoryBarrierCount = 1,
-		.pImageMemoryBarriers = &imageBarrier
-	};
+    for (const auto& trans : transitions)
+    {
+        const auto* vkTex = static_cast<VulkanTexture*>(trans.texture);
+        if (!vkTex || vkTex->image == VK_NULL_HANDLE) continue;
+
+        const SyncState srcSync = GetSyncState(trans.oldLayout);
+        const SyncState dstSync = GetSyncState(trans.newLayout);
+
+        const u32 mipCount = (trans.mipLevelCount == REMAINING_MIP_LEVELS)
+                                 ? vkTex->textureInfo.mipLevels
+                                 : trans.mipLevelCount;
+
+        const u32 layerCount = (trans.layerCount == REMAINING_ARRAY_LAYERS)
+                                   ? vkTex->textureInfo.arrayLayers
+                                   : trans.layerCount;
+
+
+        barriers.push_back({
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = srcSync.stageMask,
+            .srcAccessMask = srcSync.accessMask,
+            .dstStageMask = dstSync.stageMask,
+            .dstAccessMask = dstSync.accessMask,
+            .oldLayout = ToVkImageLayout(trans.oldLayout, device->useUnifiedLayout),
+            .newLayout = ToVkImageLayout(trans.newLayout, device->useUnifiedLayout),
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = vkTex->image,
+            .subresourceRange = {
+                .aspectMask = vkTex->subresourceRange.aspectMask,
+                .baseMipLevel = trans.baseMipLevel,
+                .levelCount = mipCount,
+                .baseArrayLayer = trans.baseArrayLayer,
+                .layerCount = layerCount
+            }
+        });
+    }
+
+    if (barriers.empty()) return;
+
+    const VkDependencyInfo depInfo = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = static_cast<u32>(barriers.size()),
+        .pImageMemoryBarriers = barriers.data()
+    };
+
 
     vkCmdPipelineBarrier2(cmd, &depInfo);
-
-
-    TextureLayout finalLayout = newLayout;
-    if (vkNew == VK_IMAGE_LAYOUT_GENERAL)
-    {
-        finalLayout = TextureLayout::General;
-    }
-    vkTexture->imageLayout = finalLayout;
-    texture->currentLayout = finalLayout;
 }
 
 void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
@@ -377,7 +445,6 @@ void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
             .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
             .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
             .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-            // Force GENERAL if unified, otherwise use specific transfer layout
             .oldLayout = unifiedDst,
             .newLayout = unifiedSrc,
             .image = vkTexture->image,
@@ -397,12 +464,12 @@ void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
             .srcAccessMask = 0,
             .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
             .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, // Mips start undefined
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
             .newLayout = unifiedDst,
             .image = vkTexture->image,
             .subresourceRange = {
                 .aspectMask = aspect,
-                .baseMipLevel = mipLevel - 1,
+                .baseMipLevel = mipLevel,
                 .levelCount = 1,
                 .baseArrayLayer = 0,
                 .layerCount = layers
@@ -442,9 +509,41 @@ void VulkanCommandBuffer::GenerateMipmaps(GPUTexture* texture)
         mipHeight = std::max(1, mipHeight / 2);
     }
 
-    // If unifiedLayouts is true, this will keep them in VK_IMAGE_LAYOUT_GENERAL
-    // while ensuring memory visibility for Fragment Shaders.
-    TransitionLayout(texture, TextureLayout::ShaderReadOnly);
+    const SyncState dstSync = GetSyncState(TextureLayout::ShaderReadOnly);
+    const VkImageLayout finalVkLayout = ToVkImageLayout(TextureLayout::ShaderReadOnly, device->useUnifiedLayout);
+
+    Vector<VkImageMemoryBarrier2> finalBarriers;
+    finalBarriers.reserve(mipLevels);
+
+    for (u32 m = 0; m < mipLevels; m++)
+    {
+        VkImageLayout currentVkLayout = (m < mipLevels - 1) ? unifiedSrc : unifiedDst;
+
+        finalBarriers.push_back({
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            .dstStageMask = dstSync.stageMask,
+            .dstAccessMask = dstSync.accessMask,
+            .oldLayout = currentVkLayout,
+            .newLayout = finalVkLayout,
+            .image = vkTexture->image,
+            .subresourceRange = {
+                .aspectMask = aspect,
+                .baseMipLevel = m,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = layers
+            }
+        });
+    }
+
+    VkDependencyInfo finalDep{
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = static_cast<u32>(finalBarriers.size()),
+        .pImageMemoryBarriers = finalBarriers.data()
+    };
+    vkCmdPipelineBarrier2(cmd, &finalDep);
 }
 
 void VulkanCommandBuffer::BindVertexBuffer(GPUBuffer* buffer, const u32 binding, const u64 offset)
@@ -455,7 +554,7 @@ void VulkanCommandBuffer::BindVertexBuffer(GPUBuffer* buffer, const u32 binding,
 
 void VulkanCommandBuffer::BindIndexBuffer(GPUBuffer* buffer, u64 offset)
 {
-	auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
+	const auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
 	vkCmdBindIndexBuffer(cmd, vkBuffer->buffer, offset, VK_INDEX_TYPE_UINT32);
 }
 
@@ -481,36 +580,15 @@ void VulkanCommandBuffer::DrawIndexedIndirect(GPUBuffer* buffer, const u64 offse
     vkCmdDrawIndexedIndirect(cmd, vkBuffer->buffer, offset, drawCount, stride);
 }
 
-void VulkanCommandBuffer::Dispatch(u32 groupCountX, u32 groupCountY, u32 groupCountZ)
+void VulkanCommandBuffer::Dispatch(const u32 groupCountX, const u32 groupCountY, const u32 groupCountZ)
 {
 	vkCmdDispatch(cmd, groupCountX, groupCountY, groupCountZ);
 }
 
-void VulkanCommandBuffer::DispatchIndirect(GPUBuffer* buffer, u64 offset)
+void VulkanCommandBuffer::DispatchIndirect(GPUBuffer* buffer, const u64 offset)
 {
-	auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
+	const auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
 	vkCmdDispatchIndirect(cmd, vkBuffer->buffer, offset);
-}
-
-void VulkanCommandBuffer::PipelineBarrier(const BarrierInfo& info)
-{
-	// TODO: Implement proper barrier conversion
-	// For now, simple memory barrier
-	VkMemoryBarrier2 memBarrier = {
-		.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-		.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-		.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT
-	};
-
-	VkDependencyInfo depInfo = {
-		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-		.memoryBarrierCount = 1,
-		.pMemoryBarriers = &memBarrier
-	};
-
-	vkCmdPipelineBarrier2(cmd, &depInfo);
 }
 
 void VulkanCommandBuffer::WaitForFence(GPUFence* fence)
@@ -523,7 +601,7 @@ void VulkanCommandBuffer::WaitForFence(GPUFence* fence)
     }
 }
 
-void VulkanCommandBuffer::ExecuteCommands(std::span<GPUCommandBuffer*> secondaryBuffers) const
+void VulkanCommandBuffer::ExecuteCommands(Span<GPUCommandBuffer*> secondaryBuffers) const
 {
 	// if (isSecondary)
 	// {
@@ -532,13 +610,12 @@ void VulkanCommandBuffer::ExecuteCommands(std::span<GPUCommandBuffer*> secondary
 	// }
 
 	thread_local Vector<VkCommandBuffer> vkCmds(secondaryBuffers.size());
-
+    vkCmds.clear();
 	vkCmds.reserve(secondaryBuffers.size());
 
 	for (auto* buffer : secondaryBuffers)
 	{
-		auto* vkBuffer = static_cast<VulkanCommandBuffer*>(buffer);
-		vkCmds.push_back(vkBuffer->GetVkHandle());
+	    vkCmds.push_back(static_cast<VulkanCommandBuffer*>(buffer)->GetVkHandle());
 	}
 
 	vkCmdExecuteCommands(cmd, static_cast<u32>(vkCmds.size()), vkCmds.data());
@@ -591,53 +668,92 @@ void VulkanCommandBuffer::CopyBuffer(GPUBuffer* src, GPUBuffer* dst, u64 size, u
 
 void VulkanCommandBuffer::CopyBufferToTexture(GPUBuffer* src, GPUTexture* dst)
 {
-	const auto* vkSrc = static_cast<VulkanBuffer*>(src);
-	const auto* vkDst = static_cast<VulkanTexture*>(dst);
+    const auto* vkSrc = static_cast<VulkanBuffer*>(src);
+    const auto* vkDst = static_cast<VulkanTexture*>(dst);
 
-	const u32 layers = std::max<u32>(1, vkDst->textureInfo.arrayLayers);
-	Vector<VkBufferImageCopy2> regions;
-	regions.reserve(layers);
+    const auto& info = vkDst->textureInfo;
+    const u32 mipLevels = info.mipLevels;
+    const u32 layers = (info.type == ImageType::CubeMap) ? 6u : info.arrayLayers;
 
-	const u32 bytesPerTexel = BytesPerTexel(vkDst->textureInfo.format);
-	const VkDeviceSize layerSize = static_cast<VkDeviceSize>(vkDst->textureInfo.extent.width) * static_cast<VkDeviceSize>(vkDst->textureInfo.extent.height) * static_cast<VkDeviceSize>(vkDst->textureInfo.extent.depth) * bytesPerTexel;
+    const u32 bpt = BytesPerTexel(info.format);
+    u32 elementSize = 0;
+    bool isCompressed = false;
 
-	for (u32 i = 0; i < layers; ++i)
-	{
-		VkBufferImageCopy2 region = {
-			.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
-			.bufferOffset = layerSize * i,
-			.bufferRowLength = 0,
-			.bufferImageHeight = 0,
-			.imageSubresource = {
-				.aspectMask = vkDst->subresourceRange.aspectMask,
-				.mipLevel = 0,
-				.baseArrayLayer = i,
-				.layerCount = 1
-			},
-			.imageOffset = {0, 0, 0},
-			.imageExtent = {
-				vkDst->textureInfo.extent.width,
-				vkDst->textureInfo.extent.height,
-				vkDst->textureInfo.extent.depth
-			}
-		};
-		regions.push_back(region);
-	}
+    if (bpt == 0 && info.format != TextureFormat::UNKNOWN)
+    {
+        isCompressed = true;
+        // 8 bytes for BC1/BC4, 16 for everything else
+        const bool is8ByteBlock = (info.format == TextureFormat::BC1_RGB_UNORM_BLOCK ||
+                                   info.format == TextureFormat::BC1_RGBA_UNORM_BLOCK ||
+                                   info.format == TextureFormat::BC4_UNORM_BLOCK);
+        elementSize = is8ByteBlock ? 8 : 16;
+    }
+    else
+    {
+        elementSize = bpt;
+    }
 
-	const VkImageLayout copyLayout = device->useUnifiedLayout
-									 ? VK_IMAGE_LAYOUT_GENERAL
-									 : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    thread_local Vector<VkBufferImageCopy2> regions;
+    regions.clear();
+    regions.reserve(mipLevels * layers);
+    VkDeviceSize currentBufferOffset = 0;
 
-	VkCopyBufferToImageInfo2 copyInfo = {
-		.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
-		.srcBuffer = vkSrc->buffer,
-		.dstImage = vkDst->image,
-		.dstImageLayout = copyLayout,
-		.regionCount = static_cast<u32>(regions.size()),
-		.pRegions = regions.data()
-	};
+    // Build the copy regions for every subresource
+    for (u32 layer = 0; layer < layers; ++layer)
+    {
+        for (u32 mip = 0; mip < mipLevels; ++mip)
+        {
+            const u32 mipW = std::max(1u, info.extent.width >> mip);
+            const u32 mipH = std::max(1u, info.extent.height >> mip);
+            const u32 mipD = std::max(1u, info.extent.depth >> mip);
 
-	vkCmdCopyBufferToImage2(cmd, &copyInfo);
+            VkDeviceSize mipSize = 0;
+
+            if (isCompressed)
+            {
+                // Compressed blocks must round up to the nearest 4x4 boundary
+                const u32 blocksW = (mipW + 3) / 4;
+                const u32 blocksH = (mipH + 3) / 4;
+                mipSize = static_cast<VkDeviceSize>(blocksW) * blocksH * elementSize;
+            }
+            else
+            {
+                mipSize = static_cast<VkDeviceSize>(mipW) * mipH * mipD * elementSize;
+            }
+
+            VkBufferImageCopy2 region = {
+                .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+                .bufferOffset = currentBufferOffset,
+                .bufferRowLength = 0,
+                .bufferImageHeight = 0,
+                .imageSubresource = {
+                    .aspectMask = vkDst->subresourceRange.aspectMask,
+                    .mipLevel = mip,
+                    .baseArrayLayer = layer,
+                    .layerCount = 1
+                },
+                .imageExtent = { mipW, mipH, mipD }
+            };
+
+            regions.push_back(region);
+            currentBufferOffset += mipSize;
+        }
+    }
+
+    const VkImageLayout copyLayout = device->useUnifiedLayout
+                                     ? VK_IMAGE_LAYOUT_GENERAL
+                                     : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+    VkCopyBufferToImageInfo2 copyInfo = {
+        .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+        .srcBuffer = vkSrc->buffer,
+        .dstImage = vkDst->image,
+        .dstImageLayout = copyLayout,
+        .regionCount = static_cast<u32>(regions.size()),
+        .pRegions = regions.data()
+    };
+
+    vkCmdCopyBufferToImage2(cmd, &copyInfo);
 }
 
 void VulkanCommandBuffer::BeginDebugLabel(const char* name, f32 r, f32 g, f32 b)

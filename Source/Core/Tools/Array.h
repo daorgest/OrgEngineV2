@@ -3,166 +3,86 @@
 //
 
 // my attempt on making a std::array
-
 #pragma once
-#include <cassert>
-#include <initializer_list>
 
-template <typename T, std::size_t N> requires (N > 0)
-class Array
+template<typename T> struct Span;
+
+template <typename T, size_t N> requires (N > 0)
+struct Array
 {
-protected:
-	T a[N];
 
-public:
-	// types (minimal)
-	using value_type = T;
-	using size_type = std::size_t;
-	using reference = T&;
-	using const_reference = const T&;
-	using pointer = T*;
-	using const_pointer = const T*;
+    T a[N];
 
-	// ctor: zero-initialize
-	constexpr Array() noexcept : a{}
-	{
-	}
+    // Array() noexcept = default;
 
-	// from C-array
-	constexpr explicit Array(const T (&values)[N]) noexcept
-	{
-		for (size_type i = 0; i < N; ++i) a[i] = values[i];
-	}
+    // constexpr Array(std::initializer_list<T> init) noexcept
+    // {
+    //     assert(init.size() <= N && "Initializer list size exceeds array size.");
+    //     size_t i = 0;
+    //     for (const T& v : init) a[i++] = v;
+    //     for (; i < N; ++i) a[i] = T();
+    // }
 
-	// from init-list (fills remainder with default)
-	constexpr Array(std::initializer_list<T> init) noexcept
-	{
-		assert(init.size() <= N && "Initializer list size exceeds array size.");
-		size_type i = 0;
-		for (const T& v : init) a[i++] = v;
-		for (; i < N; ++i) a[i] = T();
-	}
 
-	// capacity
-	[[nodiscard]] constexpr size_type size() noexcept { return N; }
-	[[nodiscard]] constexpr size_type size() const noexcept { return N; }
+    [[nodiscard]] static constexpr size_t size() noexcept { return N; }
+    [[nodiscard]] constexpr size_t size_bytes() const noexcept { return N * sizeof(T); }
 
-	// data access
-	[[nodiscard]] constexpr pointer data() noexcept { return a; }
-	[[nodiscard]] constexpr const_pointer data() const noexcept { return a; }
+    // Data Access
+    [[nodiscard]] constexpr T* data() noexcept { return a; }
+    [[nodiscard]] constexpr const T* data() const noexcept { return a; }
 
-	// iterators (raw pointers)
-	[[nodiscard]] constexpr pointer begin() noexcept { return a; }
-	[[nodiscard]] constexpr const_pointer begin() const noexcept { return a; }
-	[[nodiscard]] constexpr pointer end() noexcept { return a + N; }
-	[[nodiscard]] constexpr const_pointer end() const noexcept { return a + N; }
 
-	// element access
-	[[nodiscard]] constexpr reference front() noexcept { return a[0]; }
-	[[nodiscard]] constexpr const_reference front() const noexcept { return a[0]; }
-	[[nodiscard]] constexpr reference back() noexcept { return a[N - 1]; }
-	[[nodiscard]] constexpr const_reference back() const noexcept { return a[N - 1]; }
+    [[nodiscard]] constexpr T* begin() noexcept { return a; }
+    [[nodiscard]] constexpr const T* begin() const noexcept { return a; }
+    [[nodiscard]] constexpr T* end() noexcept { return a + N; }
+    [[nodiscard]] constexpr const T* end() const noexcept { return a + N; }
 
-	[[nodiscard]] constexpr reference operator[](size_type i) noexcept
-	{
-		assert(i < N && "Index out of bounds");
-		return a[i];
-	}
+    [[nodiscard]] constexpr T& operator[](size_t index) noexcept
+    {
+        // ASSERT(index < N);
+        return a[index];
+    }
 
-	[[nodiscard]] constexpr const_reference operator[](size_type i) const noexcept
-	{
-		assert(i < N && "Index out of bounds");
-		return a[i];
-	}
+    [[nodiscard]] constexpr const T& operator[](size_t index) const noexcept
+    {
+        // ASSERT(index < N);
+        return a[index];
+    }
 
-	// bounds-checked access without exceptions (assert only)
-	[[nodiscard]] constexpr reference at(size_type i) noexcept
-	{
-		assert(i < N && "Array::at out of range");
-		return a[i];
-	}
+    // Implicitly convert Array to a Span
+    [[nodiscard]] constexpr operator Span<T>() noexcept
+    {
+        return Span<T>(a, N);
+    }
 
-	[[nodiscard]] constexpr const_reference at(size_type i) const noexcept
-	{
-		assert(i < N && "Array::at out of range");
-		return a[i];
-	}
+    // Implicitly convert a const Array to a const Span
+    [[nodiscard]] constexpr operator Span<const T>() const noexcept
+    {
+        return Span<const T>(a, N);
+    }
 
-	// modifiers
-	constexpr void fill(const T& v) noexcept
-	{
-		for (size_type i = 0; i < N; ++i) a[i] = v;
-	}
+    [[nodiscard]] constexpr T& front() noexcept { return a[0]; }
+    [[nodiscard]] constexpr T& back() noexcept { return a[N - 1]; }
 
-	// assign variants
-	constexpr void assign(const T& value) noexcept
-	{
-		for (size_type i = 0; i < N; ++i)
-			a[i] = value;
-	}
+    // Utilities
+    constexpr void fill(const T& value) noexcept
+    {
+        for (size_t i = 0; i < N; ++i)
+        {
+            a[i] = value;
+        }
+    }
 
-	constexpr void assign(std::initializer_list<T> init) noexcept
-	{
-		assert(init.size() <= N && "Initializer list too large for Array::assign");
-		size_type i = 0;
-		for (const T& v : init) a[i++] = v;
-		for (; i < N; ++i) a[i] = T();
-	}
-
-	constexpr void assign(const Array& other) noexcept
-	{
-		for (size_type i = 0; i < N; ++i)
-			a[i] = other.a[i];
-	}
-
-	template <typename InputIt>
-	constexpr void assign(InputIt first, InputIt last) noexcept
-	{
-		size_type i = 0;
-		for (; first != last && i < N; ++first, ++i)
-			a[i] = *first;
-		for (; i < N; ++i)
-			a[i] = T();
-	}
-
-	constexpr void reset() noexcept
-	{
-		for (size_type i = 0; i < N; ++i) a[i] = T();
-	}
-
-	constexpr void swap(Array& other) noexcept
-	{
-		for (size_type i = 0; i < N; ++i)
-		{
-			T tmp = a[i];
-			a[i] = other.a[i];
-			other.a[i] = tmp;
-		}
-	}
-
-	// utilities
-	[[nodiscard]] constexpr bool contains(const T& v) const noexcept
-	{
-		for (size_type i = 0; i < N; ++i)
-			if (a[i] == v) return true;
-		return false;
-	}
-
-	// comparisons (optional but handy)
-	friend constexpr bool operator==(const Array& x, const Array& y) noexcept
-	{
-		for (size_type i = 0; i < N; ++i)
-			if (!(x.a[i] == y.a[i])) return false;
-		return true;
-	}
-
-	friend constexpr bool operator!=(const Array& x, const Array& y) noexcept
-	{
-		return !(x == y);
-	}
+    [[nodiscard]] constexpr bool contains(const T& value) const noexcept
+    {
+        for (size_t i = 0; i < N; ++i)
+        {
+            if (a[i] == value) return true;
+        }
+        return false;
+    }
 };
 
-// Deduction guide so you don't have to manually specify the type or number of elements.
-// Just write: Array arr = {1, 2, 3}; and the compiler deduces Array<int, 3>.
+// Deduction Guide for CTAD
 template <typename T, typename... Ts>
 Array(T, Ts...) -> Array<T, 1 + sizeof...(Ts)>;

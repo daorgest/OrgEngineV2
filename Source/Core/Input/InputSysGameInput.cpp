@@ -254,6 +254,7 @@ void InputSysGameInput::HandleMouse(GI::IGameInputReading* reading)
 
         lastState = curr;
         hasBaseline = true;
+        return;
     }
 
     const GI::GameInputMouseState& prev = lastState;
@@ -290,8 +291,8 @@ void InputSysGameInput::HandleMouse(GI::IGameInputReading* reading)
 
     if (dwx || dwy)
     {
-        input.scrollX += dwx / WHEEL_DELTA;
-        input.scrollY += dwy / WHEEL_DELTA;
+        input.scrollX += static_cast<f32>(dwx) / 120.0f;
+        input.scrollY += static_cast<f32>(dwy) / 120.0f;
         input.usingMouse = true;
     }
 
@@ -331,17 +332,11 @@ void InputSysGameInput::HandleController(GI::IGameInputReading* reading)
     for (u32 b = 0; b < Gamepad::Button::ButtonCount; ++b)
         Input::ProcessEventButton(controller.buttons[b], (mask & (1 << b)) != 0);
 
-    // Analog
-    auto ApplyDeadzone = [](const f32 value, const f32 deadzone = 0.1f)
-    {
-        if (fabsf(value) < deadzone) return 0.0f;
-        return (value - (value > 0 ? deadzone : -deadzone)) / (1.0f - deadzone);
-    };
 
-    controller.leftX = ApplyDeadzone(gs.leftThumbstickX);
-    controller.leftY = ApplyDeadzone(gs.leftThumbstickY);
-    controller.rightX = ApplyDeadzone(gs.rightThumbstickX);
-    controller.rightY = ApplyDeadzone(gs.rightThumbstickY);
+    controller.leftX = Input::ApplyDeadzone(gs.leftThumbstickX);
+    controller.leftY = Input::ApplyDeadzone(gs.leftThumbstickY);
+    controller.rightX = Input::ApplyDeadzone(gs.rightThumbstickX);
+    controller.rightY = Input::ApplyDeadzone(gs.rightThumbstickY);
 
     controller.leftTrigger = gs.leftTrigger;
     controller.rightTrigger = gs.rightTrigger;
@@ -405,9 +400,9 @@ void InputSysGameInput::Update(const Platform::WindowContext& windowContext)
         while (true)
         {
             GI::IGameInputReading* nextReading = nullptr;
-            HRESULT hr = gi->GetNextReading(prevReading,
-                GI::GameInputKindKeyboard | GI::GameInputKindMouse | GI::GameInputKindGamepad,
-                nullptr, &nextReading);
+            const HRESULT hr = gi->GetNextReading(prevReading,
+                                                  GI::GameInputKindKeyboard | GI::GameInputKindMouse | GI::GameInputKindGamepad,
+                                                  nullptr, &nextReading);
 
             if (SUCCEEDED(hr))
             {
@@ -429,6 +424,7 @@ void InputSysGameInput::Update(const Platform::WindowContext& windowContext)
                 // Error/Too Old? Nuke it and restart next frame.
                 prevReading->Release();
                 prevReading = nullptr;
+                hasBaseline = false;
                 break;
             }
         }

@@ -3,7 +3,6 @@
 //
 
 #pragma once
-#include <filesystem>
 #include "RendererTypes.h"
 #include "RenderInterface.h"
 #include "ShaderCompiler.h"
@@ -36,15 +35,17 @@ namespace Renderer
             }
         }
 
-        ~VulkanPipeline() override = default;
+        ~VulkanPipeline() override { VulkanPipeline::Destroy(); };
+
         void Rebuild() override;
         void Destroy() override;
-        [[nodiscard]] bool IsValid() const override { return vkPipeline != VK_NULL_HANDLE; }
+
+        // Yeah yeah....
+        explicit constexpr operator bool() const noexcept override { return vkPipeline != VK_NULL_HANDLE; };
         [[nodiscard]] std::string_view GetSourcePath() const;
+        [[nodiscard]] const PipelineLayoutDesc& GetLayoutDesc() const override = 0;
 
         void ApplyReload(const CompileResult& result);
-
-        [[nodiscard]] const PipelineLayoutDesc& GetLayoutDesc() const override = 0;
 
         VulkanDevice* device = nullptr;
         PipelineType type;
@@ -68,8 +69,13 @@ namespace Renderer
             Create();
         };
 
-        ~VulkanGraphicsPipeline() override { VulkanPipeline::Destroy(); }
+        void SetSampleCountAndRebuild(const SampleCount samples) override
+        {
+            if (config.raster.sampleCount == samples) return;
 
+            config.raster.sampleCount = samples;
+            Rebuild();
+        }
         [[nodiscard]] const PipelineLayoutDesc& GetLayoutDesc() const override { return config.layout; };
         [[nodiscard]] GraphicsPipelineDesc& GetPipelineConfig() { return config; }
 
@@ -86,13 +92,12 @@ namespace Renderer
         friend struct VulkanPipeline;
 
         VulkanComputePipeline(VulkanDevice* device, const ComputePipelineDesc& inConfig) :
-            VulkanPipeline(device, PipelineType::Compute), config(inConfig)
+                        VulkanPipeline(device, PipelineType::Compute), config(inConfig)
         {
             Create();
-        };
+        }
 
-        ~VulkanComputePipeline() override { VulkanPipeline::Destroy(); }
-
+        void SetSampleCountAndRebuild(SampleCount) override {};
         [[nodiscard]] const PipelineLayoutDesc& GetLayoutDesc() const override { return config.layout; };
 
     protected:
@@ -147,10 +152,10 @@ namespace Renderer
         VulkanPipelineBuilder& SetComputeStage(const std::shared_ptr<GPUShader>& compute);
         VulkanPipelineBuilder& SetVertexInput(const VertexInputLayout& layout);
         VulkanPipelineBuilder& AddPushConstant(ShaderStageFlags stages, u32 size, u32 offset = 0);
-        VulkanPipelineBuilder& UseLayout(const PipelineLayoutDesc& desc, const VulkanDevice* device);
-        VkPipelineLayout BuildLayout(const VulkanDevice* device);
-        static Result<VkPipeline> BuildGraphicsPipeline(const VulkanDevice* device, const VulkanPipelineBuilder& b,
-                                                        VkPipelineLayout layout);
+        VulkanPipelineBuilder& UseLayout(const PipelineLayoutDesc& desc, const VulkanDevice* device, Vector<VkDescriptorSetLayout>& outLayouts);
+        VkPipelineLayout BuildLayout(const VulkanDevice* device, const Vector<VkDescriptorSetLayout>& layouts);
+        static Result<VkPipeline> BuildGraphicsPipeline(const VulkanDevice* device, const VulkanPipelineBuilder& b, VkPipelineLayout layout);
+        static Result<VkPipeline> BuildComputePipeline(const VulkanDevice* device, const VulkanPipelineBuilder& b, VkPipelineLayout layout);
 
         // Static helpers
         static VkPipelineDynamicStateCreateInfo MakeDynamicStateInfo();
@@ -159,8 +164,5 @@ namespace Renderer
             const Vector<VkPipelineColorBlendAttachmentState>& attachments);
         static VkPipelineVertexInputStateCreateInfo MakeVertexInputInfo(const PipelineConfig& cfg);
         static void LogPipelineStages(const Vector<VkPipelineShaderStageCreateInfo>& stages);
-
-    private:
-        Vector<VkDescriptorSetLayout> descriptorSetLayouts;
     };
 } // namespace Renderer

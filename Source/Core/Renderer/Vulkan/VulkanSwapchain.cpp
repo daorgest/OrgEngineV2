@@ -4,23 +4,18 @@
 
 #include "VulkanSwapchain.h"
 
-#include <algorithm>
 #define VOLK_IMPLEMENTATION
-#include <volk.h>
 #include <windows.h>
 
 #include "Platform.h"
 #include "VulkanCheck.h"
 #include "VulkanCommandBuffer.h"
 #include "VulkanConvert.h"
-#include "VulkanDebugUtils.h"
 #include "VulkanDevice.h"
 #include "VulkanInit.h"
 #include "VulkanTexture.h"
 #if ENGINE_PLATFORM_SDL
 #include "SDL3/SDL_vulkan.h"
-#else
-#include <vulkan/vulkan_win32.h>
 #endif
 #include "Tools/Logger.h"
 #include "tracy/Tracy.hpp"
@@ -62,30 +57,28 @@ Result<void> VulkanSwapchain::Init(GPUDevice* device, WindowHandle windowHandle_
     // the surface can sometimes bork
     if (caps.currentExtent.width == UNDEFINED_EXTENT)
     {
-        LOG(Warning, "Surface extent undefined, using window size.");
         Platform::GetWindowSize(handle, width, height);
-        width = std::clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width);
-        height = std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height);
     }
-    else
-    {
-        width = caps.currentExtent.width;
-        height = caps.currentExtent.height;
-    }
+
+    width = std::clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width);
+    height = std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height);
+
+    renderWidth = static_cast<u32>(width * renderScale);
+    renderHeight = static_cast<u32>(height * renderScale);
 
     // Query supported surface formats
     u32 formatCount = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(devicePtr->physicalDevice, surface, &formatCount, nullptr);
     Vector<VkSurfaceFormatKHR> formats(formatCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(devicePtr->physicalDevice, surface, &formatCount, formats.data());
-    LOG(Debug, "Found {} surface formats.", formatCount);
+
+    surfaceFormat = PickSurfaceFormat(formats);
 
     // Query supported present modes
     u32 presentModeCount = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(devicePtr->physicalDevice, surface, &presentModeCount, nullptr);
     Vector<VkPresentModeKHR> presentModes(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(devicePtr->physicalDevice, surface, &presentModeCount, presentModes.data());
-    LOG(Debug, "Found {} present modes.", presentModeCount);
 
     // choosing defaults
     selectedPresentMode = ToVkPresentMode(presentMode, presentModes);
@@ -111,10 +104,6 @@ Result<void> VulkanSwapchain::Init(GPUDevice* device, WindowHandle windowHandle_
     VK_CHECK(vkCreateSwapchainKHR(devicePtr->device, &createInfo, nullptr, &swapchain));
 
     CreateImages();
-    CreateDepthImage();
-    CreateMsaaColorImage();
-    CreateShadowMap();
-
     LOG(Info, "Swapchain created successfully: {} x {}, format {}", width, height,
         static_cast<i32>(surfaceFormat.format));
     return {};
@@ -122,8 +111,10 @@ Result<void> VulkanSwapchain::Init(GPUDevice* device, WindowHandle windowHandle_
 
 void VulkanSwapchain::Destroy()
 {
+    if (!vkDev || vkDev->device == VK_NULL_HANDLE) return;
+
+    DestroySwapchainTextures();
     images.clear();
-    depthTexture.Destroy();
 
     if (swapchain != VK_NULL_HANDLE)
     {
@@ -159,17 +150,6 @@ bool VulkanSwapchain::ResizeIfNeeded()
 
     return true;
 }
-
-VulkanTexture* VulkanSwapchain::GetCurrentImage()
-{
-    if (currentImageIndex < images.size())
-    {
-        return &images[currentImageIndex];
-    }
-    return nullptr;
-}
-
-
 void VulkanSwapchain::CreateImages()
 {
     imageCount = 0;
@@ -179,87 +159,27 @@ void VulkanSwapchain::CreateImages()
 
     images.resize(imageCount);
 
+    TextureInfo info = {
+        .extent = {width, height, 1},
+        .type = ImageType::Image2D,
+        .format = ToEngineFormat(surfaceFormat.format),
+        .usage = ImageUsage::ColorAttachment,
+        .sampleCount = SampleCount::X1
+    };
+
     for (u32 i = 0; i < imageCount; ++i)
     {
-        images[i] = {vkDev, vkImages[i]};
-        images[i].imageLayout = TextureLayout::Unknown;
-        images[i].currentLayout = TextureLayout::Unknown;
-        images[i].textureInfo.dimension = TextureDimension::Texture2D;
-        images[i].textureInfo.extent.width = width;
-        images[i].textureInfo.extent.height = height;
-        images[i].textureInfo.mipLevels = 1;
-        images[i].textureInfo.usage = ImageUsage::ColorAttachment;
-        images[i].textureInfo.sampleCount = SampleCount::X1;
-        images[i].FillSubresourceInfo();
-        images[i].CreateImageView(surfaceFormat.format);
-
-        // Debug
-        char nameBuffer[32];
-        snprintf(nameBuffer, sizeof(nameBuffer), "Swapchain Image %u", i);
-        images[i].SetName(nameBuffer);
+        images[i].InitExternal(vkDev, vkImages[i], info);
+        images[i].SetName(fmt::format("Swapchain Image: {}", i));
     }
-
 }
 
-void VulkanSwapchain::DestroyImageViews()
+void VulkanSwapchain::DestroySwapchainTextures()
 {
     for (VulkanTexture& image : images)
     {
-        if (image.imageView != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(vkDev->device, image.imageView, nullptr);
-            image.imageView = VK_NULL_HANDLE;
-        }
+        image.Destroy();
     }
-}
-
-
-void VulkanSwapchain::CreateDepthImage()
-{
-    TextureInfo depthInfo = {
-        .extent = {width, height, 1},
-        .format = TextureFormat::D32_SFLOAT,
-        .usage = ImageUsage::DepthStencil | ImageUsage::Sampled,
-        .sampleCount = currentSamples
-    };
-
-    depthTexture.Init(vkDev, depthInfo);
-    depthTexture.SetName("Swapchain Depth Image");
-    depthTexture.imageLayout = TextureLayout::Unknown;
-    depthTexture.currentLayout = TextureLayout::Unknown;
-}
-
-void VulkanSwapchain::CreateShadowMap()
-{
-    TextureInfo shadowMapInfo = {
-        .extent = { 2048, 2048, 1 },
-        .format = TextureFormat::D32_SFLOAT,
-        .usage = ImageUsage::DepthStencil | ImageUsage::Sampled
-    };
-    shadowTexture.Init(vkDev, shadowMapInfo);
-    shadowTexture.SetName("Shadow Map Atlas");
-    msaaColorImage.imageLayout = TextureLayout::Unknown;
-    msaaColorImage.currentLayout = TextureLayout::Unknown;
-}
-
-void VulkanSwapchain::CreateMsaaColorImage()
-{
-    TextureInfo msaaInfo = {
-        .extent = {width, height, 1},
-        .format = TextureFormat::BGRA8_SRGB,
-        .usage = ImageUsage::ColorAttachment | ImageUsage::Transient,
-        .sampleCount = currentSamples
-    };
-
-    msaaColorImage.Init(vkDev, msaaInfo);
-    msaaColorImage.SetName("MSAA Transient Color");
-    msaaColorImage.imageLayout = TextureLayout::Unknown;
-    msaaColorImage.currentLayout = TextureLayout::Unknown;
-}
-
-void VulkanSwapchain::DestroyDepthImage()
-{
-    depthTexture.Destroy();
 }
 
 void VulkanSwapchain::SetVsyncMode(PresentMode mode)
@@ -278,20 +198,13 @@ void VulkanSwapchain::SetBufferingMode(BufferingMode mode)
     needsRecreation = true;
 }
 
-void VulkanSwapchain::SetMSAASamples(SampleCount samples)
-{
-    if (currentSamples == samples) return;
-
-    currentSamples = samples;
-    needsRecreation = true;
-}
-
 bool VulkanSwapchain::Recreate()
 {
     vkDeviceWaitIdle(vkDev->device);
 
-    DestroyImageViews();
-    DestroyDepthImage();
+    Platform::GetWindowSize(handle, width, height);
+
+    DestroySwapchainTextures();
 
     // Query capabilities again
     VkSurfaceCapabilitiesKHR caps = {};
@@ -301,18 +214,22 @@ bool VulkanSwapchain::Recreate()
     width = std::clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width);
     height = std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height);
 
+    renderWidth = static_cast<u32>(width * renderScale);
+    renderHeight = static_cast<u32>(height * renderScale);
+
     // Query surface formats again (in case monitor settings changed)
     u32 formatCount = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(vkDev->physicalDevice, surface, &formatCount, nullptr);
     Vector<VkSurfaceFormatKHR> formats(formatCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(vkDev->physicalDevice, surface, &formatCount, formats.data());
 
+    surfaceFormat = PickSurfaceFormat(formats);
+
     // Same for present modes
     u32 presentModeCount = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(vkDev->physicalDevice, surface, &presentModeCount, nullptr);
     Vector<VkPresentModeKHR> presentModes(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(vkDev->physicalDevice, surface, &presentModeCount, presentModes.data());
-
 
     selectedPresentMode = ToVkPresentMode(presentMode, presentModes);
 
@@ -332,7 +249,6 @@ bool VulkanSwapchain::Recreate()
         .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = selectedPresentMode,
-        .clipped = VK_TRUE,
         .oldSwapchain = swapchain
     };
 
@@ -346,51 +262,91 @@ bool VulkanSwapchain::Recreate()
     swapchain = newSwapchain;
 
     CreateImages();
-    CreateDepthImage();
-    CreateMsaaColorImage();
     needsRecreation = false;
+	justRecreated = true;
     return true;
 }
 
-VulkanTexture* VulkanSwapchain::GetImage(u32 index)
+VkSurfaceFormatKHR VulkanSwapchain::PickSurfaceFormat(const Vector<VkSurfaceFormatKHR>& availableFormats) const
 {
-    return &images[index];
+    if (preferHDR)
+    {
+        for (const auto& format : availableFormats)
+        {
+            if (format.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
+                format.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT)
+            {
+                LOG(Info, "Selecting HDR10 Surface Format");
+                return format;
+            }
+        }
+    }
+
+    for (const auto& format : availableFormats)
+    {
+        if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
+            format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        {
+            return format;
+        }
+    }
+
+    // 3. Absolute Fallback
+    return availableFormats[0];
 }
 
-Result<u32> VulkanSwapchain::AcquireNextImage(GPUSemaphore* semaphore, u32& imageIndex)
+void VulkanSwapchain::NeedsReCreation()
 {
-    if (!semaphore) return std::unexpected(VulkanInvalidState);
+    needsRecreation = true;
+}
+
+void VulkanSwapchain::SetRenderScale(f32 scale)
+{
+    // Clamp to safe boundaries (25% to 200% scaling factors)
+    const f32 clampedScale = std::clamp(scale, 0.25f, 2.0f);
+    if (renderScale == clampedScale) return;
+
+    renderScale = clampedScale;
+
+    vkDev->WaitIdle();
+
+    // Recalculate dimensions relative to current physical window sizes
+    renderWidth = static_cast<u32>(width * renderScale);
+    renderHeight = static_cast<u32>(height * renderScale);
+
+    needsRecreation = true;
+    LOG(Info, "[Swapchain] Dynamic Render Scale updated: {:.2f}x ({} x {})", renderScale, renderWidth, renderHeight);
+}
+
+Result<u32> VulkanSwapchain::AcquireNextImage(GPUSemaphore* semaphore)
+{
+    // Ensure we are synchronized
     const auto vkSemaphore = static_cast<VulkanSemaphore*>(semaphore)->semaphore;
+    u32 imageIndex = 0;
 
     const VkResult result = vkAcquireNextImageKHR(vkDev->device, swapchain, UINT64_MAX,
-                                            vkSemaphore, VK_NULL_HANDLE, &imageIndex);
+                                                  vkSemaphore, VK_NULL_HANDLE, &imageIndex);
 
-    if (result == VK_ERROR_OUT_OF_DATE_KHR)
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) return std::unexpected(VulkanSwapchainOutOfDate);
+    if (result == VK_SUBOPTIMAL_KHR) return std::unexpected(Suboptimal);
+    if (result != VK_SUCCESS) return std::unexpected(VulkanCommandBufferFailed);
+
+    if (GPUTexture* currentSwapchainTex = GetImage(imageIndex))
     {
-        return std::unexpected(VulkanSwapchainOutOfDate);
+        currentSwapchainTex->currentLayout = TextureLayout::Unknown;
     }
-
-    if (result == VK_SUBOPTIMAL_KHR)
-    {
-        currentImageIndex = imageIndex;
-        return std::unexpected(Suboptimal);
-    }
-
-    if (result != VK_SUCCESS)
-    {
-        return std::unexpected(VulkanCommandBufferFailed);
-    }
-
     currentImageIndex = imageIndex;
     return imageIndex;
 }
 
-f32 VulkanSwapchain::GetAspectRatio() const
+GPUTexture* VulkanSwapchain::GetCurrentImage()
 {
-    return static_cast<f32>(width / height);
+    assert(currentImageIndex < images.size());
+    return &images[currentImageIndex];
 }
 
-SampleCount VulkanSwapchain::GetMSAASamples()
+GPUTexture* VulkanSwapchain::GetImage(u32 index)
 {
-    return currentSamples;
+    assert(index < images.size());
+    return &images[index];
 }

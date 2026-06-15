@@ -36,6 +36,38 @@ const char* Logger::GetColor(const LogType type)
     }
 }
 
+static std::string FormatCleanStacktrace(const std::stacktrace& trace)
+{
+    std::string cleanTrace;
+    int displayIndex = 0;
+
+    for (const auto& entry : trace)
+    {
+        std::string desc = entry.description();
+        std::string file = entry.source_file();
+
+        // Filtering
+        if (desc.find("VkLayer_") != std::string::npos ||
+            desc.find("KERNEL32") != std::string::npos ||
+            desc.find("ntdll") != std::string::npos ||
+            desc.find("__scrt_common_main_seh") != std::string::npos)
+        {
+            continue;
+        }
+        if (!file.empty())
+        {
+            cleanTrace += fmt::format("{}> {}({}): {}\n",
+                                      displayIndex++, file, entry.source_line(), desc);
+        }
+        else
+        {
+            cleanTrace += fmt::format("{}> {}\n", displayIndex++, desc);
+        }
+    }
+
+    return cleanTrace;
+}
+
 void Logger::LoggerThreadWork()
 {
     FileManager::Handle logFile;
@@ -65,6 +97,8 @@ void Logger::LoggerThreadWork()
             std::string fileLine = fmt::format("[{:02}:{:02}:{:02}] [{}] {}\n",
                                                entry.timeStamp.tm_hour, entry.timeStamp.tm_min,
                                                entry.timeStamp.tm_sec, ToString(entry.type), entry.message);
+
+            logFile.write_string(fileLine); // <-- Add whatever your write method is
         }
     }
     if (fileOpen) logFile.close();
@@ -90,10 +124,19 @@ void Logger::Shutdown()
     if (logThread.joinable()) logThread.join();
 }
 
+void Logger::Flush()
+{
+    while (true)
+    {
+        std::lock_guard lock(gLogMutex);
+        if (gLogEntries.empty()) break;
+    }
+}
+
 void Logger::WriteInternal(LogType type, std::string&& message, const std::source_location& loc)
 {
-#ifdef NDEBUG
-    if (type == LogType::Debug || type == LogType::Info) return;
+#ifndef ENGINE_ENABLE_LOGGING
+    return;
 #endif
 
     const std::time_t now = std::time(nullptr);
@@ -101,9 +144,28 @@ void Logger::WriteInternal(LogType type, std::string&& message, const std::sourc
     localtime_s(&tm, &now);
 
     std::string finalMessage;
-    if (type == LogType::Error || type == LogType::Warning)
+
+    const char* fileName = loc.file_name();
+    const bool hasLocation = fileName && fileName[0] != '\0';
+    if (type == LogType::Error)
     {
-        finalMessage = fmt::format("[{}:{}] {}", loc.file_name(), loc.line(), message);
+        const auto trace = std::stacktrace::current(1);
+
+        if (hasLocation) {
+            finalMessage = fmt::format("[{}:{}] {}\n~[Stacktrace]~\n{}",
+                                       fileName, loc.line(), message, FormatCleanStacktrace(trace));
+        } else {
+            finalMessage = fmt::format("{}\n~[Stacktrace]~\n{}",
+                                       message, FormatCleanStacktrace(trace));
+        }
+    }
+    else if (type == LogType::Warning)
+    {
+        if (hasLocation) {
+            finalMessage = fmt::format("[{}:{}] {}", fileName, loc.line(), message);
+        } else {
+            finalMessage = std::move(message);
+        }
     }
     else
     {

@@ -4,16 +4,17 @@
 
 #include "VulkanDescriptors.h"
 
-#include <cmath>
+#include <ranges>
 
 #include "VulkanBuffer.h"
-#include "VulkanCheck.h"
 #include "VulkanConvert.h"
 #include "VulkanDevice.h"
 #include "VulkanTexture.h"
 #include "Tools/Logger.h"
 
 using namespace Renderer;
+
+// TODO Orgest: Trash this whole dang thing and use VK_EXT_descriptor_heap if wider support
 
 static VkDevice GetVkDevice(const GPUDevice* device)
 {
@@ -25,6 +26,31 @@ void DescriptorLayout::Destroy(const GPUDevice* device) const
     if (vk) vkDestroyDescriptorSetLayout(GetVkDevice(device), vk, nullptr);
 }
 
+void VulkanDescriptorSet::WriteBuffer(u32 binding, const GPUBuffer* buffer, DescriptorType type)
+{
+    writer.WriteBuffer(binding, buffer, type);
+}
+
+void VulkanDescriptorSet::WriteTexture(u32 binding, GPUTextureView* texture, GPUSampler* sampler, DescriptorType type, u32 arrayElement)
+{
+    writer.WriteImage(binding, texture, sampler, type, arrayElement, 1);
+}
+
+void VulkanDescriptorSet::WriteTextureArray(const u32 binding, Span<GPUTextureView*> textures, const DescriptorType type)
+{
+    for (const auto& [i, tex] : std::views::enumerate(textures))
+    {
+        writer.WriteImage(binding, tex, nullptr, type, static_cast<u32>(i), 1);
+    }
+}
+
+void VulkanDescriptorSet::Update(GPUDevice* device)
+{
+    if (writer.writes.empty()) return;
+
+    writer.UpdateSet(device, vk);
+    writer.Clear();
+}
 
 static VkImageLayout DetermineDescriptorLayout(const VulkanTexture* img, VkDescriptorType type)
 {
@@ -34,7 +60,7 @@ static VkImageLayout DetermineDescriptorLayout(const VulkanTexture* img, VkDescr
     // Storage images almost always require GENERAL
     if (type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) return VK_IMAGE_LAYOUT_GENERAL;
 
-    return IsDepthFormat(img->imageFormat)
+    return IsDepthFormat(ToVkFormat(img->textureInfo.format))
                ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
                : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
@@ -46,7 +72,7 @@ DescriptorLayoutBuilder& DescriptorLayoutBuilder::AddBinding(const Binding& bind
     return *this;
 }
 
-DescriptorLayoutBuilder& DescriptorLayoutBuilder::AddBindings(const std::span<const Binding> bindings)
+DescriptorLayoutBuilder& DescriptorLayoutBuilder::AddBindings(const Span<const Binding> bindings)
 {
     metadata.reserve(metadata.size() + bindings.size());
     for (const auto& b : bindings)
@@ -111,89 +137,32 @@ DescriptorLayout DescriptorLayoutBuilder::Build(const GPUDevice* device, void* p
 DescriptorLayout DescriptorLayoutBuilder::BuildFromDesc(const GPUDevice* device, const DescriptorSetLayoutDesc& desc)
 {
     this->Clear();
-    this->metadata = desc.bindings;
+    this->metadata.assign(desc.bindings);
     SortBindings(this->metadata);
     return Build(device);
 }
 
 // Combined Image + Sampler
-DescriptorWriter& DescriptorWriter::WriteCombinedImage(u32 binding, const GPUTexture* image, const GPUSampler* sampler,
-                                                       const u32 arrayElement)
+DescriptorWriter& DescriptorWriter::WriteImage(u32 binding, const GPUTextureView* view, const GPUSampler* sampler,
+    DescriptorType type, u32 arrayElement, u32 count)
 {
-    if (!sampler || !image) return *this;
+    const VkDescriptorType vkType = ToVk(type);
+    const auto* vkView = view ? static_cast<const VulkanTextureView*>(view) : nullptr;
+    const auto* vkSmp = sampler ? static_cast<const VulkanSampler*>(sampler) : nullptr;
 
-    const auto* img = static_cast<const VulkanTexture*>(image);
-    const auto* smp = static_cast<const VulkanSampler*>(sampler);
 
-    imageInfos.push_back({
-        .sampler = smp->sampler,
-        .imageView = img->imageView,
-        .imageLayout = DetermineDescriptorLayout(img, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+    imageInfos.emplace_back(VkDescriptorImageInfo{
+        .sampler = vkSmp ? vkSmp->sampler : VK_NULL_HANDLE,
+        .imageView = vkView ? vkView->imageView : VK_NULL_HANDLE,
+        .imageLayout = vkView ? DetermineDescriptorLayout(vkView->texture, vkType) : VK_IMAGE_LAYOUT_UNDEFINED
     });
-
-    writes.push_back({
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstBinding = binding,
-        .dstArrayElement = arrayElement,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .pImageInfo = &imageInfos.back()
-    });
-
-    return *this;
-}
-
-// Single Image or Single Sampler
-DescriptorWriter& DescriptorWriter::WriteImage(u32 binding, const GPUTexture* image, const GPUSampler* sampler,
-                                               const DescriptorType type)
-{
-    VkDescriptorType vkType = ToVk(type);
-
-    if (vkType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || vkType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-    {
-        if (image == nullptr)
-            return *this;
-
-        const auto* img = static_cast<const VulkanTexture*>(image);
-
-        VkImageLayout layout;
-        if (img->device->useUnifiedLayout)
-        {
-            layout = VK_IMAGE_LAYOUT_GENERAL;
-        }
-        else
-        {
-            layout = (vkType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
-                         ? VK_IMAGE_LAYOUT_GENERAL
-                         : (IsDepthFormat(img->imageFormat)
-                                ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                                : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        }
-
-        imageInfos.emplace_back(VkDescriptorImageInfo{
-            .sampler = VK_NULL_HANDLE,
-            .imageView = img->imageView,
-            .imageLayout = layout,
-        });
-    }
-    else if (vkType == VK_DESCRIPTOR_TYPE_SAMPLER)
-    {
-        if (sampler == nullptr)
-            return *this;
-
-        const auto* smp = static_cast<const VulkanSampler*>(sampler);
-
-        imageInfos.emplace_back(VkDescriptorImageInfo{
-            .sampler = smp->sampler,
-            .imageView = VK_NULL_HANDLE,
-            .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        });
-    }
 
     writes.emplace_back(VkWriteDescriptorSet{
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = VK_NULL_HANDLE,
         .dstBinding = binding,
-        .descriptorCount = 1,
+        .dstArrayElement = arrayElement,
+        .descriptorCount = count,
         .descriptorType = vkType,
         .pImageInfo = &imageInfos.back()
     });
@@ -201,51 +170,26 @@ DescriptorWriter& DescriptorWriter::WriteImage(u32 binding, const GPUTexture* im
     return *this;
 }
 
-
-DescriptorWriter& DescriptorWriter::WriteBuffer(const u32 binding, const GPUBuffer* buffer, DescriptorType type)
-{
-    if (!buffer)
-        return *this;
-
-    const auto* vkBuf = static_cast<const VulkanBuffer*>(buffer);
-
-    bufferInfos.push_back({
-        .buffer = vkBuf->buffer,
-        .offset = 0,
-        .range = vkBuf->GetSize()
-    });
-
-    writes.push_back({
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstBinding = binding,
-        .descriptorCount = 1,
-        .descriptorType = ToVk(type),
-        .pBufferInfo = &bufferInfos.back()
-    });
-    return *this;
-}
-
-// Above but with more options
-DescriptorWriter& DescriptorWriter::WriteBuffer(u32 binding, const GPUBuffer* buffer, size_t size, size_t offset,
-                                                DescriptorType type)
+DescriptorWriter& DescriptorWriter::WriteBuffer(const u32 binding, const GPUBuffer* buffer, DescriptorType type, u32 arrayElement, size_t size, size_t offset)
 {
     if (!buffer) return *this;
+
     const auto* vkBuf = static_cast<const VulkanBuffer*>(buffer);
 
     bufferInfos.push_back({
         .buffer = vkBuf->buffer,
         .offset = offset,
-        .range = size
+        .range = (size == 0) ? vkBuf->GetSize() : size
     });
 
     writes.push_back({
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .dstBinding = binding,
+        .dstArrayElement = arrayElement,
         .descriptorCount = 1,
         .descriptorType = ToVk(type),
         .pBufferInfo = &bufferInfos.back()
     });
-
     return *this;
 }
 
@@ -256,7 +200,7 @@ void DescriptorWriter::Clear()
     writes.clear();
 }
 
-void DescriptorWriter::UpdateSet(const GPUDevice* device, const DescriptorSet set)
+void DescriptorWriter::UpdateSet(const GPUDevice* device, VkDescriptorSet set)
 {
     for (auto& write : writes)
     {
@@ -265,13 +209,12 @@ void DescriptorWriter::UpdateSet(const GPUDevice* device, const DescriptorSet se
 
     vkUpdateDescriptorSets(GetVkDevice(device), static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
 }
-
 void DescriptorAllocatorGrowable::Init(GPUDevice* inDevice, const u32 inSetsPerPool,
-                                       const std::span<PoolSizes> poolRatios)
+                                       Span<const PoolSizes> poolRatios)
 {
     this->device = inDevice;
     this->setsPerPool = inSetsPerPool;
-    ratios.assign(poolRatios.begin(), poolRatios.end());
+    ratios.assign(poolRatios);
 }
 
 void DescriptorAllocatorGrowable::ResetPools()
@@ -295,8 +238,9 @@ void DescriptorAllocatorGrowable::DestroyPools()
     fullPools.clear();
 }
 
-DescriptorSet DescriptorAllocatorGrowable::Allocate(DescriptorLayout layout, bool isBindless, u32 bindlessCount)
+VulkanDescriptorSet DescriptorAllocatorGrowable::Allocate(DescriptorLayout layout, bool isBindless, u32 bindlessCount)
 {
+    // 1. Setup the variable count info
     VkDescriptorSetVariableDescriptorCountAllocateInfo variableInfo = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
         .descriptorSetCount = 1,
@@ -306,7 +250,7 @@ DescriptorSet DescriptorAllocatorGrowable::Allocate(DescriptorLayout layout, boo
     for (int attempt = 0; attempt < 2; ++attempt)
     {
         VkDescriptorPool pool = GetPool();
-        if (pool == VK_NULL_HANDLE) return {VK_NULL_HANDLE};
+        if (pool == VK_NULL_HANDLE) return {};
 
         VkDescriptorSetAllocateInfo allocInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -317,22 +261,34 @@ DescriptorSet DescriptorAllocatorGrowable::Allocate(DescriptorLayout layout, boo
         };
 
         VkDescriptorSet set = VK_NULL_HANDLE;
-        VkResult result = vkAllocateDescriptorSets(GetVkDevice(device), &allocInfo, &set);
+        const VkResult result = vkAllocateDescriptorSets(GetVkDevice(device), &allocInfo, &set);
 
+        // Success Path
         if (result == VK_SUCCESS)
         {
             readyPools.push_back(pool);
-            return {set};
+            return VulkanDescriptorSet(set);
         }
 
-        fullPools.push_back(pool);
-        if (attempt == 1)
-            LOG(Error, "Descriptor allocation failed on fresh pool.");
+        if (result == VK_ERROR_FRAGMENTED_POOL || result == VK_ERROR_OUT_OF_POOL_MEMORY)
+        {
+            fullPools.push_back(pool);
+        }
+
+
+        else
+        {
+            // Put the perfectly good pool back into rotation so we don't leak it
+            readyPools.push_back(pool);
+            LOG(Error, "Vulkan descriptor allocation failed with unexpected error code: {}", static_cast<int>(result));
+            return {};
+        }
     }
 
-    return {VK_NULL_HANDLE};
+    // If we reach here, even the brand-new pool failed.
+    LOG(Error, "Descriptor allocation failed on fresh pool.");
+    return {};
 }
-
 VkDescriptorPool DescriptorAllocatorGrowable::GetPool()
 {
     if (!readyPools.empty())

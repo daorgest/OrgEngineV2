@@ -5,12 +5,17 @@
 
 #include "../../Engine/MeshData.h"
 
-// User data passed to mikktspace
-struct MikkUserData
+#include "Tools/Span.h"
+
+namespace
 {
-    std::span<Vertex> vertices;
-    std::span<const u32> indices;
-};
+    // User data passed to mikktspace
+    struct MikkUserData
+    {
+        Span<Vertex> vertices;
+        Span<const u32> indices;
+    };
+}
 
 static i32 mikkGetNumFaces(const SMikkTSpaceContext* ctx)
 {
@@ -61,7 +66,7 @@ static void mikkSetTSpaceBasic(const SMikkTSpaceContext* context, const f32 tang
     v.tangent = glm::vec4(tangent[0], tangent[1], tangent[2], sign);
 }
 
-void GenerateMikkTangents(const std::span<Vertex> vertices, const std::span<const u32> indices)
+void GenerateMikkTangents(const Span<Vertex> vertices, const Span<const u32> indices)
 {
     SMikkTSpaceInterface iface{};
     iface.m_getNumFaces = mikkGetNumFaces;

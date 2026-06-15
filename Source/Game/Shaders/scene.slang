@@ -1,3 +1,5 @@
+static const float PI = 3.14159265359;
+#define MAX_LIGHTS 8
 struct Vertex
 {
     float3 position;
@@ -17,8 +19,9 @@ struct VertexOutput
     float2 texCoord      : TEXCOORD0;
 
     nointerpolation uint  materialIndex : MAT_INDEX;
-    nointerpolation float instRoughness : ROUGHNESS; // Unique float
-    nointerpolation float instMetallic  : METALLIC;  // Unique float
+    nointerpolation float instRoughness : ROUGHNESS;
+    nointerpolation float instMetallic  : METALLIC;
+    nointerpolation uint  instanceID    : INSTANCE_ID;
 };
 
 enum MaterialType : uint { Opaque, AlphaMask, Transparent };
@@ -33,6 +36,7 @@ struct MaterialProperties
 
 	uint albedoIndex = 0;
 	uint normalIndex = 0;
+    uint specularIndex = 0;
 
 	MaterialType type = MaterialType::Opaque;
 };
@@ -70,16 +74,30 @@ struct GPUInstanceData
 
 struct LightSceneData
 {
-    Light lights[16];
+    Light lights[MAX_LIGHTS];
     uint lightCount;
 };
 
+struct PushConstants
+{
+    float4x4 model;
+    uint64_t vertexBufferAddress;
+    uint     vertexOffset;
+	uint     isInstanced;
+	float    instRoughness;
+	float    instMetallic;
+	uint     materialIndex;
+};
+
 // Scene Options
-struct DebugUBO {
+struct DebugUBO
+{
     int   debugViewMode;
     float debugDepthRange;
     uint  disableNormalMap;
+    float normalStrength;
     uint  disableSpecular;
+    float specularStrength;
 
     float iblStrength;
     float iblRoughnessMipBias;
@@ -88,13 +106,6 @@ struct DebugUBO {
 
     float metallicReflectScale;
     float roughnessReflectScale;
-
-    // --- Toon Tuning Params ---
-    float toonThreshold;
-    float toonSmoothness;
-    float rimThreshold;
-    float rimSmoothness;
-    float rimIntensity;
     float3 shadowTint;
 };
 
@@ -108,21 +119,8 @@ struct DebugUBO {
 [[vk::binding(0, 3)]] SamplerCube envCubemap;
 [[vk::binding(0, 4)]] StructuredBuffer<GPUInstanceData> instanceBuffer;
 
-struct PushConstants
-{
-    float4x4 model;
-    uint64_t vertexBufferAddress;
-    uint     vertexOffset;
-	uint     isInstanced;
-	float    instRoughness;
-	float    instMetallic;
-	uint     materialIndex;
-	uint     _padding; //
-};
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-// Helper Functions
-static const float PI = 3.14159265359;
 
 float pow5(float x)
 {
@@ -134,22 +132,12 @@ float3 DecodeTangentSpaceNormal(float3 rgb)
     return normalize(rgb * 2.0 - 1.0);
 }
 
-float SmoothRangeFalloff(float dist, float range)
-{
-    float t = saturate(1.0 - dist / max(range, 1e-4));
-    // Use Hermite polynomial smoothstep(t)
-    return t * t * (3.0 - 2.0 * t);
-}
-
 float LinearizeDepth(float d, float n, float f)
 {
-    float standardD = 1.0 - d;
-    float zNDC = standardD * 2.0 - 1.0;
-    // Solve projection eq. for view-space Z
-    return (2.0 * n * f) / (f + n - zNDC * (f - n));
+    return (n * f) / (n + d * (f - n));
 }
 
-// PBR Functions
+// --- PBR Functions ---
 float DistributionGGX(float3 N, float3 H, float alpha)
 {
     float a2 = alpha * alpha;
@@ -184,28 +172,22 @@ float3 fresnelSchlick(float cosTheta, float3 F0)
 // with Rec.709 gamma output
 inline float3 TonemapACES(float3 color)
 {
-    // Input transform
     const float3x3 ACESInputMat = float3x3(
         0.59719, 0.35458, 0.04823,
         0.07600, 0.90834, 0.01566,
         0.02840, 0.13383, 0.83777);
 
-    // Output transform
     const float3x3 ACESOutputMat = float3x3(
         1.60475, -0.53108, -0.07367,
         -0.10208,  1.10813, -0.00605,
         -0.00327, -0.07276,  1.07602);
 
     float3 x = mul(ACESInputMat, color);
-
     float3 a = x * (x + 0.0245786.xxx) - 0.000090537.xxx;
     float3 b = x * (0.983729.xxx * x + 0.4329510.xxx) + 0.238081.xxx;
     float3 y = a / b;
 
-    // Back to RGB
     color = mul(ACESOutputMat, y);
-
-    // Clamp & gamma correct
     return saturate(color);
 }
 
@@ -224,22 +206,52 @@ inline float3 TonemapACES(float3 color)
  */
 float3 CalculateWorldNormal(float3 localNormal, float4x4 worldMatrix)
 {
-    // 1. Extract the 3x3 basis vectors (X, Y, Z)
-    float3x3 m3x3 = (float3x3)worldMatrix;
+    float3x3 m = (float3x3)worldMatrix;
 
-    // 2. Calculate the reciprocal of the squared scale for each axis
-    // This replaces the expensive inverse-transpose operation
-    float3 invSqScale;
-    invSqScale.x = 1.0 / max(dot(m3x3[0], m3x3[0]), 1e-8);
-    invSqScale.y = 1.0 / max(dot(m3x3[1], m3x3[1]), 1e-8);
-    invSqScale.z = 1.0 / max(dot(m3x3[2], m3x3[2]), 1e-8);
+    // Calculate the 3x3 Adjugate matrix
+    // The adjugate is the transpose of the cofactor matrix.
+    float3 adj0 = cross(m[1], m[2]);
+    float3 adj1 = cross(m[2], m[0]);
+    float3 adj2 = cross(m[0], m[1]);
 
-    // 3. Reconstruct the world normal by "counter-stretching" the local normal
-    float3 worldNormal = localNormal.x * invSqScale.x * m3x3[0] +
-                         localNormal.y * invSqScale.y * m3x3[1] +
-                         localNormal.z * invSqScale.z * m3x3[2];
+    // Transpose is implicit in the construction of the adjugate matrix
+    float3x3 adj = float3x3(adj0, adj1, adj2);
 
-    return normalize(worldNormal);
+    // Transform the local normal by the adjugate
+    return normalize(mul(adj, localNormal));
+}
+
+float CalculateLightAttenuation(Light light, float3 worldPos, out float3 L, out float distance)
+{
+    if (light.type == LightTypes.Directional)
+    {
+        L = normalize(-light.direction);
+        distance = 0.0f;
+        return 1.0f;
+    }
+
+    float3 pixelToLight = light.position - worldPos;
+    distance = length(pixelToLight);
+    L = pixelToLight / max(distance, 1e-4);
+
+    float distanceSq = distance * distance;
+    float attenuation = 1.0 / (distanceSq + 0.01);
+
+    float rangeSq = max(light.range * light.range, 1e-4);
+    float distRatioSq = distanceSq / rangeSq;
+    float window = saturate(1.0 - (distRatioSq * distRatioSq));
+    attenuation *= (window * window);
+
+    if (light.type == LightTypes.Spot)
+    {
+        float3 spotDir = normalize(light.direction);
+        float theta = dot(L, -spotDir);
+        float epsilon = light.innerCone - light.outerCone;
+        float spotIntensity = saturate((theta - light.outerCone) / max(epsilon, 1e-5));
+        attenuation *= spotIntensity * spotIntensity * (3.0 - 2.0 * spotIntensity);
+    }
+
+    return attenuation;
 }
 
 // Vertex Shader
@@ -249,22 +261,30 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
     VertexOutput o;
 
     Ptr<Vertex> verts = Ptr<Vertex>(pc.vertexBufferAddress);
-    Vertex v = verts[pc.vertexOffset + vertexID];
+    Vertex v = verts[vertexID + pc.vertexOffset];
 
     float4x4 worldMatrix;
     float roughness;
     float metallic;
     uint matIdx;
 
-    if (pc.isInstanced == 1)
+    if (pc.isInstanced == 2) // INDIRECT PATH
     {
         GPUInstanceData data = instanceBuffer[instanceID];
         worldMatrix = data.worldMatrix;
-        matIdx      = data.materialIndex + pc.materialIndex;
+        matIdx      = pc.materialIndex;
         roughness   = data.roughness;
         metallic    = data.metalic;
     }
-    else
+    else if (pc.isInstanced == 1) // INSTANCED PATH
+    {
+        GPUInstanceData data = instanceBuffer[instanceID];
+        worldMatrix = mul(data.worldMatrix, pc.model);
+        matIdx      = pc.materialIndex;
+        roughness   = data.roughness;
+        metallic    = data.metalic;
+    }
+    else // STANDARD PATH
     {
         worldMatrix = pc.model;
         matIdx      = pc.materialIndex;
@@ -275,13 +295,12 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
     float4 posWS = mul(worldMatrix, float4(v.position, 1.0));
     o.worldPosition = posWS.xyz;
     o.position = mul(sceneUBO.proj, mul(sceneUBO.view, posWS));
-
     o.worldNormal = CalculateWorldNormal(v.normal, worldMatrix);
 
     float3x3 rotPart = (float3x3)worldMatrix;
     float3 T = normalize(mul(rotPart, v.tangent.xyz));
-
     T = normalize(T - o.worldNormal * dot(o.worldNormal, T));
+
     o.worldTangent  = float4(T, v.tangent.w);
     o.color         = v.color;
     o.texCoord      = v.uv;
@@ -289,6 +308,7 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
     o.instRoughness = roughness;
     o.instMetallic  = metallic;
     o.materialIndex = matIdx;
+    o.instanceID    = instanceID;
     return o;
 }
 
@@ -296,7 +316,22 @@ VertexOutput vertexMain(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
 float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Target
 {
     MaterialProperties mat = materialBuffer[input.materialIndex];
-    float4 albedoSample = globalTextures[mat.albedoIndex].Sample(input.texCoord);
+    float4 albedoSample = float4(1.0, 1.0, 1.0, 1.0);
+
+    if (mat.albedoIndex > 2)
+    {
+        albedoSample = globalTextures[mat.albedoIndex].Sample(input.texCoord);
+    }
+
+    float metalMap = 1.0f;
+    float roughMap = 1.0f;
+    if (mat.specularIndex != 0 && debugUBO.disableSpecular == 0)
+    {
+        float4 packedPBR = globalTextures[mat.specularIndex].Sample(input.texCoord);
+        // Roughness in Green and Metallic in Blue
+        roughMap = packedPBR.g;
+        metalMap = packedPBR.b;
+    }
 
     if (mat.type == MaterialType::AlphaMask && albedoSample.a < 0.5)
     {
@@ -304,137 +339,143 @@ float4 fragmentMain(VertexOutput input, float4 fragCoord : SV_Position) : SV_Tar
     }
 
     float3 albedo = albedoSample.rgb * mat.baseColor.rgb;
+    float roughness = clamp(input.instRoughness * mat.roughness * roughMap, 0.025, 1.0);
+    float metallic  = saturate(input.instMetallic * mat.metallic * metalMap);
 
-    float roughness = clamp(input.instRoughness * mat.roughness, 0.025, 1.0);
-    float metallic  = saturate(input.instMetallic * mat.metallic);
-    float alpha     = roughness * roughness;
+    if (debugUBO.debugViewMode == 9) // clay :3
+    {
+        albedo = float3(0.7, 0.7, 0.7); // Uniform grey
+        metallic = 0.0;
+        roughness = max(roughness, 0.3); // Ensure broad specular highlights
+    }
 
-    float3 N = normalize(input.worldNormal);
+    float alpha = roughness * roughness;
     float3 V = normalize(cameraUBO.camPosition - input.worldPosition);
+    float3 geomNormal = normalize(input.worldNormal);
 
-    float NdotV = max(dot(N, V), 0.0001);
-    float G_V = GeometrySchlickGGX(NdotV, roughness);
-    float specPreCalc = G_V / (4.0 * NdotV);
+    // Construct orthonormal TBN basis
+    float3 T = normalize(input.worldTangent.xyz);
+    float3 N = normalize(geomNormal);
+    T = normalize(T - N * dot(N, T));
+    float tangentSign = (input.worldTangent.w < 0.0) ? -1.0 : 1.0;
+    float3 B = cross(N, T) * tangentSign;
+    float3x3 TBN = float3x3(T, B, N);
+
+    if (debugUBO.disableNormalMap == 0 && mat.normalIndex != 1)
+    {
+        float3 nTex = globalTextures[mat.normalIndex].Sample(input.texCoord).rgb;
+        float3 mapNormal = nTex * 2.0 - 1.0;
+
+        float normalLen = length(mapNormal);
+
+        // Calculate the Toksvig variance (guarding against divide-by-zero)
+        float variance = saturate((1.0 - normalLen) / max(normalLen, 1e-5));
+        float alpha = roughness * roughness;
+        alpha += (variance * debugUBO.normalStrength);
+        roughness = saturate(sqrt(alpha));
+
+
+        mapNormal = mapNormal / max(normalLen, 1e-5);
+        mapNormal.xy *= debugUBO.normalStrength;
+        N = normalize(mul(mapNormal, TBN));
+    }
+    else
+    {
+        N = normalize(geomNormal);
+    }
+
     switch (debugUBO.debugViewMode)
     {
         case 1: return float4(albedo, 1.0);
+        case 2: return float4(N * 0.5 + 0.5, 1.0); // Shifted to 0.5 to properly visualize [-1, 1] range
         case 3:
         {
-            float dLin = LinearizeDepth(fragCoord.z, cameraUBO.nearPlane, cameraUBO.farPlane);
-            float dN = saturate(dLin / max(debugUBO.debugDepthRange, 1e-6));
-            return float4(dN.xxx, 1.0);
+            float d = fragCoord.z;
+            float n = cameraUBO.nearPlane;
+            float f = cameraUBO.farPlane;
+            float dLin = LinearizeDepth(d, n, f);
+
+            float dVis = saturate(dLin / max(debugUBO.debugDepthRange, 1e-6));
+            return float4(dVis.xxx, 1.0);
         }
         case 4: return float4(roughness.xxx, 1.0);
         case 5: return float4(metallic.xxx, 1.0);
-        case 6: return float4(input.worldPosition * 0.1f, 1.0);
+        case 6: return float4(frac(input.worldPosition * 0.1f), 1.0); // now we get blocky
         case 7: return float4(frac(input.texCoord), 0.0, 1.0);
+        case 8:
+        {
+            float lod = globalTextures[mat.albedoIndex].CalculateLevelOfDetail(input.texCoord);
+            return float4(lod.xxx / 10.0, 1.0);
+        }
+        case 11: // Instance ID Randomizer (fun to look at)
+        {
+            float r = frac(sin(float(input.instanceID) * 12.9898) * 43758.5453);
+            float g = frac(sin(float(input.instanceID) * 78.233) * 43758.5453);
+            float b = frac(sin(float(input.instanceID) * 37.719) * 43758.5453);
+            return float4(r, g, b, 1.0);
+        }
+
         default: break;
     }
 
-    if (debugUBO.disableNormalMap == 0 && mat.normalIndex != 0)
-    {
-        float3 nTex = globalTextures[mat.normalIndex].Sample(input.texCoord).rgb;
-        float3 T = normalize(input.worldTangent.xyz - N * dot(N, input.worldTangent.xyz));
-        float3 B = cross(N, T) * input.worldTangent.w;
-        float3x3 TBN = float3x3(T, B, N);
-
-        if (dot(nTex - 0.5.xxx, nTex - 0.5.xxx) > 1e-4)
-            N = normalize(mul(DecodeTangentSpaceNormal(nTex), TBN));
-    }
-
-    if (debugUBO.debugViewMode == 8)
-    {
-        float lod = globalTextures[mat.albedoIndex].CalculateLevelOfDetail(input.texCoord);
-        // Visualize: Mip 0 is Black, Mip 10 is White
-        return float4(lod.xxx / 10.0, 1.0);
-    }
-
-    if (debugUBO.debugViewMode == 2) return float4(N * 0.6 + 0.5, 1.0);
-
-    // 4. Lighting Setup
+    float shadingNdotV = max(dot(N, V), 0.0001);
     float3 F0 = lerp(float3(0.04), albedo, metallic);
     float3 Lo = 0.0;
-    float maxToonDiffuse = 0.0;
-    float toonSmoothInv = 1.0 / max(debugUBO.toonSmoothness, 1e-4);
 
-    // 5. Direct Lighting Loop
     [loop]
     for (uint i = 0; i < sceneLights.lightCount; i++)
     {
         Light light = sceneLights.lights[i];
         float3 L;
-        float attenuation = 1.0;
+        float distance;
 
-        // Light vector and attenuation math
-        if (light.type == LightTypes.Directional)
-        {
-            L = normalize(-light.direction);
-        }
-        else
-        {
-            float3 lightToPixel = light.position - input.worldPosition;
-            float distance = length(lightToPixel);
-            L = lightToPixel / max(distance, 1e-4);
+        float attenuation = CalculateLightAttenuation(light, input.worldPosition, L, distance);
+        float rawNdotL = dot(N, L);
+        float NdotL = saturate(rawNdotL);
 
-            attenuation = 1.0 / max(distance * distance, 1e-6);
-            attenuation *= SmoothRangeFalloff(distance, light.range);
+        if (rawNdotL <= 0.0) continue;
 
-            if (light.type == LightTypes.Spot)
-            {
-                float3 spotDir = normalize(light.direction);
-                float theta = dot(L, -spotDir);
-                float epsilon = light.innerCone - light.outerCone;
-                float intensity = saturate((theta - light.outerCone) / max(epsilon, 1e-5));
-                attenuation *= intensity * intensity * (3.0 - 2.0 * intensity);
-            }
-        }
+        // Shadows disabled - fully lit analytical pass
+        float shadowFactor = 1.0;
 
-        // Toon Diffuse logic
-        float NdotL = dot(N, L);
-        float halfLambert = NdotL * 0.5 + 0.5;
-        float toonDiffuse = saturate((halfLambert - (debugUBO.toonThreshold - debugUBO.toonSmoothness)) * toonSmoothInv);
-        maxToonDiffuse = max(maxToonDiffuse, toonDiffuse);
-
-        // PBR Specular math
         float3 H = normalize(V + L);
-        float3 radiance = light.color * light.intensity * attenuation;
+        float3 radiance = light.color * light.intensity * attenuation * shadowFactor;
 
         float NDF = DistributionGGX(N, H, alpha);
         float G   = GeometrySmith(N, V, L, roughness);
         float3 F  = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
-        float3 specular = (NDF * G * F * specPreCalc) / NdotL;
+        float3 specular = (NDF * G * F) / max(4.0 * shadingNdotV * NdotL, 1e-5);
         if (debugUBO.disableSpecular != 0) specular = 0.0.xxx;
 
         float3 kD = (1.0.xxx - F) * (1.0 - metallic);
-
-        // Accumulate final direct light
-        Lo += (kD * albedo / PI + specular) * radiance * toonDiffuse;
+        Lo += ((kD * albedo / PI) + specular) * radiance * NdotL;
     }
 
-    // 6. Ambient & Shadow Tinting
-    // We use maxToonDiffuse to determine if we are in shadow across ALL lights
-    float3 shadowColor = albedo * debugUBO.shadowTint;
-    float3 ambient = lerp(shadowColor, albedo, maxToonDiffuse) * debugUBO.ambientStrength * debugUBO.aoStrength;
+    float3 ambient = albedo * debugUBO.ambientStrength * debugUBO.aoStrength;
 
-    // 7. IBL Reflections
     float3 R = reflect(-V, N);
-    float mipLevel = saturate(roughness + debugUBO.iblRoughnessMipBias) * 6.0;
-    float3 envColor = envCubemap.SampleLevel(R, mipLevel).rgb;
-
+    float3 envColor = envCubemap.SampleLevel(R, saturate(roughness + debugUBO.iblRoughnessMipBias) * 6.0).rgb;
     float3 F_ambient = fresnelSchlick(max(dot(N, V), 0.0), F0);
-    float iblContribution = metallic * debugUBO.metallicReflectScale * (1.0 - roughness * debugUBO.roughnessReflectScale);
-    float3 specularIBL = envColor * F_ambient * iblContribution * debugUBO.iblStrength;
+    float3 specularIBL = envColor * F_ambient * (metallic * debugUBO.metallicReflectScale * (1.0 - roughness * debugUBO.roughnessReflectScale)) * debugUBO.iblStrength;
 
-    // 8. Toon Rim Light
-    float rim = saturate(dot(V, N));
-    float rimValue = smoothstep(debugUBO.rimThreshold - debugUBO.rimSmoothness,
-                                debugUBO.rimThreshold + debugUBO.rimSmoothness,
-                                rim);
-    float3 finalRim = rimValue * debugUBO.rimIntensity * debugUBO.aoStrength;
+    float3 finalColor = ambient + Lo + (specularIBL * debugUBO.aoStrength);
 
-    // 9. Final Composition
-    float3 color = ambient + Lo + (specularIBL * debugUBO.aoStrength) + finalRim;
+    if (debugUBO.debugViewMode == 10) // if weird math with the PBR, this shows it!
+    {
+        // Flag NaNs or Infinity with Magenta
+        if (any(isnan(finalColor)) || any(isinf(finalColor)))
+            return float4(1.0, 0.0, 1.0, 1.0);
 
-    return float4(TonemapACES(color), 1.0);
+        // Flag severe negative lighting with Red
+        if (any(finalColor < 0.0))
+            return float4(1.0, 0.0, 0.0, 1.0);
+
+        // Render valid pixels in grayscale so errors pop out
+        float lum = dot(finalColor, float3(0.2126, 0.7152, 0.0722));
+        return float4(lum.xxx, 1.0);
+    }
+
+    float pixelAlpha = albedoSample.a * mat.baseColor.a;
+    return float4(TonemapACES(finalColor), pixelAlpha);
 }

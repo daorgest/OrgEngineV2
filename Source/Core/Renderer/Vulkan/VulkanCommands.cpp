@@ -4,7 +4,6 @@
 
 #include "VulkanCommands.h"
 
-#include "Platform.h"
 #include "VulkanCheck.h"
 #include "VulkanSwapchain.h"
 #include "VulkanCommandBuffer.h"
@@ -18,32 +17,22 @@ bool VulkanFrameData::Init(GPUDevice* dev)
 {
     device = static_cast<VulkanDevice*>(dev);
 
-    // Allocate primary command buffer and pool directly
+    queryPool.Init(device, 4); // Scene -> UI timings (Incuding that compute popup)
     commandBuffer.Init(device);
-
-    queryPool.Init(device, 4);
-    renderFence = std::make_unique<VulkanFence>(device);
-    acquireSemaphore = std::make_unique<VulkanSemaphore>(device);
+    renderFence.Init(device);
+    acquireSemaphore.Init(device);
 
     return true;
 }
 
 void VulkanFrameData::Destroy()
 {
-    if (device)
-    {
-        commandBuffer.Destroy();
-        queryPool.Destroy();
-    }
+    renderFence.Destroy();
+    acquireSemaphore.Destroy();
+    commandBuffer.Destroy();
+    queryPool.Destroy();
 }
 
-void VulkanFrameData::Reset()
-{
-    // if (device)
-    // {
-    //     vkResetCommandPool(device->device, commandBuffer.GetVkPool(), 0);
-    // }
-}
 
 // VulkanRenderer
 bool VulkanRenderer::Init(GPUDevice* dev, GPUSwapchain* sc, u32 frameOverlap)
@@ -57,23 +46,40 @@ bool VulkanRenderer::Init(GPUDevice* dev, GPUSwapchain* sc, u32 frameOverlap)
         frame.Init(device);
     }
 
-    // Initialize Tracy profiling context ONCE
-    tracyCtx = TracyVkContext(device->physicalDevice, device->device, device->graphicsQueue,
-                              frames[0].commandBuffer.GetVkHandle());
+    for (auto& semaphore : presentSemaphores)
+    {
+        semaphore.Init(device);
+    }
+
+#ifdef TRACY_ENABLE
+    VkCommandPoolCreateInfo poolInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = device->graphicsQueueIndex
+    };
+    VkCommandPool tracyPool;
+    vkCreateCommandPool(device->device, &poolInfo, nullptr, &tracyPool);
+
+    VkCommandBufferAllocateInfo allocInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = tracyPool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1
+    };
+    VkCommandBuffer tracySetupCmd;
+    vkAllocateCommandBuffers(device->device, &allocInfo, &tracySetupCmd);
+
+    tracyCtx = TracyVkContext(device->physicalDevice, device->device, device->graphicsQueue, tracySetupCmd);
     TracyVkContextName(tracyCtx, "Graphics", 8);
 
-    // Distribute Tracy context to all frame command buffers
+    vkDestroyCommandPool(device->device, tracyPool, nullptr);
+
     for (u32 i = 0; i < framesActive; i++)
     {
         frames[i].commandBuffer.tracyCtx = tracyCtx;
     }
     device->immediateSubmitter.cmdBuffer.tracyCtx = tracyCtx;
-
-    // Allocate present semaphores (matching swapchain image count)
-    for (u32 i = 0; i < swapchain->imageCount; i++)
-    {
-        presentSemaphores.push_back(std::make_unique<VulkanSemaphore>(device));
-    }
+#endif
 
     frameNumber = 0;
     return true;
@@ -81,7 +87,9 @@ bool VulkanRenderer::Init(GPUDevice* dev, GPUSwapchain* sc, u32 frameOverlap)
 
 void VulkanRenderer::Destroy()
 {
-    vkDeviceWaitIdle(device->device);
+    if (!device || !device->device) return;
+
+    device->WaitIdle();
 
     if (tracyCtx)
     {
@@ -94,16 +102,18 @@ void VulkanRenderer::Destroy()
         frame.Destroy();
     }
 
-    presentSemaphores.clear();
+    for (auto& semaphore : presentSemaphores)
+    {
+        semaphore.Destroy();
+    }
 }
 
-bool VulkanRenderer::BeginFrame(u32& outFrameIndex, u32& outImageIndex)
+GPUCommandBuffer* VulkanRenderer::BeginFrame()
 {
-    outFrameIndex = frameNumber % framesActive;
+    const u32 currentFrameIndex = frameNumber % framesActive;
+    VulkanFrameData& frame = frames[currentFrameIndex];
+    frame.commandBuffer.WaitForFence(&frame.renderFence);
 
-    VulkanFrameData& frame = frames[outFrameIndex];
-
-    frame.commandBuffer.WaitForFence(frame.renderFence.get());
     // Only fetch results if this frame slot has been written to before!
     // If we are on Frame 0 or 1 (in a double-buffered system), this memory is fresh
     // and reading it causes the validation error.
@@ -111,40 +121,38 @@ bool VulkanRenderer::BeginFrame(u32& outFrameIndex, u32& outImageIndex)
     {
         frame.queryPool.FetchResults();
     }
-
-    auto acquireResult = swapchain->AcquireNextImage(frame.acquireSemaphore.get(), outImageIndex);
+    auto acquireResult = swapchain->AcquireNextImage(&frame.acquireSemaphore);
     if (!acquireResult.has_value())
     {
-        if (acquireResult.error() == VulkanSwapchainOutOfDate || Suboptimal)
-        {
-            swapchain->needsRecreation = true;
-        }
-        return false;
+        swapchain->needsRecreation = true;
+        return nullptr;
     }
-
-
-    outImageIndex = acquireResult.value();
+    currentImageIndex = acquireResult.value();
 
     frame.commandBuffer.Begin(nullptr);
     frame.commandBuffer.BeginDebugLabel("Frame CommandBuffer", 0.0f, 0.7f, 1.0f);
-
     frame.queryPool.Reset(&frame.commandBuffer);
 
-    // The GPU is done, collect timestamps!!
+#ifdef TRACY_ENABLE
     if (tracyCtx)
     {
         TracyVkCollect(tracyCtx, frame.commandBuffer.GetVkHandle());
     }
-    return true;
+#endif
+    return &frame.commandBuffer;
 }
 
-void VulkanRenderer::EndFrame(u32 frameIndex, u32 imageIndex)
+void VulkanRenderer::EndFrame()
 {
-    VulkanFrameData& frame = frames[frameIndex];
+    if (!swapchain) return;
 
-    VkSemaphore sem = presentSemaphores[imageIndex]->semaphore;
-	frame.commandBuffer.EndDebugLabel();
+    const u32 currentFrameIndex = frameNumber % framesActive;
+    VulkanFrameData& frame = frames[currentFrameIndex];
+
+    frame.commandBuffer.EndDebugLabel();
     frame.commandBuffer.End();
+
+    const VkSemaphore renderFinishedSem = presentSemaphores[currentImageIndex].semaphore;
 
     // Sync2 Submission!
     VkCommandBufferSubmitInfo cmdInfo = {
@@ -155,14 +163,14 @@ void VulkanRenderer::EndFrame(u32 frameIndex, u32 imageIndex)
 
     VkSemaphoreSubmitInfo waitInfo = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = frame.acquireSemaphore->semaphore,
+        .semaphore = frame.acquireSemaphore.semaphore,
         .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT // Wait for image acquisition
     };
 
     VkSemaphoreSubmitInfo signalInfo = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = sem,
-        .stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT // Signal completion to presenter
+        .semaphore = renderFinishedSem,
+        .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
     };
 
     VkSubmitInfo2 submitInfo = {
@@ -175,17 +183,16 @@ void VulkanRenderer::EndFrame(u32 frameIndex, u32 imageIndex)
         .pSignalSemaphoreInfos = &signalInfo
     };
 
-
-    VK_CHECK(vkQueueSubmit2(device->graphicsQueue, 1, &submitInfo, frame.renderFence->fence));
+    VK_CHECK(vkQueueSubmit2(device->graphicsQueue, 1, &submitInfo, frame.renderFence.fence));
 
     // Presentation
     VkPresentInfoKHR presentInfo = {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &sem,
+        .pWaitSemaphores = &renderFinishedSem,
         .swapchainCount = 1,
         .pSwapchains = &swapchain->swapchain,
-        .pImageIndices = &imageIndex
+        .pImageIndices = &currentImageIndex
     };
 
     const VkResult result = vkQueuePresentKHR(device->graphicsQueue, &presentInfo);

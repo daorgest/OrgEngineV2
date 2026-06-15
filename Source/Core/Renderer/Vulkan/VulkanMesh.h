@@ -14,38 +14,37 @@ struct SceneStats;
 namespace Renderer
 {
     struct BindlessManager;
-    struct VulkanPipeline;
-	struct TextureDefaults;
 	struct DescriptorAllocatorGrowable;
-	struct VulkanSampler;
-	struct VulkanTexture;
-	struct VulkanDevice;
-	struct VulkanBuffer;
 
     // Just a method now :3
     Result<GPUModel> CreateVulkanModel(GPUDevice* device, LoadedModel& loadedModel, BindlessManager& bindless,
-                        AssetPool<TextureData>& texturePool, DescriptorAllocatorGrowable& allocator);
+                                       DescriptorAllocatorGrowable& allocator);
+    // ECS? yeah...
+    struct TransformComponent
+    {
+        glm::mat4 worldMatrix = glm::mat4(1.0f);
+    };
 
-	enum class RenderPath
-	{
-		Standard,
-		Instance,
-		Indirect
-	};
+    struct RenderPathComponent
+    {
+        RenderPath path = RenderPath::Standard;
+    };
 
+    struct MaterialComponent
+    {
+        u32 materialIndex = 0;
+        f32 roughness = 1.0f;
+        f32 metallic = 1.0f;
+        glm::vec3 tint = glm::vec3(1.0f);
+    };
 
     struct ModelComponent
     {
         ResourceHandle<GPUModel> modelHandle;
-
-        glm::mat4 transform = glm::mat4(1.0f);
-
-        RenderPath path = RenderPath::Standard;
-
-		f32 roughness = 1.0f;  // Surface roughness [0=smooth, 1=rough]
-		f32 metallic = 1.0f;   // Metallic property [0=dielectric, 1=metal]
-		u32 materialIndex = 0;
-	};
+        TransformComponent transform;
+        MaterialComponent material;
+        RenderPathComponent renderPath;
+    };
 
     struct DrawCache
     {
@@ -58,12 +57,10 @@ namespace Renderer
         // Context data for the draw calls
         GPUCommandBuffer* cmd = nullptr;
         SceneStats* stats = nullptr;
-        u32 frameIndex = 0;
 
         void Flush() {
             activePipeline = nullptr;
             lastIndexBuffer = nullptr;
-            lastMaterialSet = VK_NULL_HANDLE;
         }
     };
 }

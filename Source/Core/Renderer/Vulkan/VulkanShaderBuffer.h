@@ -22,7 +22,7 @@ namespace Renderer
 		VulkanDevice* device = nullptr;
 		DescriptorAllocatorGrowable* allocator = nullptr;
 		Vector<VulkanBuffer> buffers;
-		Array<DescriptorSet, MAX_FRAME_OVERLAP> descriptorSets;
+		Array<VulkanDescriptorSet, MAX_FRAME_OVERLAP> descriptorSets;
 		DescriptorLayout layout;
 		DescriptorSetLayoutDesc desc;
 		Vector<u32> bindingToSlot;       // binding -> slot index

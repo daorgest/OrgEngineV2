@@ -79,7 +79,7 @@ namespace MeshGenerator
 		// Create single mesh part
 		MeshPart part{};
 		part.indexCount = static_cast<u32>(indices.size());
-		part.aabb = AABB(std::span<const Vertex>(vertices));
+		part.aabb = AABB(Span<const Vertex>(vertices));
 
 		mesh.parts.push_back(part);
 
@@ -142,7 +142,7 @@ namespace MeshGenerator
 		// Create single mesh part
 		MeshPart part{};
 		part.indexCount = static_cast<u32>(indices.size());
-		part.aabb = AABB(std::span<const Vertex>(vertices));
+		part.aabb = AABB(Span<const Vertex>(vertices));
 
 		mesh.parts.push_back(part);
 		GenerateMikkTangents(vertices, indices);
@@ -228,7 +228,7 @@ namespace MeshGenerator
 		// Create single mesh part
 		MeshPart part{};
 		part.indexCount = static_cast<u32>(indices.size());
-		part.aabb = AABB(std::span<const Vertex>(vertices));
+		part.aabb = AABB(Span<const Vertex>(vertices));
 
 		mesh.parts.push_back(part);
 

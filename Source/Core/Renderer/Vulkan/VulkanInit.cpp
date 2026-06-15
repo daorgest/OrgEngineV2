@@ -2,9 +2,6 @@
 // Created by Orgest on 6/10/2025.
 //
 #include "VulkanInit.h"
-#include <vk_mem_alloc.h>
-
-#include <volk.h>
 #include "VulkanCheck.h"
 
 #if ENGINE_PLATFORM_SDL
@@ -12,7 +9,7 @@
 #endif
 #include "Tools/Logger.h"
 #include "Tools/Vector.h"
-#include "tracy/Tracy.hpp"
+#include <tracy/Tracy.hpp>
 
 using namespace Renderer;
 
@@ -20,6 +17,7 @@ static Vector requiredExtensions = {
     VK_KHR_SURFACE_EXTENSION_NAME,
 #ifdef ENGINE_PLATFORM_WIN32
     VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+    VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME, //....OBS/any overlay wont freak out if it hooks to my app
 #endif
 #ifdef VULKAN_DEBUG_MODE
     VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
@@ -27,12 +25,10 @@ static Vector requiredExtensions = {
 };
 
 #ifdef VULKAN_DEBUG_MODE
-static Vector kValidationLayers = {
+static Array kValidationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
 #endif
-
-
 
 #ifdef VULKAN_DEBUG_MODE
 VKAPI_ATTR static VkBool32 DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -41,10 +37,11 @@ VKAPI_ATTR static VkBool32 DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT 
                                                     [[maybe_unused]] void* pUserData = nullptr)
 {
     auto type = LogType::Debug;
-
+    bool shouldBreak = false;
     if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
     {
         type = LogType::Error;
+        shouldBreak = true;
     }
     else if (messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
     {
@@ -55,7 +52,20 @@ VKAPI_ATTR static VkBool32 DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT 
         type = LogType::Info;
     }
 
-    Logger::Write(type, {}, "[Vulkan]: {}" , callbackData->pMessage);
+    Logger::Write(type, "[Vulkan]: {}", callbackData->pMessage);
+
+    // STOP, like actually
+    if (shouldBreak)
+    {
+#if defined(_MSC_VER)
+        __debugbreak();
+#elif defined(__GNUC__) || defined(__clang__)
+        __builtin_trap();
+#else
+#include <csignal>
+        std::raise(SIGTRAP);
+#endif
+    }
 
     return VK_FALSE;
 }
@@ -64,7 +74,6 @@ VKAPI_ATTR static VkBool32 DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT 
 bool VulkanInstance::Init()
 {
     ZoneScopedN("Init Vulkan Instance");
-    LOG(Info, "Init Vulkan Instance");
     VK_CHECK(volkInitialize());
 
     Vector<const char*> enabledExtensions;
@@ -165,8 +174,6 @@ bool VulkanInstance::Init()
 #ifdef VULKAN_DEBUG_MODE
     VK_CHECK(vkCreateDebugUtilsMessengerEXT(instance, &debugCreateInfo, nullptr, &debugMessenger));
 #endif
-    LOG(Info, "Vulkan Instance created successfully");
-
     return true;
 }
 

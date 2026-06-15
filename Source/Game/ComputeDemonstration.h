@@ -15,15 +15,20 @@ struct ComputePushConstants {
 struct ComputeDemonstration
 {
     Renderer::DescriptorLayout layout;
-    Renderer::DescriptorSet descriptorSet;
+    std::unique_ptr<Renderer::GPUDescriptorSet> descriptorSet;
+
     std::unique_ptr<Renderer::GPUSampler> displaySampler;
     std::unique_ptr<Renderer::GPUPipeline> pipeline;
     std::unique_ptr<Renderer::GPUTexture> texture;
-    std::unique_ptr<Renderer::GPUShader> shader;
-    Renderer::DescriptorSet set;
-    Extent2D lastExtent = { 0, 0 };
+    std::shared_ptr<Renderer::GPUShader> shader;
 
-    void Init(Renderer::GPUDevice* device, Renderer::DescriptorAllocatorGrowable& descAlloc);
-    void Resize(Renderer::GPUDevice* device, const Extent2D& newSize);
-    void Execute(Renderer::GPUCommandBuffer* cmd, Extent2D extent, f32 elapsedTime, const glm::vec2& mousePos = {});
+    u64 texId = 0;
+    Renderer::Extent2D lastExtent = { 0, 0 };
+
+    void Init(Renderer::GPUDevice* device, Renderer::GPUShaderManager* shaderManager, Renderer::DescriptorAllocatorGrowable&
+              descAlloc);
+    void Resize(Renderer::GPUDevice* device, const Renderer::Extent2D& newSize);
+    void Destroy();
+    void Execute(Renderer::GPUCommandBuffer* cmd, Renderer::Extent2D extent, const ComputePushConstants& cPC) const;
+    void DrawUI(Renderer::GPUDevice* device);
 };

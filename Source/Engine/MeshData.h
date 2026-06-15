@@ -5,8 +5,6 @@
 #include "../Core/Renderer/RendererTypes.h"
 #include "Tools/Vector.h"
 
-#include <string>
-
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 
@@ -61,15 +59,16 @@ struct Material
 	// Texture paths
 	std::string albedoPath;
 	std::string normalPath;
-	std::string specularPath;
-	std::string emissivePath;
-	std::string roughnessPath;  // PBR roughness map
-	std::string metallicPath;   // PBR metallic map
-	std::string aoPath;          // Ambient occlusion map
+    std::string specularPath;
 
-	MaterialType materialType = MaterialType::Opaque;
+    // orr....
+    ResourceHandle<Renderer::TextureData> albedoHandle;
+    ResourceHandle<Renderer::TextureData> normalHandle;
+    ResourceHandle<Renderer::TextureData> specularHandle;
 
-	// PBR material properties (fallback values if no textures)
+    Engine::MaterialType materialType = Engine::MaterialType::Opaque;
+
+    // PBR material properties (fallback values if no textures)
 	glm::vec3 baseColor = glm::vec3(1.0f);  // Base albedo color (Kd in MTL)
 	f32 roughness = 0.5f;      // Surface roughness [0=smooth, 1=rough] (Pr in MTL)
 	f32 metallic = 0.0f;       // Metallic factor [0=dielectric, 1=metal] (Pm in MTL)
@@ -82,5 +81,5 @@ struct LoadedModel
 {
 	Vector<Mesh> meshes;
 	Vector<Material> materials;
-	MeshSourceType sourceType = MeshSourceType::Unknown;
+    Renderer::MeshSourceType sourceType = Renderer::MeshSourceType::Unknown;
 };

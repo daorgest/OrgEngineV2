@@ -4,18 +4,16 @@
 
 #include "VulkanShader.h"
 
-#include <span>
 #include <volk.h>
 
+#include "VulkanCheck.h"
 #include "VulkanDevice.h"
-#include "Tools/Logger.h"
-#include "Tools/FileManager.h"
 
 using namespace Renderer;
 
-VulkanShader::VulkanShader(VulkanDevice* dev, std::span<const u32> code, ShaderFormat fmt)
+VulkanShader::VulkanShader(VulkanDevice* inDev, Span<const u32> code, ShaderFormat fmt)
 {
-    device = dev;
+    device = inDev;
     format = fmt;
 
     const VkShaderModuleCreateInfo createInfo{
@@ -31,7 +29,7 @@ VulkanShader::VulkanShader(VulkanDevice* dev, std::span<const u32> code, ShaderF
 
 void VulkanShader::Destroy() const
 {
-	if (shader)
+	if (shader || device)
 	{
 		vkDestroyShaderModule(device->device, shader, nullptr);
 	}

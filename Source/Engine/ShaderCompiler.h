@@ -22,7 +22,18 @@ namespace Renderer
 
     struct ShaderCompiler
     {
+        ShaderCompiler() noexcept = default;
+
+        ~ShaderCompiler() { Destroy(); }
+
+        ShaderCompiler(const ShaderCompiler&) = delete;
+        ShaderCompiler& operator=(const ShaderCompiler&) = delete;
+
+        ShaderCompiler(ShaderCompiler&&) noexcept = default;
+        ShaderCompiler& operator=(ShaderCompiler&&) noexcept = default;
+
         void Init();
+        void Destroy();
         CompileResult CompileShader(const std::filesystem::path& filePath) const;
         static PipelineLayoutDesc ReflectLayout(slang::IComponentType* program);
         static void ReflectPushConstants(slang::IComponentType* program, PipelineLayoutDesc& outLayout);

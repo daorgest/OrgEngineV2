@@ -5,6 +5,7 @@
 #include "VulkanDevice.h"
 
 #include "VulkanBuffer.h"
+#include "VulkanCheck.h"
 #include "VulkanCommandBuffer.h"
 #include "VulkanInit.h"
 #include "VulkanShader.h"
@@ -12,15 +13,13 @@
 #include "VulkanTexture.h"
 #include "Tools/FileManager.h"
 
+// Realized some of the stuff were core 1.3 so I commened it out to see whats
+// was working and what was not
 static Vector requiredDeviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME,
     VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
-    VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-    VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
-    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
-    VK_EXT_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME,
-    VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME,
+    // VK_EXT_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME,
+    // VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME,
     // VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME /// sooon :3
 };
 
@@ -32,13 +31,15 @@ void ImmediateSubmitter::Init(VulkanDevice* inDevice)
     this->device = inDevice;
 
     cmdBuffer.Init(device);
-    immFence = std::make_unique<VulkanFence>(device);
-    vkResetFences(device->device, 1, &immFence->fence);
+    immFence.Init(device);
+    immFence.Reset();
 }
 
-void ImmediateSubmitter::Destroy() const
+void ImmediateSubmitter::Destroy()
 {
     cmdBuffer.Destroy();
+    immFence.Destroy();
+    device = nullptr;
 }
 
 // RHI interface implementation
@@ -51,23 +52,45 @@ bool VulkanDevice::Init(GPUInterface* gpuInterface)
 
 void VulkanDevice::Destroy()
 {
+    vkDeviceWaitIdle(device);
+
     immediateSubmitter.Destroy();
 
-    if (allocator != VK_NULL_HANDLE)
+    // Pipeline cache saving !!
+    size_t cacheSize = 0;
+    if (vkGetPipelineCacheData(device, pipelineCache, &cacheSize, nullptr) == VK_SUCCESS && cacheSize > 0)
     {
-        vmaDestroyAllocator(allocator);
-        allocator = VK_NULL_HANDLE;
+        Vector<u8> cacheData(cacheSize);
+        vkGetPipelineCacheData(device, pipelineCache, &cacheSize, cacheData.data());
+
+        if (const FileManager::Handle file("pipeline_cache.bin", "wb"); file)
+        {
+            if (const auto writeRes = file.write(Span<const u8>{cacheData}))
+            {
+                LOG(Info, "Saved Vulkan Pipeline Cache to disk ({} bytes)", cacheSize);
+            }
+        }
     }
 
-    if (device != VK_NULL_HANDLE)
-    {
-        vkDestroyDevice(device, nullptr);
-        device = VK_NULL_HANDLE;
-    }
+    vkDestroyPipelineCache(device, pipelineCache, nullptr);
+    vmaDestroyAllocator(allocator);
+    vkDestroyDevice(device, nullptr);
+}
 
-    physicalDevice = nullptr;
-    graphicsQueue = nullptr;
-    instance = nullptr;
+SampleCount VulkanDevice::GetMaxUsableSampleCount() const
+{
+	// Get the intersection of color and depth support
+	const VkSampleCountFlags counts = deviceProperties.properties.limits.framebufferColorSampleCounts &
+								 deviceProperties.properties.limits.framebufferDepthSampleCounts;
+
+	if (counts & VK_SAMPLE_COUNT_64_BIT) return SampleCount::X64;
+	if (counts & VK_SAMPLE_COUNT_32_BIT) return SampleCount::X32;
+	if (counts & VK_SAMPLE_COUNT_16_BIT) return SampleCount::X16;
+	if (counts & VK_SAMPLE_COUNT_8_BIT)  return SampleCount::X8;
+	if (counts & VK_SAMPLE_COUNT_4_BIT)  return SampleCount::X4;
+	if (counts & VK_SAMPLE_COUNT_2_BIT)  return SampleCount::X2;
+
+	return SampleCount::X1;
 }
 
 // Vulkan-specific implementation
@@ -91,11 +114,14 @@ bool VulkanDevice::Init(VulkanInstance* inst)
     u32 bestQueueIndex = ~0u;
     u64 bestScore = 0;
 
-    for (const auto& dev : devices)
+   for (const auto& dev : devices)
     {
-        // let's check for min Vulkan 1.3 support, and store physical device properties
-        VkPhysicalDeviceProperties props = {};
-        vkGetPhysicalDeviceProperties(dev, &props);
+
+        VkPhysicalDeviceProperties2 props2 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+        vkGetPhysicalDeviceProperties2(dev, &props2);
+
+        auto& props = props2.properties;
+
         if (props.apiVersion < VK_API_VERSION_1_3)
             continue;
 
@@ -108,8 +134,7 @@ bool VulkanDevice::Init(VulkanInstance* inst)
         i32 gfxComputeIndex = -1;
         for (u32 i = 0; i < queueFamilyCount; ++i)
         {
-            if ((queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
-                (queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT))
+            if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT && queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT)
             {
                 gfxComputeIndex = i;
                 break;
@@ -125,41 +150,29 @@ bool VulkanDevice::Init(VulkanInstance* inst)
         score += props.limits.maxImageDimension2D / 1024;
         score += (props.driverVersion & 0xFFF); // small tie-breaker
 
+        // VRAM
+        VkPhysicalDeviceMemoryProperties mp{};
+        vkGetPhysicalDeviceMemoryProperties(dev, &mp);
+
+        u64 vram = 0;
+        for (u32 h = 0; h < mp.memoryHeapCount; ++h)
+        {
+            if (mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            {
+                if (mp.memoryHeaps[h].size > vram)
+                {
+                    vram = mp.memoryHeaps[h].size;
+                }
+            }
+        }
+
+        score += vram / 1_GiB;
+
         if (score > bestScore || bestDevice == VK_NULL_HANDLE)
         {
-            VkPhysicalDeviceMemoryProperties mp{};
-            vkGetPhysicalDeviceMemoryProperties(dev, &mp);
-
-            u64 vram = 0;
-            for (u32 h = 0; h < mp.memoryHeapCount; ++h)
-            {
-                if (mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
-                    vram += mp.memoryHeaps[h].size;
-            }
-
-            score += vram / (128ull * 1024ull * 1024);
-
-            // Final check with VRAM included
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestDevice = dev;
-                bestQueueIndex = gfxComputeIndex;
-
-                LOG(Info, "GPU Selected: {}", props.deviceName);
-
-                // Fill descriptor for UI
-                deviceDesc.name = props.deviceName;
-                deviceDesc.vendor = static_cast<GPUVendor>(props.vendorID);
-                deviceDesc.type = static_cast<GPUDeviceType>(props.deviceType);
-                deviceDesc.driverVersion = props.driverVersion;
-                deviceDesc.dedicatedVideoMemory = vram;
-                deviceDesc.driverVersionString = DecodeDriverVersion(props.driverVersion, deviceDesc.vendor);
-                deviceDesc.apiName = fmt::format("Vulkan {}.{}.{}",
-                                                 VK_VERSION_MAJOR(props.apiVersion),
-                                                 VK_VERSION_MINOR(props.apiVersion),
-                                                 VK_VERSION_PATCH(props.apiVersion));
-            }
+            bestScore = score;
+            bestDevice = dev;
+            bestQueueIndex = gfxComputeIndex;
         }
     }
 
@@ -172,9 +185,34 @@ bool VulkanDevice::Init(VulkanInstance* inst)
     physicalDevice = bestDevice;
     graphicsQueueIndex = bestQueueIndex;
 
-    vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+    deviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    vkGetPhysicalDeviceProperties2(physicalDevice, &deviceProperties);
 
-    if (deviceProperties.limits.timestampPeriod == 0.0f)
+    const auto& finalProps = deviceProperties.properties;
+
+    // Recalculate VRAM just for the final UI struct (or store it temporarily in the loop)
+    VkPhysicalDeviceMemoryProperties finalMp{};
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &finalMp);
+    u64 finalVram = 0;
+    for (u32 h = 0; h < finalMp.memoryHeapCount; ++h) {
+        if (finalMp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) finalVram += finalMp.memoryHeaps[h].size;
+    }
+
+    // Populate!!
+    deviceDesc.name = finalProps.deviceName;
+    deviceDesc.vendor = static_cast<GPUVendor>(finalProps.vendorID);
+    deviceDesc.type = static_cast<GPUDeviceType>(finalProps.deviceType);
+    deviceDesc.driverVersion = finalProps.driverVersion;
+    deviceDesc.dedicatedVideoMemory = finalVram;
+    deviceDesc.driverVersionString = DecodeDriverVersion(finalProps.driverVersion, deviceDesc.vendor);
+    deviceDesc.apiName = fmt::format("Vulkan {}.{}.{}",
+                                     VK_VERSION_MAJOR(finalProps.apiVersion),
+                                     VK_VERSION_MINOR(finalProps.apiVersion),
+                                     VK_VERSION_PATCH(finalProps.apiVersion));
+
+    LOG(Info, "GPU Selected: {}", finalProps.deviceName);
+
+    if (deviceProperties.properties.limits.timestampPeriod == 0.0f)
     {
         LOG(Error, "Timestamp queries not supported on this GPU");
         return false;
@@ -185,18 +223,18 @@ bool VulkanDevice::Init(VulkanInstance* inst)
     Vector<VkExtensionProperties> deviceExtensions(deviceExtensionCount);
     VK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &deviceExtensionCount, deviceExtensions.data()));
 
+    bool hasHeapExt = false;
+    for (const auto& ext : deviceExtensions)
+    {
+        if (strcmp(ext.extensionName, VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME) == 0)
+        {
+            hasHeapExt = true;
+            break;
+        }
+    }
+
     if (!ValidateVulkanProperties(requiredDeviceExtensions, deviceExtensions, &VkExtensionProperties::extensionName))
     {
-        bool hasHeapExt = false;
-        for (const auto& ext : deviceExtensions)
-        {
-            if (strcmp(ext.extensionName, VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME) == 0)
-            {
-                hasHeapExt = true;
-                break;
-            }
-        }
-
         if (!hasHeapExt)
         {
             LOG(Warning, "VK_EXT_descriptor_heap is missing! You must install NVIDIA driver 595.xx or later.");
@@ -204,6 +242,11 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 
         LOG(Error, "Required device extensions are missing!!!");
         return false;
+    }
+    if (hasHeapExt)
+    {
+        requiredDeviceExtensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
+        LOG(Info, "Enabling VK_EXT_descriptor_heap extension.");
     }
 
     VkPhysicalDeviceDescriptorHeapFeaturesEXT heapFeatures = {
@@ -213,7 +256,7 @@ bool VulkanDevice::Init(VulkanInstance* inst)
 
     VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR fifoLatestReadyFeature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_KHR,
-        .pNext = &heapFeatures
+        .pNext = hasHeapExt ? &heapFeatures : nullptr
     };
 
     VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unifiedLayoutFeature = {
@@ -236,9 +279,14 @@ bool VulkanDevice::Init(VulkanInstance* inst)
         .pNext = &features12
     };
 
+    VkPhysicalDeviceVulkan14Features features14 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+        .pNext = &features13
+    };
+
     VkPhysicalDeviceFeatures2 supportedCore = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &features13
+        .pNext = &features14
     };
 
     vkGetPhysicalDeviceFeatures2(physicalDevice, &supportedCore);
@@ -247,54 +295,49 @@ bool VulkanDevice::Init(VulkanInstance* inst)
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT
     };
 
-    // Heap Stuff
+    // Heap Stuff adding into IF it exists
     VkPhysicalDeviceProperties2 props = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-        .pNext = &heapProps
+        .pNext = hasHeapExt ? &heapProps : nullptr
     };
+
+    // Populate
     vkGetPhysicalDeviceProperties2(physicalDevice, &props);
 
-    HeapProperties& heapProp = deviceDesc.heapProperties;
-    heapProp.samplerDescriptorSize = heapProps.samplerDescriptorSize;
-    heapProp.resourceDescriptorSize = std::max(heapProps.imageDescriptorSize, heapProps.bufferDescriptorSize);
-    heapProp.samplerReservedSize = heapProps.minSamplerHeapReservedRange;
-    heapProp.resourceReservedSize = heapProps.minResourceHeapReservedRange;
-
-    // storing this for fallback logic later
-    this->useUnifiedLayout = (unifiedLayoutFeature.unifiedImageLayouts == VK_TRUE);
-    if (this->useUnifiedLayout)
+    // Check!
+    if (!features12.descriptorIndexing ||
+        !features12.scalarBlockLayout ||
+        !features12.hostQueryReset ||
+        !features12.bufferDeviceAddress)
     {
-        LOG(Info, "Vulkan Unified Image Layouts enabled.");
+        LOG(Error, "Device missing mandatory Vulkan 1.2 features (Descriptor Indexing, BDA, etc.)!");
+        return false;
     }
-    else
+    if (!features13.dynamicRendering || !features13.synchronization2)
     {
-        LOG(Warning, "Unified Image Layouts not supported. Falling back to legacy transitions.");
-    }
-
-    // Optional Features!!
-    if (fifoLatestReadyFeature.presentModeFifoLatestReady)
-    {
-        LOG(Info, "FIFO_LATEST_READY is supported and enabled.");
-    }
-    else
-    {
-        LOG(Warning, "FIFO_LATEST_READY not supported. Falling back to standard FIFO.");
-    }
-
-    // check for the things that matter for now
-    if (!features13.dynamicRendering || !features13.synchronization2 || !features12.bufferDeviceAddress)
-    {
-        LOG(Error, "Device missing mandatory Vulkan 1.2/1.3 features!");
+        LOG(Error, "Device missing mandatory Vulkan 1.3 features (Dynamic Rendering, Sync2)!");
         return false;
     }
 
-    // slang...
-    features11.shaderDrawParameters = VK_TRUE;
-    // 1.2 Features
-    features12.descriptorIndexing = VK_TRUE;
-    features12.scalarBlockLayout = VK_TRUE;
-    features12.hostQueryReset = VK_TRUE;
-    features12.bufferDeviceAddress = VK_TRUE;
+    if (hasHeapExt)
+    {
+        deviceDesc.heapProperties = {
+            .samplerDescriptorSize = heapProps.samplerDescriptorSize,
+            .resourceDescriptorSize = std::max(heapProps.imageDescriptorSize, heapProps.bufferDescriptorSize),
+            .samplerReservedSize = heapProps.minSamplerHeapReservedRange,
+            .resourceReservedSize = heapProps.minResourceHeapReservedRange,
+            .samplerHeapAlignment = 0, // Fallback if missing
+            .resourceHeapAlignment = 0 // Fallback if missing
+        };
+    }
+
+
+    // this->useUnifiedLayout = (unifiedLayoutFeature.unifiedImageLayouts == VK_TRUE);
+    if (this->useUnifiedLayout) LOG(Info, "Vulkan Unified Image Layouts enabled.");
+    else LOG(Warning, "Unified Image Layouts not supported. Falling back to legacy transitions.");
+
+    if (fifoLatestReadyFeature.presentModeFifoLatestReady) LOG(Info, "FIFO_LATEST_READY is supported and enabled.");
+    else LOG(Warning, "FIFO_LATEST_READY not supported. Falling back to standard FIFO.");
 
     // graphics queue
     f32 queuePriority = 1.0f;
@@ -317,6 +360,7 @@ bool VulkanDevice::Init(VulkanInstance* inst)
     VK_CHECK(vkCreateDevice(physicalDevice, &createInfo, nullptr, &device));
     volkLoadDevice(device);
     vkGetDeviceQueue(device, graphicsQueueIndex, 0, &graphicsQueue);
+
     // VMA allocator
     VmaAllocatorCreateInfo allocatorInfo = {
         .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
@@ -331,9 +375,44 @@ bool VulkanDevice::Init(VulkanInstance* inst)
     allocatorInfo.pVulkanFunctions = &vulkanFunctions;
 
     VK_CHECK(vmaCreateAllocator(&allocatorInfo, &allocator));
-
-    // Initialize immediate submitter
     immediateSubmitter.Init(this);
+
+    // Pipeline cache!
+    if (!FileManager::CreateIfMissing("pipeline_cache.bin"))
+    {
+        LOG(Warning, "Could not create pipeline_cache.bin! Check directory permissions.");
+    }
+
+    Vector<u8> cacheData;
+    if (FileManager::Handle file("pipeline_cache.bin", "rb"); file)
+    {
+        // Only attempt to read if the file actually has compiled shader data in it
+        if (const size_t fileSize = file.size(); fileSize > 0)
+        {
+            cacheData.resize(fileSize);
+            if (file.read<u8>(cacheData))
+            {
+                LOG(Info, "Loaded Vulkan Pipeline Cache from disk ({} bytes)", fileSize);
+            }
+        }
+        else
+        {
+            LOG(Info, "Pipeline cache is empty (First boot). Starting fresh.");
+        }
+    }
+
+    VkPipelineCacheCreateInfo cacheInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+        .initialDataSize = cacheData.size(),
+        .pInitialData = cacheData.empty() ? nullptr : cacheData.data()
+    };
+    VK_CHECK(vkCreatePipelineCache(device, &cacheInfo, nullptr, &pipelineCache));
+
+
+    // MSAA MAX sample count
+    const SampleCount maxSamples = GetMaxUsableSampleCount();
+    currentSamples = std::min(currentSamples, maxSamples);
+
     return true;
 }
 
@@ -345,9 +424,14 @@ void VulkanDevice::ImmediateSubmit(const std::function<void(GPUCommandBuffer*)> 
     }, "RHI Immediate");
 }
 
-std::unique_ptr<GPUTexture> VulkanDevice::CreateTexture(TextureInfo& info)
+std::unique_ptr<GPUTexture> VulkanDevice::CreateTexture(const TextureInfo& info)
 {
     return std::make_unique<VulkanTexture>(this, info);
+}
+
+std::unique_ptr<GPUTextureView> VulkanDevice::CreateTextureView(GPUTexture* texture, const TextureViewInfo& info)
+{
+    return std::make_unique<VulkanTextureView>(this, static_cast<VulkanTexture*>(texture), info);
 }
 
 std::unique_ptr<GPUSampler> VulkanDevice::CreateSampler(SamplerInfo& info)
@@ -360,12 +444,7 @@ std::unique_ptr<GPUBuffer> VulkanDevice::CreateBuffer(BufferInfo& info)
     return std::make_unique<VulkanBuffer>(this, info);
 }
 
-std::unique_ptr<GPUBuffer> VulkanDevice::CreateBuffer(BufferPreset preset, u64 size)
-{
-    return std::make_unique<VulkanBuffer>(this, preset, size);
-}
-
-std::shared_ptr<GPUShader> VulkanDevice::CreateShader(std::span<const u32> code)
+std::shared_ptr<GPUShader> VulkanDevice::CreateShader(Span<const u32> code)
 {
     return std::make_shared<VulkanShader>(this, code);
 }

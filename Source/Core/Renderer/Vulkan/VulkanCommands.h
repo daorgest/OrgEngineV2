@@ -4,12 +4,12 @@
 
 #pragma once
 #include <volk.h>
+#ifdef TRACY_ENABLE
 #include <tracy/TracyVulkan.hpp>
-
+#endif
 #include "VulkanCommandBuffer.h"
 #include "VulkanQueryPool.h"
 #include "Tools/Array.h"
-#include "Tools/Vector.h"
 
 namespace Renderer
 {
@@ -21,42 +21,43 @@ namespace Renderer
 	struct VulkanFrameData final : GPUFrameData
 	{
 		VulkanCommandBuffer commandBuffer;
-		std::unique_ptr<VulkanFence> renderFence;
-		std::unique_ptr<VulkanSemaphore> acquireSemaphore;
-		VulkanQueryPool queryPool;
+	    VulkanQueryPool queryPool;
 
-		// RHI interface implementation
+	    VulkanFence renderFence;
+	    VulkanSemaphore acquireSemaphore;
+
 		bool Init(GPUDevice* device) override;
 		void Destroy() override;
-		void Reset() override;
 
 	    [[nodiscard]] VulkanCommandBuffer* GetCommandBuffer() override { return &commandBuffer; }
+	    [[nodiscard]] VulkanQueryPool* GetQueryPool() override { return &queryPool; }
 
 	private:
 		VulkanDevice* device = nullptr;
 	};
 
 	// High-level renderer managing frame resources and presentation
-	struct VulkanRenderer final : GPURenderer
-	{
-		bool Init(GPUDevice* device, GPUSwapchain* swapchain, u32 frameOverlap = MAX_FRAME_OVERLAP) override;
-		bool BeginFrame(u32& outFrameIndex, u32& outImageIndex) override;
-		void EndFrame(u32 frameIndex, u32 imageIndex) override;
-		void Destroy() override;
+    struct VulkanRenderer final : GPURenderer
+    {
+        bool Init(GPUDevice* device, GPUSwapchain* swapchain, u32 frameOverlap = MAX_FRAME_OVERLAP) override;
+        void Destroy() override;
 
-		VulkanFrameData* GetCurrentFrameData() override { return &frames[frameNumber % framesActive]; }
-		u32 GetFrameIndex() const override { return frameNumber % framesActive; }
+        [[nodiscard]] GPUCommandBuffer* BeginFrame() override;
+        void EndFrame() override;
 
-		TracyVkCtx tracyCtx = nullptr;
-	private:
-		Array<VulkanFrameData, MAX_FRAME_OVERLAP> frames;
-		Vector<std::unique_ptr<VulkanSemaphore>> presentSemaphores; // One per swapchain image (indexed by imageIndex)
-
-		u32 frameNumber = 0;
-		u32 framesActive = MAX_FRAME_OVERLAP;
-
-		VulkanDevice* device = nullptr;
-		VulkanSwapchain* swapchain = nullptr;
-	};
+        [[nodiscard]] GPUFrameData* GetCurrentFrameData() override { return &frames[frameNumber % framesActive]; }
+        [[nodiscard]] u32 GetFrameIndex() const override { return frameNumber % framesActive; }
+    private:
+        Array<VulkanFrameData, MAX_FRAME_OVERLAP> frames;
+        Array<VulkanSemaphore, MAX_FRAME_OVERLAP> presentSemaphores;
+        u32 currentImageIndex = 0;
+        u32 frameNumber = 0;
+        u32 framesActive = MAX_FRAME_OVERLAP;
+#ifdef TRACY_ENABLE
+        TracyVkCtx tracyCtx = nullptr;
+#endif
+        VulkanDevice* device = nullptr;
+        VulkanSwapchain* swapchain = nullptr;
+    };
 
 } // namespace Renderer

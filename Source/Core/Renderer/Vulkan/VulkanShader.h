@@ -3,8 +3,6 @@
 //
 
 #pragma once
-
-#include <span>
 #include <volk.h>
 
 #include "RendererTypes.h"
@@ -17,8 +15,8 @@ namespace Renderer
 	/// Vulkan implementation of GPUShader
 	struct VulkanShader final : GPUShader
 	{
-	    VulkanShader(VulkanDevice* device, std::span<const u32> code, ShaderFormat format = ShaderFormat::SPIRV);
-	    ~VulkanShader() override { Destroy(); };
+        VulkanShader(VulkanDevice* device, Span<const u32> code, ShaderFormat format = ShaderFormat::SPIRV);
+        ~VulkanShader() override { Destroy(); };
         void Destroy() const;
 
 		// Public Vulkan handles for compatibility

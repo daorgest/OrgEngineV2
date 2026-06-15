@@ -4,7 +4,7 @@
 
 #pragma once
 #include <span>
-#include "Tools/Vector.h"
+#include <volk.h>
 #include "Tools/Logger.h"
 
 
@@ -121,13 +121,15 @@ inline const char* VkResultToString(VkResult input)
     do {                                                                                       \
         VkResult result = (expr);                                                              \
         if (result != VK_SUCCESS) {                                                            \
-            LOG(Error, "[VK_CHECK] '{}' failed with result: {}", #expr, (i32)result);          \
+            Logger::Write(LogType::Error, std::source_location::current(),                             \
+                          "[VK_CHECK] '{}' failed at {}:{} with result: {}",                           \
+                          #expr, __FILE__, __LINE__, VkResultToString(result));         \
         }                                                                                      \
     } while (0)
 
 // Funny code for validation layer checking
 template <typename T>
-bool ValidateVulkanProperties(const std::span<const char*> required, const Vector<T>& available,
+bool ValidateVulkanProperties(const Span<const char*> required, NoDeduce_t<Span<const T>> available,
                               const char (T::*nameField)[VK_MAX_EXTENSION_NAME_SIZE])
 {
     bool ok = true;

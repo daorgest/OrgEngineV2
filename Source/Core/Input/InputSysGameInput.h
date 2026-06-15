@@ -5,9 +5,6 @@
 #pragma once
 #ifdef ENGINE_PLATFORM_WIN32
 #include <GameInput.h>
-#ifndef GAMEINPUT_API_VERSION
-#define GAMEINPUT_API_VERSION 0
-#endif
 
 #include "Platform.h"
 #include "Tools/Array.h"

@@ -3,158 +3,99 @@
 //
 
 #pragma once
-#include <unordered_map>
-
-#include "../PrimTypes.h"
-
-#include "RenderInterface.h"
-#include "ShaderConstants.h"
+#include "RendererTypes.h"
 #include "VulkanDescriptors.h"
 #include "Tools/AssetPool.h"
 
-#include "MathFuncs.h"
-#include "Tools/Array.h"
-
 namespace Renderer
 {
+    struct GPUTexture;
+    struct GPUDevice;
+
+    // Predefined shared filtering setups
+    enum class SamplerType : u8
+    {
+        LinearRepeat, // Standard tiling meshes (Albedo, Normals)
+        LinearClamp, // Post-processing, UI, LUTs
+        PointRepeat, // Pixel art, discrete data masks
+        PointClamp // Shadow maps, depth buffers, G-Buffer lookups
+    };
+
+    struct TextureMapping
+    {
+        u64 id;
+        u32 index;
+
+        bool operator<(const TextureMapping& other) const { return id < other.id; }
+    };
+
     struct BindlessManager
     {
         GPUDevice* device = nullptr;
         AssetPool<TextureData>* texturePool = nullptr;
 
-        // Reserved static indices for engine fallbacks
         static constexpr u32 WhiteIdx = 0;
         static constexpr u32 NormalIdx = 1;
         static constexpr u32 CheckerIdx = 2;
         static constexpr u32 BlackIdx = 3;
 
         Vector<std::unique_ptr<GPUTexture>> globalTextures;
-        std::unordered_map<u64, u32> handleIdToIndex;
-        DescriptorSet set;
+        Vector<TextureMapping> handleIdToIndex;
 
-        std::unique_ptr<GPUSampler> linearSampler;
-        std::unique_ptr<GPUSampler> pointSampler;
+        VulkanDescriptorSet set;
+        DescriptorLayout textureLayout2D;
 
-        void Init(GPUDevice* inDevice, AssetPool<TextureData>& inPool, DescriptorAllocatorGrowable& allocator)
+        Vector<std::unique_ptr<GPUTexture>> globalTextures3D;
+        VulkanDescriptorSet set3D;
+        DescriptorLayout textureLayout3D;
+
+        std::unique_ptr<GPUSampler> linearRepeatSampler;
+        std::unique_ptr<GPUSampler> linearClampSampler;
+        std::unique_ptr<GPUSampler> pointRepeatSampler;
+        std::unique_ptr<GPUSampler> pointClampSampler;
+
+        [[nodiscard]] GPUSampler* GetSharedSampler(SamplerType type) const noexcept
         {
-            device = inDevice;
-            texturePool = &inPool;
-
-
-            const auto layout = DescriptorLayoutBuilder()
-                                .AddBindings(Constants::BindlessTextures)
-                                .Build(device);
-
-            set = allocator.Allocate(layout, true, Constants::BindlessTextures[0].count);
-
-
-            SamplerInfo linearInfo = {
-                .minLod = 0.0f,
-                .maxLod = 12.0f,
-                .maxAnisotropy = 16,
-                .anisotropyEnable = true
-            };
-            linearSampler = device->CreateSampler(linearInfo);
-
-            SamplerInfo pointInfo = {
-                .minFilter = SamplerFilter::Nearest,
-                .magFilter = SamplerFilter::Nearest,
-                .mipFilter = SamplerMipFilter::None,
-                .addressU = SamplerAddressMode::ClampToEdge,
-                .addressV = SamplerAddressMode::ClampToEdge
-            };
-            pointSampler = device->CreateSampler(pointInfo);
-
-            // Slot 0: White
-            constexpr u32 whitePixel = 0xFFFFFFFF;
-            UploadRawFallback(WhiteIdx, 1, 1, TextureFormat::RGBA8_SRGB, &whitePixel, "Default White");
-
-            // Slot 1: Normal (128, 128, 255)
-            const u32 flatNormal = PackUnorm4x8({0.5f, 0.5f, 1.0f, 1.0f});
-            UploadRawFallback(NormalIdx, 1, 1, TextureFormat::RGBA8_UNORM, &flatNormal, "Default Normal");
-
-            // Slot 2: Checkerboard
-            constexpr u32 cSize = 16;
-            Array<u32, cSize * cSize> pixels;
-            for (u32 y = 0; y < cSize; ++y)
+            switch (type)
             {
-                for (u32 x = 0; x < cSize; ++x)
-                {
-                    pixels[y * cSize + x] = ((x / 4 + y / 4) % 2 == 0) ? 0xFFFF00FF : 0xFF000000;
-                }
+            case SamplerType::LinearRepeat: return linearRepeatSampler.get();
+            case SamplerType::LinearClamp: return linearClampSampler.get();
+            case SamplerType::PointRepeat: return pointRepeatSampler.get();
+            case SamplerType::PointClamp: return pointClampSampler.get();
+            default: return linearRepeatSampler.get();
             }
-            UploadRawFallback(CheckerIdx, cSize, cSize, TextureFormat::RGBA8_SRGB, pixels.data(), "Default Checker");
         }
 
-        u32 GetOrUpload(const ResourceHandle<TextureData> handle)
-        {
-            if (!handle.IsValid()) return CheckerIdx;
+        void Init(GPUDevice* inDevice, AssetPool<TextureData>& inPool, DescriptorAllocatorGrowable& allocator);
+        void Destroy();
 
-            if (auto it = handleIdToIndex.find(handle.id); it != handleIdToIndex.end())
-            {
-                return it->second;
-            }
+        u32 Register3DTexture(std::unique_ptr<GPUTexture> tex, SamplerType samplerType = SamplerType::PointClamp);
 
-            const auto res = texturePool->Get(handle);
-            if (!res) return CheckerIdx;
-            TextureData* cpuData = *res;
+        // Cache-friendly lookup via binary search
+        u32 GetOrUpload(ResourceHandle<TextureData> handle, SamplerType samplerType = SamplerType::LinearRepeat);
 
-
-            TextureInfo info = {
-                .extent = {static_cast<u32>(cpuData->width), static_cast<u32>(cpuData->height), 1},
-                .format = cpuData->format,
-                .usage = ImageUsage::Sampled | ImageUsage::TransferDst
-            };
-
-            info.EnableMipmaps();
-
-            auto gpuTex = device->CreateTexture(info);
-
-            // Safe variant pointer extraction
-            const void* pixelData = nullptr;
-            if (auto* u8Vec = std::get_if<Vector<u8>>(&cpuData->data))
-            {
-                pixelData = u8Vec->data();
-            }
-            else if (auto* f32Vec = std::get_if<Vector<f32>>(&cpuData->data))
-            {
-                pixelData = f32Vec->data();
-            }
-
-            gpuTex->UploadData(pixelData);
-
-            const u32 newIndex = static_cast<u32>(globalTextures.size());
-            globalTextures.push_back(std::move(gpuTex));
-            handleIdToIndex[handle.id] = newIndex;
-
-            UpdateDescriptor(newIndex, globalTextures.back().get(), linearSampler.get());
-            return newIndex;
-        }
+        void UpdateDescriptor(VulkanDescriptorSet& targetSet, u32 idx, const GPUTextureView* view,
+                              const GPUSampler* sampler) const;
 
     private:
-        void UpdateDescriptor(u32 idx, const GPUTexture* tex, const GPUSampler* sampler) const
+        [[nodiscard]] u32 FindIndex(u64 id) const
         {
-            DescriptorWriter writer;
-            // Write to Set 2, Binding 0
-            writer.WriteCombinedImage(0, tex, sampler, idx);
-            writer.UpdateSet(device, set);
+            if (const auto it = std::lower_bound(handleIdToIndex.begin(), handleIdToIndex.end(), TextureMapping{id, 0});
+                it != handleIdToIndex.end() && it->id == id) return it->index;
+            return ~0u;
         }
 
-        void UploadRawFallback(u32 idx, u32 w, u32 h, TextureFormat fmt, const void* data, const char* name)
+        void InsertMapping(u64 id, u32 index)
         {
-            TextureInfo info = {
-                .extent = {w, h, 1},
-                .format = fmt,
-                .usage = ImageUsage::Sampled | ImageUsage::TransferDst
-            };
+            const auto it = std::lower_bound(handleIdToIndex.begin(), handleIdToIndex.end(), TextureMapping{id, index});
 
-            auto tex = device->CreateTexture(info);
-            tex->UploadData(data);
-            tex->SetName(name);
 
-            if (globalTextures.size() <= idx) globalTextures.resize(idx + 1);
-            globalTextures[idx] = std::move(tex);
-            UpdateDescriptor(idx, globalTextures[idx].get(), linearSampler.get());
+            const vecSizeType insertPos = static_cast<vecSizeType>(it - handleIdToIndex.begin());
+
+            handleIdToIndex.insert(insertPos, {id, index});
         }
+
+        void UploadRawFallback(u32 idx, u32 w, u32 h, TextureFormat fmt, const void* data, const char* name,
+                               SamplerType samplerType);
     };
 }

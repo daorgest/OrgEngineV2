@@ -5,13 +5,14 @@
 #include "VulkanShaderBuffer.h"
 
 #include <algorithm>
+
+#include <tracy/Tracy.hpp>
 #include "VulkanBuffer.h"
 #include "VulkanCommandBuffer.h"
 #include "VulkanConvert.h"
 #include "VulkanDescriptors.h"
 #include "VulkanDevice.h"
 #include "Tools/Logger.h"
-#include "tracy/Tracy.hpp"
 
 using namespace Renderer;
 
@@ -23,15 +24,12 @@ VulkanShaderBuffer::VulkanShaderBuffer(GPUDevice* device, DescriptorAllocatorGro
     this->desc = desc;
 
     Initialize();
-
-    const bool needsBindless = std::ranges::any_of(desc.bindings, [](const auto& b) { return b.isBindless; });
-    AllocateDescriptorSets(needsBindless, 1000);
 }
 
 void VulkanShaderBuffer::UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size)
 {
     ZoneScopedN("VulkanShaderBuffer::UpdateBinding");
-
+#ifdef _DEBUG
     // Validate frame index
     if (frameIndex >= MAX_FRAME_OVERLAP)
     {
@@ -58,15 +56,17 @@ void VulkanShaderBuffer::UpdateBinding(u32 frameIndex, u32 binding, const void* 
         LOG(Error, "ShaderBuffer: slot {} out of range (slotCount: {}) for binding={}", slot, slotCount, binding);
         return;
     }
-
+#endif
     const u32 bufferIndex = index(frameIndex, binding);
+#ifdef _DEBUG
     if (bufferIndex >= buffers.size())
     {
         LOG(Error, "ShaderBuffer: calculated buffer index {} out of range (size: {})", bufferIndex, buffers.size());
         return;
     }
-
+#endif
     const VulkanBuffer& buf = buffers[bufferIndex];
+#ifdef _DEBUG
     if (!buf.IsValid())
     {
         LOG(Error, "ShaderBuffer at frame={} binding={} (slot={}) is not valid!", frameIndex, binding, slot);
@@ -87,7 +87,7 @@ void VulkanShaderBuffer::UpdateBinding(u32 frameIndex, u32 binding, const void* 
             desc.setIndex, frameIndex, binding, size, buf.info.size);
         return;
     }
-
+#endif
     buf.Upload(data, size);
 }
 
@@ -107,13 +107,14 @@ void VulkanShaderBuffer::Bind(GPUCommandBuffer* cmd, GPUPipeline* pipeline, u32 
 
 void VulkanShaderBuffer::Destroy()
 {
-    for (auto& buf : buffers)
+    for(auto& buf : buffers)
     {
         buf.Destroy();
     }
     buffers.clear();
 
     layout.Destroy(device);
+    slotCount = 0;
 }
 
 void VulkanShaderBuffer::Initialize()
@@ -164,7 +165,8 @@ void VulkanShaderBuffer::Initialize()
         {
             if (b.type == DescriptorType::UniformBuffer || b.type == DescriptorType::StorageBuffer)
             {
-                buffers.emplace_back(device, ToPreset(b.type), b.size);
+                BufferInfo info = BufferInfo::FromPreset(ToPreset(b.type), b.size);
+                buffers.emplace_back(device, info);
             }
         }
     }
@@ -178,14 +180,13 @@ void VulkanShaderBuffer::Initialize()
 void VulkanShaderBuffer::AllocateDescriptorSets(const bool isBindless, const u32 bindlessCount)
 {
     ZoneScoped;
-    DescriptorWriter writer;
-    writer.writes.reserve(desc.bindings.size());
 
     for (u32 frame = 0; frame < MAX_FRAME_OVERLAP; ++frame)
     {
         descriptorSets[frame] = allocator->Allocate(layout, isBindless, bindlessCount);
 
-        writer.Clear();
+        auto& writer = descriptorSets[frame].writer;
+
         for (const Binding& b : desc.bindings)
         {
             if (b.type == DescriptorType::UniformBuffer || b.type == DescriptorType::StorageBuffer)
@@ -194,8 +195,10 @@ void VulkanShaderBuffer::AllocateDescriptorSets(const bool isBindless, const u32
                 writer.WriteBuffer(b.binding, &buffers[bufferIdx], b.type);
             }
         }
-        writer.UpdateSet(device, descriptorSets[frame]);
+        writer.UpdateSet(device, descriptorSets[frame].vk);
+        writer.Clear();
     }
+
 }
 
 u32 VulkanShaderBuffer::index(const u32 frame, const u32 binding) const noexcept

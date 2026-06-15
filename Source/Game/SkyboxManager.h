@@ -16,32 +16,32 @@ using CubeSource = std::variant<
 >;
 
 
+// Soon....
 struct SphericalHarmonics
 {
-	Array<glm::vec3, 9> coefficients;
+	Array<f32, 9> coefficients;
 };
 
 
 class SkyboxManager
 {
 public:
-    bool Initialize(Renderer::GPUDevice* device);
+    bool Initialize(Renderer::GPUDevice* device, Renderer::DescriptorAllocatorGrowable& descriptorAlloc);
 
-
-    [[nodiscard]] std::unique_ptr<Renderer::GPUTexture> CreateCubeMapFromSource(CubeSource source);
-    std::unique_ptr<Renderer::GPUTexture>               CreateHDRTexture(const char* path) const;
+    std::unique_ptr<Renderer::GPUTexture> CreateCubeMapFromSource(CubeSource source);
+    std::unique_ptr<Renderer::GPUTexture> CreateHDRTexture(const char* path) const;
     std::unique_ptr<Renderer::GPUTexture> CreateCubeMapFromFiles(const Array<const char*, 6>& paths) const;
 
     void Render(Renderer::GPUCommandBuffer* cmd, const Camera& camera) const;
     void Cleanup() const;
 
 
-   [[nodiscard]] Renderer::GPUTexture* GetCubemap() const { return cubemap.get(); }
-   [[nodiscard]] Renderer::DescriptorSet GetDescriptorSet() const { return descriptorSet; }
+    [[nodiscard]] Renderer::VulkanDescriptorSet& GetDescriptorSet() { return descriptorSet; }
+    Renderer::GPUPipeline* GetPipeline() const { return pipeline.get(); }
 
 private:
     std::unique_ptr<Renderer::GPUTexture> CreateProceduralFallback() const;
-    bool CreateShaderAndPipeline();
+    bool CreateShaderAndPipeline(Renderer::DescriptorAllocatorGrowable& descriptorAlloc);
 
     Renderer::GPUDevice* devicePtr = nullptr;
 
@@ -51,6 +51,6 @@ private:
     std::shared_ptr<Renderer::GPUShader> shader;
     std::unique_ptr<Renderer::GPUPipeline> pipeline;
     Renderer::DescriptorLayout layout;
-    Renderer::DescriptorSet descriptorSet;
+    Renderer::VulkanDescriptorSet descriptorSet;
 };
 

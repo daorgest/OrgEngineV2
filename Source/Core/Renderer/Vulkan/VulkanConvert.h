@@ -4,7 +4,6 @@
 
 #pragma once
 #include <cassert>
-#include <span>
 #include <volk.h>
 
 #include "RendererTypes.h"
@@ -30,12 +29,12 @@ namespace Renderer
     }
 
     // StoreOp conversions
-    [[nodiscard]] constexpr VkAttachmentStoreOp ToVk(StoreOp op)
+    [[nodiscard]] constexpr VkAttachmentStoreOp ToVk(StoreOP op)
     {
         switch (op)
         {
-        case StoreOp::Store: return VK_ATTACHMENT_STORE_OP_STORE;
-        case StoreOp::DontCare: return VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        case StoreOP::Store: return VK_ATTACHMENT_STORE_OP_STORE;
+        case StoreOP::DontCare: return VK_ATTACHMENT_STORE_OP_DONT_CARE;
         default: return VK_ATTACHMENT_STORE_OP_DONT_CARE;
         }
     }
@@ -65,6 +64,18 @@ namespace Renderer
         default: return VK_CULL_MODE_BACK_BIT;
         }
     }
+
+    [[nodiscard]] constexpr VkPolygonMode ToVk(PolygonMode mode)
+    {
+        switch (mode)
+        {
+        case PolygonMode::Fill: return VK_POLYGON_MODE_FILL;
+        case PolygonMode::Line: return VK_POLYGON_MODE_LINE;
+        case PolygonMode::Point: return VK_POLYGON_MODE_POINT;
+        default: return VK_POLYGON_MODE_FILL;
+        }
+    }
+
 
     [[nodiscard]] constexpr VkCompareOp ToVk(CompareOp op)
     {
@@ -126,9 +137,10 @@ namespace Renderer
      * We pass the available modes from the swapchain because only FIFO is guaranteed;
      * requesting an unsupported mode like Mailbox or Immediate will cause a device crash.
      */
-    [[nodiscard]] constexpr VkPresentModeKHR ToVkPresentMode(PresentMode mode, std::span<const VkPresentModeKHR> available)
+    [[nodiscard]] constexpr VkPresentModeKHR ToVkPresentMode(const PresentMode mode,
+                                                             Span<const VkPresentModeKHR> available)
     {
-        auto has = [&](VkPresentModeKHR m)
+        auto has = [&](const VkPresentModeKHR m)
         {
             return std::ranges::find(available, m) != available.end();
         };
@@ -162,27 +174,12 @@ namespace Renderer
     };
 
     // Wanted to not go insane pasting this everywhere...layout transitions ew
-    [[nodiscard]] constexpr SyncState GetSyncState(const TextureLayout layout, const bool isDestination)
+    [[nodiscard]] constexpr SyncState GetSyncState(const TextureLayout layout)
     {
         switch (layout)
         {
         case TextureLayout::Unknown:
-            return {VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE};
-
-        case TextureLayout::ShaderReadOnly:
-            return {VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
-
-        case TextureLayout::ColorWrite:
-            return {VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT};
-
-        case TextureLayout::DepthWrite:
-            // Source waits for late tests; destination starts at early tests
-            return {
-                isDestination
-                    ? VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
-                    : VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-            };
+            return {VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0};
 
         case TextureLayout::CopyDestination:
             return {VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT};
@@ -190,15 +187,54 @@ namespace Renderer
         case TextureLayout::CopySource:
             return {VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT};
 
+        case TextureLayout::ShaderReadOnly:
+            return {
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_READ_BIT
+            };
+
+        case TextureLayout::ColorWrite:
+            return {VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT};
+
+        case TextureLayout::DepthWrite:
+            return {
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+            };
+
         case TextureLayout::Present:
-            return {VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE};
+            return {VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0};
 
         case TextureLayout::General:
         default:
             return {
-                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_2_HOST_BIT,
-                VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_HOST_WRITE_BIT // this combo is for nsight
+                VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT |
+                VK_ACCESS_2_TRANSFER_WRITE_BIT
             };
+        }
+    }
+
+    [[nodiscard]] constexpr VkImageLayout ToVkImageLayout(const TextureLayout layout, const bool useUnified)
+    {
+        if (layout == TextureLayout::Present) return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        if (layout == TextureLayout::Unknown) return VK_IMAGE_LAYOUT_UNDEFINED;
+
+        if (useUnified) return VK_IMAGE_LAYOUT_GENERAL;
+
+
+        // (If disabling Unified Layouts)
+        switch (layout)
+        {
+        case TextureLayout::Unknown: return VK_IMAGE_LAYOUT_UNDEFINED;
+        case TextureLayout::CopyDestination: return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        case TextureLayout::CopySource: return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        case TextureLayout::ShaderReadOnly: return VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL;
+        case TextureLayout::ColorWrite: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        case TextureLayout::DepthWrite: return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        case TextureLayout::Present: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        case TextureLayout::General: return VK_IMAGE_LAYOUT_GENERAL;
+        default: return VK_IMAGE_LAYOUT_UNDEFINED;
         }
     }
 
@@ -239,7 +275,39 @@ namespace Renderer
         }
     }
 
-    [[nodiscard]] constexpr VkImageUsageFlags ToVkImageUsage(ImageUsageFlags usage)
+    // Moved!!
+    [[nodiscard]] constexpr VkBufferUsageFlags ToVk(GPUBufferFlag usage)
+    {
+        VkBufferUsageFlags flags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+        if (HasAny(usage, GPUBufferFlag::Vertex)) flags |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        if (HasAny(usage, GPUBufferFlag::Index)) flags |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+        if (HasAny(usage, GPUBufferFlag::Storage)) flags |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        if (HasAny(usage, GPUBufferFlag::Constant)) flags |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+        if (HasAny(usage, GPUBufferFlag::ShaderDeviceAddress)) flags |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        if (HasAny(usage, GPUBufferFlag::Indirect)) flags |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+        if (HasAny(usage, GPUBufferFlag::ShaderBindingTable)) flags |= VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR;
+        if (HasAny(usage, GPUBufferFlag::DescriptorHeap)) flags |= VK_BUFFER_USAGE_DESCRIPTOR_HEAP_BIT_EXT;
+
+        return flags;
+    }
+
+    [[nodiscard]] constexpr VkImageAspectFlags ToVkAspectMask(TextureFormat format)
+    {
+        switch (format)
+        {
+        case TextureFormat::D16_UNORM:
+        case TextureFormat::D32_SFLOAT:
+            return VK_IMAGE_ASPECT_DEPTH_BIT;
+        case TextureFormat::D24_UNORM_S8_UINT:
+        case TextureFormat::D32_SFLOAT_S8_UINT:
+            return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+        default:
+            return VK_IMAGE_ASPECT_COLOR_BIT;
+        }
+    }
+
+    [[nodiscard]] constexpr VkImageUsageFlags ToVk(ImageUsageFlags usage)
     {
         // Define a mapping between Engine flags and Vulkan flags
         struct UsageMapping {
@@ -262,7 +330,7 @@ namespace Renderer
 
         VkImageUsageFlags flags = 0;
 
-        // Use a constexpr-friendly loop
+
         for (const auto& entry : table)
         {
             if (HasAny(usage, entry.engine))
@@ -273,7 +341,6 @@ namespace Renderer
 
         return flags;
     }
-
 
     [[nodiscard]] constexpr VkFormat ToVkFormat(TextureFormat format)
     {
@@ -324,14 +391,17 @@ namespace Renderer
         case TextureFormat::R11G11B10_UFLOAT: return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
         case TextureFormat::R9G9B9E5_UFLOAT: return VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;
 
+        case TextureFormat::BC1_RGBA_SRGB_BLOCK: return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
         case TextureFormat::BC1_RGB_UNORM_BLOCK: return VK_FORMAT_BC1_RGB_UNORM_BLOCK;
         case TextureFormat::BC1_RGBA_UNORM_BLOCK: return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
         case TextureFormat::BC2_UNORM_BLOCK: return VK_FORMAT_BC2_UNORM_BLOCK;
         case TextureFormat::BC3_UNORM_BLOCK: return VK_FORMAT_BC3_UNORM_BLOCK;
+        case TextureFormat::BC3_SRGB_BLOCK: return VK_FORMAT_BC3_SRGB_BLOCK;
         case TextureFormat::BC4_UNORM_BLOCK: return VK_FORMAT_BC4_UNORM_BLOCK;
         case TextureFormat::BC5_UNORM_BLOCK: return VK_FORMAT_BC5_UNORM_BLOCK;
         case TextureFormat::BC6H_SFLOAT_BLOCK: return VK_FORMAT_BC6H_SFLOAT_BLOCK;
         case TextureFormat::BC7_UNORM_BLOCK: return VK_FORMAT_BC7_UNORM_BLOCK;
+        case TextureFormat::BC7_SRGB_BLOCK: return VK_FORMAT_BC7_SRGB_BLOCK;
         case TextureFormat::ETC2_RGB8_UNORM_BLOCK: return VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
         case TextureFormat::ETC2_RGBA8_UNORM_BLOCK: return VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK;
         case TextureFormat::ASTC_4x4_UNORM_BLOCK: return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
@@ -344,6 +414,19 @@ namespace Renderer
 
         default:
         case TextureFormat::UNKNOWN: return VK_FORMAT_UNDEFINED;
+        }
+    }
+
+    [[nodiscard]] constexpr TextureFormat ToEngineFormat(VkFormat format)
+    {
+        switch (format)
+        {
+        case VK_FORMAT_B8G8R8A8_SRGB: return TextureFormat::BGRA8_SRGB;
+        case VK_FORMAT_B8G8R8A8_UNORM: return TextureFormat::BGRA8_UNORM;
+        case VK_FORMAT_R8G8B8A8_SRGB: return TextureFormat::RGBA8_SRGB;
+        case VK_FORMAT_R8G8B8A8_UNORM: return TextureFormat::RGBA8_UNORM;
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32: return TextureFormat::R10G10B10A2_UNORM;
+        default: return TextureFormat::UNKNOWN;
         }
     }
 
@@ -364,6 +447,51 @@ namespace Renderer
         default: case TextureLayout::Unknown: return VK_IMAGE_LAYOUT_UNDEFINED;
         }
     }
+
+    // Texture View Dimensions & Swizzles
+    [[nodiscard]] constexpr VkImageViewType ToVkImageViewType(TextureDimension dim)
+    {
+        switch (dim)
+        {
+        case TextureDimension::Texture1D: return VK_IMAGE_VIEW_TYPE_1D;
+        case TextureDimension::Texture2D: return VK_IMAGE_TYPE_2D == VK_IMAGE_TYPE_3D
+                                                     ? VK_IMAGE_VIEW_TYPE_3D
+                                                     : VK_IMAGE_VIEW_TYPE_2D;
+        case TextureDimension::Texture3D: return VK_IMAGE_VIEW_TYPE_3D;
+        case TextureDimension::CubeMap: return VK_IMAGE_VIEW_TYPE_CUBE;
+        default: return VK_IMAGE_VIEW_TYPE_2D;
+        }
+    }
+
+    [[nodiscard]] constexpr VkImageViewType ToVk(TextureViewDimension dimension)
+    {
+        switch (dimension)
+        {
+        case TextureViewDimension::Texture2D: return VK_IMAGE_VIEW_TYPE_2D;
+        case TextureViewDimension::Texture2DArray: return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        case TextureViewDimension::Cube: return VK_IMAGE_VIEW_TYPE_CUBE;
+        case TextureViewDimension::CubeFace: return VK_IMAGE_VIEW_TYPE_2D; // A single face is bound as a flat 2D layer
+        case TextureViewDimension::Texture3D: return VK_IMAGE_VIEW_TYPE_3D;
+        case TextureViewDimension::Auto: return VK_IMAGE_VIEW_TYPE_2D;
+        default: return VK_IMAGE_VIEW_TYPE_2D;
+        }
+    }
+
+    [[nodiscard]] constexpr VkComponentSwizzle ToVk(TextureSwizzle swizzle)
+    {
+        switch (swizzle)
+        {
+        case TextureSwizzle::Identity: return VK_COMPONENT_SWIZZLE_IDENTITY;
+        case TextureSwizzle::Zero: return VK_COMPONENT_SWIZZLE_ZERO;
+        case TextureSwizzle::One: return VK_COMPONENT_SWIZZLE_ONE;
+        case TextureSwizzle::R: return VK_COMPONENT_SWIZZLE_R;
+        case TextureSwizzle::G: return VK_COMPONENT_SWIZZLE_G;
+        case TextureSwizzle::B: return VK_COMPONENT_SWIZZLE_B;
+        case TextureSwizzle::A: return VK_COMPONENT_SWIZZLE_A;
+        default: return VK_COMPONENT_SWIZZLE_IDENTITY;
+        }
+    }
+
 
     [[nodiscard]] constexpr VkSampleCountFlagBits ToVk(SampleCount count)
     {
@@ -396,46 +524,90 @@ namespace Renderer
         }
     }
 
-    [[nodiscard]] constexpr VkComponentSwizzle ToVk(TextureSwizzle s)
-    {
-        switch (s)
-        {
-        case TextureSwizzle::Identity: return VK_COMPONENT_SWIZZLE_IDENTITY;
-        case TextureSwizzle::Zero: return VK_COMPONENT_SWIZZLE_ZERO;
-        case TextureSwizzle::One: return VK_COMPONENT_SWIZZLE_ONE;
-        case TextureSwizzle::R: return VK_COMPONENT_SWIZZLE_R;
-        case TextureSwizzle::G: return VK_COMPONENT_SWIZZLE_G;
-        case TextureSwizzle::B: return VK_COMPONENT_SWIZZLE_B;
-        case TextureSwizzle::A: return VK_COMPONENT_SWIZZLE_A;
-        }
-        return VK_COMPONENT_SWIZZLE_IDENTITY;
-    }
-
     [[nodiscard]] constexpr u32 BytesPerTexel(TextureFormat fmt)
     {
         switch (fmt)
         {
-        case TextureFormat::R32_SFLOAT: return 4u;
-        case TextureFormat::RG32_SFLOAT: return 8u;
-        case TextureFormat::RGB32_SFLOAT: return 12u;
-        case TextureFormat::RGBA32_SFLOAT: return 16u;
+        // 1-Byte Formats
+        case TextureFormat::R8_UNORM:
+        case TextureFormat::R8_SRGB:
+        case TextureFormat::R8_UINT:
+        case TextureFormat::R8_SINT:
+            return 1u;
 
+        // 2-Byte Formats
+        case TextureFormat::RG8_UNORM:
+        case TextureFormat::RG8_SRGB:
+        case TextureFormat::RG8_UINT:
+        case TextureFormat::RG8_SINT:
+        case TextureFormat::R16_UINT:
+        case TextureFormat::R16_SINT:
+        case TextureFormat::R16_SFLOAT:
+        case TextureFormat::D16_UNORM:
+            return 2u;
 
-        case TextureFormat::R16_SFLOAT: return 2u;
-        case TextureFormat::RG16_SFLOAT: return 4u;
-        case TextureFormat::RGBA16_SFLOAT: return 8u;
+        // 3-Byte Formats
+        case TextureFormat::RGB8_UNORM:
+        case TextureFormat::RGB8_SRGB:
+            return 3u;
 
-
+        // 4-Byte Formats
         case TextureFormat::RGBA8_UNORM:
-        case TextureFormat::RGBA8_SRGB:
         case TextureFormat::BGRA8_UNORM:
+        case TextureFormat::RGBA8_SRGB:
         case TextureFormat::BGRA8_SRGB:
+        case TextureFormat::RGBA8_UINT:
+        case TextureFormat::RGBA8_SINT:
+        case TextureFormat::R32_UINT:
+        case TextureFormat::R32_SINT:
+        case TextureFormat::R32_SFLOAT:
+        case TextureFormat::RG16_UINT:
+        case TextureFormat::RG16_SINT:
+        case TextureFormat::RG16_SFLOAT:
+        case TextureFormat::R10G10B10A2_UNORM:
+        case TextureFormat::R11G11B10_UFLOAT:
+        case TextureFormat::R9G9B9E5_UFLOAT:
+        case TextureFormat::D32_SFLOAT:
+        case TextureFormat::D24_UNORM_S8_UINT:
             return 4u;
-        case TextureFormat::D32_SFLOAT: return 4u;
 
+        // 8-Byte Formats
+        case TextureFormat::RGBA16_UINT:
+        case TextureFormat::RGBA16_SINT:
+        case TextureFormat::RGBA16_SFLOAT:
+        case TextureFormat::RG32_UINT:
+        case TextureFormat::RG32_SINT:
+        case TextureFormat::RG32_SFLOAT:
+        case TextureFormat::D32_SFLOAT_S8_UINT:
+            return 8u;
+
+        // 12-Byte Formats
+        case TextureFormat::RGB16_SFLOAT:
+        case TextureFormat::RGB32_SFLOAT:
+            return 12u;
+
+        // 16-Byte Formats
+        case TextureFormat::RGBA32_UINT:
+        case TextureFormat::RGBA32_SINT:
+        case TextureFormat::RGBA32_SFLOAT:
+            return 16u;
+
+        // Compressed Formats & Unknown
+        case TextureFormat::BC1_RGB_UNORM_BLOCK:
+        case TextureFormat::BC1_RGBA_UNORM_BLOCK:
+        case TextureFormat::BC2_UNORM_BLOCK:
+        case TextureFormat::BC3_UNORM_BLOCK:
+        case TextureFormat::BC4_UNORM_BLOCK:
+        case TextureFormat::BC5_UNORM_BLOCK:
+        case TextureFormat::BC6H_SFLOAT_BLOCK:
+        case TextureFormat::BC7_UNORM_BLOCK:
+        case TextureFormat::ETC2_RGB8_UNORM_BLOCK:
+        case TextureFormat::ETC2_RGBA8_UNORM_BLOCK:
+        case TextureFormat::ASTC_4x4_UNORM_BLOCK:
+        case TextureFormat::ASTC_8x8_UNORM_BLOCK:
+        case TextureFormat::UNKNOWN:
         default:
-            assert(false && "BytesPerTexel: unsupported format");
-            return 0;
+            return 0u;
         }
     }
 

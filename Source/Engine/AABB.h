@@ -3,10 +3,10 @@
 //
 
 #pragma once
-#include <span>
 
 #include "Ray.h"
 #include "Tools/Array.h"
+#include "Tools/Span.h"
 #include "glm/glm.hpp"
 struct Vertex;
 
@@ -19,7 +19,7 @@ struct AABB
 	AABB() = default;
 
 	template <typename T>
-	explicit AABB(std::span<T> verts)
+	explicit AABB(Span<T> verts)
 	{
 		if (verts.empty()) return;
 
@@ -50,10 +50,11 @@ struct AABB
 					mn = glm::min(mn, v.pos);
 					mx = glm::max(mx, v.pos);
 				}
-				else
-				{
-					static_assert(false, "Unsupported vertex type for AABB: must have .pos or .position");
-				}
+			    else
+			    {
+			        // Evaluated lazily only if this block is actually instantiated
+			        []<bool flag = false> { static_assert(flag, "Unsupported vertex type for AABB: must have .pos or .position"); }();
+			    }
 			}
 		}
 
@@ -63,7 +64,7 @@ struct AABB
 
 	template<typename V>
 	requires (requires (V v) { v.position; } || requires (V v) { v.pos; })
-	explicit AABB(std::span<const u32> indices, std::span<const V> allVertices)
+	explicit AABB(Span<const u32> indices, Span<V> allVertices)
     {
         if (indices.empty() || allVertices.empty()) return;
 
@@ -111,6 +112,21 @@ struct AABB
 	}
 
 
+    void Transform(const glm::mat4& m)
+    {
+        const glm::vec3 oldCenter = center;
+        center = glm::vec3(m * glm::vec4(oldCenter, 1.0f));
+
+        const auto rotation = glm::mat3(m);
+        const auto absRotation = glm::mat3(
+            glm::abs(rotation[0][0]), glm::abs(rotation[0][1]), glm::abs(rotation[0][2]),
+            glm::abs(rotation[1][0]), glm::abs(rotation[1][1]), glm::abs(rotation[1][2]),
+            glm::abs(rotation[2][0]), glm::abs(rotation[2][1]), glm::abs(rotation[2][2])
+        );
+
+        extents = absRotation * extents;
+    }
+
 	[[nodiscard]] glm::vec3 Min() const { return center - extents; }
 	[[nodiscard]] glm::vec3 Max() const { return center + extents; }
 
@@ -154,7 +170,7 @@ struct Frustum
 		// Near Plane: Row 4 - Row 3
 	    planes[4] = glm::vec4(m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2]);
 	    // Far Plane is just Row 3
-	    planes[5] = glm::vec4(m[0][2], m[1][2], m[2][2], m[3][2]);
+	    planes[5] = glm::vec4(m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2]);
 		// Normalize planes
 		for (auto& plane : planes)
 		{
@@ -182,7 +198,7 @@ struct Frustum
 			const f32 radius = glm::dot(glm::abs(glm::vec3(plane)), globalExtents);
 
 			// If the box is behind the plane by more than its radius, it is outside
-			if (dist < -radius) return false;
+		    if (dist < -radius) [[unlikely]] return false;
 		}
 		return true;
 	}

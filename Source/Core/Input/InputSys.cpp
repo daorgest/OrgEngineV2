@@ -26,6 +26,12 @@ void Input::ProcessEventButton(ButtonState& state, const bool isPressed)
     }
 }
 
+f32 Input::ApplyDeadzone(const f32 value, const f32 deadzone)
+{
+    if (std::abs(value) < deadzone) return 0.0f;
+    return (value - (value > 0.0f ? deadzone : -deadzone)) / (1.0f - deadzone);
+}
+
 // Resetting
 void Input::EndFrameInputUpdate()
 {
@@ -65,11 +71,6 @@ void Input::ResetInputOnFocusLoss()
 
     temp.cursorX = input.cursorX;
     temp.cursorY = input.cursorY;
-    temp.lastX = input.lastX;
-    temp.lastY = input.lastY;
-
-    // Preserve raw input mode (we're not using this for now)
-    temp.useRawInput = input.useRawInput;
 
     std::swap(input, temp);
 }

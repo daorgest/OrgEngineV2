@@ -4,38 +4,36 @@
 
 #include "VulkanMesh.h"
 
+#include <tracy/Tracy.hpp>
 
 #include "BindlessManager.h"
 #include "RendererTypes.h"
-#include "TextureLoader.h"
+#include "ShaderConstants.h"
 #include "VulkanShaderBuffer.h"
-
-#include "Tools/Timer.h"
-
-#include "Tools/DeletionQueue.h"
-#include "tracy/Tracy.hpp"
-
 
 namespace Renderer
 {
-    Result<GPUModel> CreateVulkanModel(GPUDevice* device, LoadedModel& loadedModel, BindlessManager& bindless, AssetPool<TextureData>& texturePool, DescriptorAllocatorGrowable& allocator)
+    Result<GPUModel> CreateVulkanModel(GPUDevice* device, LoadedModel& loadedModel, BindlessManager& bindless, DescriptorAllocatorGrowable& allocator)
     {
         ZoneScopedN("Loading Model to GPU");
 
         GPUModel model;
+        model.materials = std::move(loadedModel.materials);
 
         DescriptorSetLayoutDesc matLayoutDesc = {
-            .setIndex = 1,
-            .bindings = { Constants::MaterialBuffer }
+            DescriptorSetLayoutDesc::FromConstants(1, Constants::MaterialBuffer)
         };
 
 
         model.materialBuffer = std::make_unique<VulkanShaderBuffer>(device, &allocator, matLayoutDesc);
 
-        Vector<MaterialProperties> materialData;
-        for (const auto& cpuMat : loadedModel.materials)
+        Vector<Engine::MaterialProperties> materialData;
+        materialData.reserve(model.materials.size());
+
+
+        for (const auto& cpuMat : model.materials)
         {
-            MaterialProperties gpuMat = {
+            Engine::MaterialProperties gpuMat = {
                 .baseColor = glm::vec4(cpuMat.baseColor, cpuMat.opacity),
                 .emissive = cpuMat.emissive,
                 .roughness = cpuMat.roughness,
@@ -44,40 +42,42 @@ namespace Renderer
                 .type = cpuMat.materialType
             };
 
-
-            if (cpuMat.albedoPath == "engine://white")
+            // --- Albedo ---
+            if (cpuMat.albedoHandle)
             {
-                gpuMat.albedoIndex = BindlessManager::WhiteIdx; // Directly use Index 0
+                gpuMat.albedoIndex = bindless.GetOrUpload(cpuMat.albedoHandle, SamplerType::LinearRepeat);
             }
             else
             {
-                auto albedoH = texturePool.Load(cpuMat.albedoPath, [](const auto& p) {
-                    return TextureLoader::LoadTextureFromSTB(p, true);
-                });
-                // Defaults to CheckerIdx (Index 2) if loading fails
-                gpuMat.albedoIndex = bindless.GetOrUpload(albedoH ? *albedoH : ResourceHandle<TextureData>());
+                gpuMat.albedoIndex = BindlessManager::CheckerIdx;
             }
 
-            auto normalHandle = texturePool.Load(cpuMat.normalPath, [](const auto& p){
-                return TextureLoader::LoadTextureFromSTB(p, false);
-            });
-
-
-            if (normalHandle && normalHandle->IsValid())
+            // --- Normal ---
+            if (cpuMat.normalHandle)
             {
-                gpuMat.normalIndex = bindless.GetOrUpload(*normalHandle);
+                gpuMat.normalIndex = bindless.GetOrUpload(cpuMat.normalHandle, SamplerType::LinearRepeat);
             }
             else
             {
                 gpuMat.normalIndex = BindlessManager::NormalIdx;
             }
 
-            materialData.push_back(gpuMat);
+            // --- Specular ---
+            if (cpuMat.specularHandle)
+            {
+                gpuMat.specularIndex = bindless.GetOrUpload(cpuMat.specularHandle, SamplerType::LinearRepeat);
+            }
+            else
+            {
+                gpuMat.specularIndex = BindlessManager::WhiteIdx;
+            }
+
+            materialData.push_back(std::move(gpuMat));
         }
 
         for (u32 i = 0; i < MAX_FRAME_OVERLAP; ++i)
         {
-            model.materialBuffer->UpdateBinding(i, 0, materialData.data(), materialData.size() * sizeof(MaterialProperties));
+            model.materialBuffer->UpdateBinding(i, 0, materialData.data(), materialData.size() * sizeof(Engine::MaterialProperties));
         }
 
 
@@ -132,7 +132,10 @@ namespace Renderer
                         .vertexOffset = part.vertexOffset + vGlobalOffset,
                         .localTransform = part.localTransform
                     });
-                    model.modelBounds.MergeAABB(part.aabb);
+                    // Calculate MODEL AABB
+                    AABB transformedPartBounds = part.aabb;
+                    transformedPartBounds.Transform(part.localTransform);
+                    model.aabb.MergeAABB(transformedPartBounds);
                 }
 
                 vPtr += curVBytes;

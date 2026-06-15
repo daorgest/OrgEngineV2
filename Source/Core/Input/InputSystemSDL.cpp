@@ -38,14 +38,19 @@ void InputSystemSDL::ProcessGamepadEvents(const SDL_Event& event)
                 {
                     slot.handle = newPad;
                     slot.id = event.gdevice.which;
-                    input.controllers[i].connected = true;
 
-                    input.controllers[i].leftX = 0.0f;
-                    input.controllers[i].leftY = 0.0f;
-                    input.controllers[i].rightX = 0.0f;
-                    input.controllers[i].rightY = 0.0f;
-                    input.controllers[i].leftTrigger = 0.0f;
-                    input.controllers[i].rightTrigger = 0.0f;
+                    auto& ctrl = input.controllers[i];
+                    ctrl.connected = true;
+                    ctrl.leftX = 0.0f;
+                    ctrl.leftY = 0.0f;
+                    ctrl.rightX = 0.0f;
+                    ctrl.rightY = 0.0f;
+                    ctrl.leftTrigger = 0.0f;
+                    ctrl.rightTrigger = 0.0f;
+                    ctrl.leftMotorVibration = 0.0f;
+                    ctrl.rightMotorVibration = 0.0f;
+
+                    SDL_SetGamepadLED(newPad, 0, 128, 255);
 
                     break; // Found a slot, stop looking
                 }
@@ -84,13 +89,6 @@ void InputSystemSDL::ProcessGamepadEvents(const SDL_Event& event)
 
 void InputSystemSDL::UpdateGamepadAxes()
 {
-    // Define your Deadzone Helper
-    auto ApplyDeadzone = [](const f32 value, const f32 deadzone = 0.15f)
-    {
-        if (fabsf(value) < deadzone) return 0.0f;
-        return (value - (value > 0 ? deadzone : -deadzone)) / (1.0f - deadzone);
-    };
-
     for (i32 i = 0; i < CONTROLLER_COUNT; ++i)
     {
         SDLGamepadSlot& slot = gamepads[i];
@@ -98,9 +96,6 @@ void InputSystemSDL::UpdateGamepadAxes()
 
         auto& ctrl = input.controllers[i];
 
-        // ---------------------------------------------------------
-        // 1. POLL AXES (Super fast, no event queue overhead)
-        // ---------------------------------------------------------
         const Sint16 rawLX = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_LEFTX);
         const Sint16 rawLY = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_LEFTY);
         const Sint16 rawRX = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_RIGHTX);
@@ -108,17 +103,23 @@ void InputSystemSDL::UpdateGamepadAxes()
         const Sint16 rawLT = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
         const Sint16 rawRT = SDL_GetGamepadAxis(slot.handle, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
 
-        ctrl.leftX  = ApplyDeadzone(NORM_THUMB(rawLX));
-        ctrl.leftY  = ApplyDeadzone(-NORM_THUMB(rawLY));
 
-        ctrl.rightX = ApplyDeadzone(NORM_THUMB(rawRX));
-        ctrl.rightY = ApplyDeadzone(-NORM_THUMB(rawRY));
+        ctrl.leftX = Input::ApplyDeadzone(NORM_THUMB(rawLX));
+        ctrl.leftY = Input::ApplyDeadzone(-NORM_THUMB(rawLY));
+        ctrl.rightX = Input::ApplyDeadzone(NORM_THUMB(rawRX));
+        ctrl.rightY = Input::ApplyDeadzone(-NORM_THUMB(rawRY));
 
-        // Triggers (0..32767 -> 0.0..1.0)
-        // Note: Use 32767.0f to hit exactly 1.0f
-        ctrl.leftTrigger  = (f32)rawLT / 32767.0f;
+        ctrl.leftTrigger = (f32)rawLT / 32767.0f;
         ctrl.rightTrigger = (f32)rawRT / 32767.0f;
 
+
+        if (ctrl.leftMotorVibration > 0.0f || ctrl.rightMotorVibration > 0.0f)
+        {
+            u16 leftHaptic = static_cast<u16>(ctrl.leftMotorVibration * 0xFFFF);
+            u16 rightHaptic = static_cast<u16>(ctrl.rightMotorVibration * 0xFFFF);
+
+            SDL_RumbleGamepad(slot.handle, leftHaptic, rightHaptic, 16);
+        }
 
         const bool moved =
             fabsf(ctrl.leftX) > 0.0f || fabsf(ctrl.leftY) > 0.0f ||
@@ -133,7 +134,9 @@ void InputSystemSDL::ProcessEvents(const SDL_Event& event)
 {
     FrameMark;
     ZoneScoped;
+#ifdef EDITORUI
     ImGui_ImplSDL3_ProcessEvent(&event);
+#endif
 
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -159,8 +162,8 @@ void InputSystemSDL::ProcessEvents(const SDL_Event& event)
         {
             input.cursorX = event.motion.x;
             input.cursorY = event.motion.y;
-            input.xrel = event.motion.xrel;
-            input.yrel = event.motion.yrel;
+            input.xrel += event.motion.xrel;
+            input.yrel += event.motion.yrel;
             input.usingMouse = true;
         }
         break;
@@ -178,6 +181,7 @@ void InputSystemSDL::ProcessEvents(const SDL_Event& event)
             if (btn != Mouse::ButtonCount)
             {
                 Input::ProcessEventButton(input.mouseButtons[btn], event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                input.usingMouse = true;
             }
         }
         break;
@@ -185,8 +189,11 @@ void InputSystemSDL::ProcessEvents(const SDL_Event& event)
     case SDL_EVENT_MOUSE_WHEEL:
         {
             if (io.WantCaptureMouse) break;
-            input.scrollX = static_cast<i64>(event.wheel.x);
-            input.scrollY = static_cast<i64>(event.wheel.y);
+
+            input.scrollX += static_cast<i64>(event.wheel.x);
+            input.scrollY += static_cast<i64>(event.wheel.y);
+
+            input.usingMouse = true;
         }
         break;
     case SDL_EVENT_GAMEPAD_ADDED:

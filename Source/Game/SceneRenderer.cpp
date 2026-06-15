@@ -3,182 +3,358 @@
 //
 
 #include "SceneRenderer.h"
-#include "ShaderCompiler.h"
-#include <ranges>
 
-#include "Application.h"
+#include <glm/gtx/norm.hpp>
+#include <tracy/Tracy.hpp>
 #include "DebugRenderer.h"
-#include "../Engine/ShaderConstants.h"
 #include "SkyboxManager.h"
-#include "glm/gtx/norm.hpp"
-#include "tracy/Tracy.hpp"
+#include "../Engine/ShaderConstants.h"
 
-void SceneRenderer::Init(SceneRenderConfig& cfg)
+using namespace Renderer;
+using namespace Engine;
+
+void SceneRenderer::Init(const SceneRenderConfig& cfg)
 {
     config = cfg;
 
     sceneShader = config.device->CreateShaderPath("Shaders/scene.spv");
 
+    CreatePipelines();
+
+    const auto& [setLayouts, pushConstants] = opaquePipeline->GetLayoutDesc();
+
+    materialBuffer = config.device->CreateShaderBuffer(config.descriptorAllocator, setLayouts[1]);
+    instanceBuffer = config.device->CreateShaderBuffer(config.descriptorAllocator, setLayouts[4]);
+
+    constexpr u64 maxDrawCommands = 10000;
+    BufferInfo indirectInfo = {
+        .size = maxDrawCommands * sizeof(GPUIndirectCommand),
+        .heapType = GPUHeapType::Upload,
+        .usage = GPUBufferFlag::Indirect | GPUBufferFlag::Storage,
+    };
+
+    for (u32 i = 0; i < MAX_FRAME_OVERLAP; ++i)
+    {
+        opaqueIndirectBuffers[i] = config.device->CreateBuffer(indirectInfo);
+        transparentIndirectBuffers[i] = config.device->CreateBuffer(indirectInfo);
+    }
+}
+
+void SceneRenderer::CreatePipelines()
+{
+    ZoneScopedN("SceneRenderer::RecreatePipelines");
+
+    config.device->WaitIdle();
+
+    const SampleCount currentMSAA = config.device->currentSamples;
+
     PipelineLayoutDesc sceneLayout;
     sceneLayout.setLayouts = {
-                { .setIndex = 0, .bindings = Constants::Scene },
-                { .setIndex = 1, .bindings = Constants::MaterialBuffer },
-                { .setIndex = 2, .bindings = Constants::BindlessTextures },
-                { .setIndex = 3, .bindings = Constants::Skybox },
-                { .setIndex = 4, .bindings = Constants::InstanceData }
+        DescriptorSetLayoutDesc::FromConstants(0, Constants::Scene),
+        DescriptorSetLayoutDesc::FromConstants(1, Constants::MaterialBuffer),
+        DescriptorSetLayoutDesc::FromConstants(2, Constants::BindlessTextures2D),
+        DescriptorSetLayoutDesc::FromConstants(3, Constants::Skybox),
+        DescriptorSetLayoutDesc::FromConstants(4, Constants::InstanceData),
+        // DescriptorSetLayoutDesc::FromConstants(5, Constants::BindlessTextures3D)
     };
-    sceneLayout.pushConstants = {{
-        .size = sizeof(PushConstants),
-        .offset = 0,
-        .stages = ShaderStage::Vertex | ShaderStage::Fragment
-    }};
+    sceneLayout.pushConstants = {
+        {
+            .size = sizeof(PushConstants),
+            .offset = 0,
+            .stages = ShaderStage::Vertex | ShaderStage::Fragment
+        }
+    };
 
-    // Opaque/Masked Pipeline
-    const Renderer::GraphicsPipelineDesc sceneDesc = {
+    Renderer::GraphicsPipelineDesc sceneDesc = {
         .vertexShader = sceneShader,
         .fragmentShader = sceneShader,
         .raster = GpuRasterDesc::Opaque3D(TextureFormat::BGRA8_SRGB, TextureFormat::D32_SFLOAT),
         .layout = sceneLayout,
         .slangSourcePath = "Source/Game/Shaders/scene.slang"
     };
+    sceneDesc.raster.sampleCount = currentMSAA;
 
     opaquePipeline = config.device->CreateGraphicsPipeline(sceneDesc);
-    cfg.shaderManager->RegisterPipeline(opaquePipeline.get());
+    config.shaderManager->RegisterPipeline(opaquePipeline.get());
 
-    // Transparent Pipeline
     Renderer::GraphicsPipelineDesc transDesc = sceneDesc;
     transDesc.raster = GpuRasterDesc::Transparent(TextureFormat::BGRA8_SRGB, TextureFormat::D32_SFLOAT);
+
+    transDesc.raster.sampleCount = currentMSAA;
     transparentPipeline = config.device->CreateGraphicsPipeline(transDesc);
-    cfg.shaderManager->RegisterPipeline(transparentPipeline.get());
-
-    // Material information and instance buffer
-    materialBuffer = config.device->CreateShaderBuffer(cfg.descriptorAllocator, sceneLayout.setLayouts[1]);
-    instanceBuffer = config.device->CreateShaderBuffer(cfg.descriptorAllocator, sceneLayout.setLayouts[4]);
-
-    // Indirect buffer (broken for now)
-    constexpr u64 maxDrawCommands = 10000;
-    indirectBuffer = config.device->CreateBuffer(BufferPreset::IndirectHost,maxDrawCommands * sizeof(GPUIndirectCommand));
+    config.shaderManager->RegisterPipeline(transparentPipeline.get());
 }
-
 
 void SceneRenderer::PrepareFrame(const Platform::WindowContext* window, const Camera* camera)
 {
     if (!window) return;
     standardBucket.clear();
-    transparentBucket.clear();
+    instanceBucket.clear();
+    indirectBucket.clear();
+
     totalVisibleInstances = 0;
     totalFlattenedEntries = 0;
-    for (auto& batch : instanceBucket)
-        batch.instanceData.clear();
 
-    for (auto& batch : indirectBucket)
-        batch.instanceData.clear();
+    if (config.debugRenderer) config.debugRenderer->ClearQueue();
 
-    const glm::mat4 vp = camera->projection * camera->view;
-    frustum.Update(vp);
+    const glm::mat4 viewProg = camera->projection * camera->view;
+    frustum.Update(viewProg);
 
-    for (const auto& inst : config.models)
+    const size_t entityCount = config.entityModels->size();
+
+    for (size_t i = 0; i < entityCount; i++)
     {
-
-        auto modelRes = config.modelPool->Get(inst.modelHandle);
+        auto modelRes = config.modelPool->Get((*config.entityModels)[i]);
         if (!modelRes) continue;
         Renderer::GPUModel* model = *modelRes;
 
-        if (!frustum.IsBoxInFrustum(model->modelBounds, inst.transform)) continue;
+        const auto& transform = (*config.entityTransforms)[i];
+        const auto& pathComp = (*config.entityPaths)[i];
+        const auto& matComp = (*config.entityMaterials)[i];
 
+        bool modelInFrustrum = frustum.IsBoxInFrustum(model->aabb, transform.worldMatrix);
+
+        GPUInstanceSSBO instData = {
+            .worldMatrix = transform.worldMatrix,
+            .materialIndex = matComp.materialIndex,
+            .roughness = matComp.roughness,
+            .metallic = matComp.metallic
+        };
 
         if (config.debugRenderer && config.debugRenderer->enabled)
         {
-            config.debugRenderer->QueueBox(inst.transform, model->modelBounds);
+            // Model Frustrum
+            if (frustum.IsBoxInFrustum(model->aabb, transform.worldMatrix))
+            {
+                // Model Bounds
+                config.debugRenderer->QueueBox(transform.worldMatrix, model->aabb,
+                                               glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+
+                for (const auto& part : model->parts)
+                {
+                    if (part.indexCount == 0) continue;
+
+                    const glm::mat4 worldTransform = (part.localTransform == glm::mat4(1.0f))
+                                                         ? transform.worldMatrix
+                                                         : (transform.worldMatrix * part.localTransform);
+
+                    // Part Frustrum
+                    if (frustum.IsBoxInFrustum(part.aabb, worldTransform))
+                    {
+                        // Passed: Highlight Green
+                        config.debugRenderer->QueueBox(worldTransform, part.aabb, glm::vec4(0.0f, 1.0f, 0.0f, 0.6f));
+                    }
+                    else
+                    {
+                        // Culled: Highlight Yellow
+                        config.debugRenderer->QueueBox(worldTransform, part.aabb, glm::vec4(1.0f, 1.0f, 0.0f, 0.6f));
+                    }
+                }
+            }
         }
 
-        if (inst.path == Renderer::RenderPath::Standard)
+
+        else
         {
-            standardBucket.push_back(&inst);
+            config.debugRenderer->QueueBox(transform.worldMatrix, model->aabb,
+                                           glm::vec4(1.0f, 1.0f, 0.0f, 0.6f));
         }
-        else if (inst.path == Renderer::RenderPath::Instance)
+
+        if (!modelInFrustrum)
         {
-            auto targetBatch = GetOrAddBatch(instanceBucket, model);
-            targetBatch->instanceData.push_back({
-                inst.transform,
-                inst.materialIndex,
-                inst.roughness,
-                inst.metallic
-            });
+            continue;
+        }
+
+        if (pathComp.path == RenderPath::Instance)
+        {
+            GetOrAddBatch(instanceBucket, model)->instanceData.push_back(instData);
             totalVisibleInstances++;
         }
-        else if (inst.path == Renderer::RenderPath::Indirect)
+        else if (pathComp.path == RenderPath::Indirect)
         {
-            auto targetBatch = GetOrAddBatch(indirectBucket, model);
-            targetBatch->instanceData.push_back({
-                inst.transform,
-                inst.materialIndex,
-                inst.roughness,
-                inst.metallic
-            });
+            GetOrAddBatch(indirectBucket, model)->instanceData.push_back(instData);
             totalFlattenedEntries += model->parts.size();
+        }
+        else
+        {
+            standardBucket.push_back(i);
         }
     }
 }
 
 
-void SceneRenderer::UpdateInstanceBuffer(u32 frameIndex)
+void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 fIdx, SceneStats& stats)
 {
-    ZoneScopedN("UpdateInstanceBuffer")
+    stats.ResetFrame();
+
+    // Early out if nothing to draw
+    if (standardBucket.empty() && instanceBucket.empty() && indirectBucket.empty()) return;
+
+    frameIndex = fIdx % MAX_FRAME_OVERLAP;
+    UpdateInstanceBuffer();
+
+    Renderer::DrawCache dc = {.cmd = cmd, .stats = &stats};
+
+    // ==========================================
+    // 1. OPAQUE PASS
+    // ==========================================
+    cmd->BeginDebugLabel("Opaque Pass", 0.4f, 0.4f, 0.9f);
+    BindGlobalState(dc, opaquePipeline.get());
+
+    for (const auto entityIdx : standardBucket)
+        DrawObject(entityIdx, dc, false);
+
+    RenderInstancedPass(instanceBucket, dc, false);
+
+    if (!opaqueIndirectCommands.empty())
+    {
+        RenderIndirectPass(indirectBucket, opaqueIndirectBuffers[fIdx].get(), dc, false);
+    }
+    cmd->EndDebugLabel();
+
+    // ==========================================
+    // 2. TRANSPARENT PASS
+    // ==========================================
+    cmd->BeginDebugLabel("Transparent Pass", 0.9f, 0.4f, 0.4f);
+    BindGlobalState(dc, transparentPipeline.get());
+
+    for (const auto entityIdx : standardBucket)
+        DrawObject(entityIdx, dc, true);
+
+    RenderInstancedPass(instanceBucket, dc, true);
+
+    if (!transparentIndirectCommands.empty())
+    {
+        RenderIndirectPass(indirectBucket, transparentIndirectBuffers[fIdx].get(), dc, true);
+    }
+    cmd->EndDebugLabel();
+}
+
+
+void SceneRenderer::UpdateInstanceBuffer()
+{
+    ZoneScopedN("UpdateInstanceBuffer");
     size_t requiredSize = totalVisibleInstances + totalFlattenedEntries;
     if (requiredSize == 0) return;
 
     megaStagingData.clear();
     megaStagingData.reserve(requiredSize);
 
-    indirectCommands.clear();
+    opaqueIndirectCommands.clear();
+    transparentIndirectCommands.clear();
 
-    // 1. Pack 'Instance' path (Direct Draw)
-    // One entry per instance. Material/Vertex offsets are pushed via C++ loop later.
     for (const auto& batch : instanceBucket) {
-        if (batch.instanceData.empty()) continue;
         for (const auto& inst : batch.instanceData) {
             megaStagingData.push_back(inst);
         }
     }
 
-    // 2. Pack 'Indirect' path (Multi-Draw Flattening)
-    for (const auto& batch : indirectBucket) {
+    for (const auto& batch : indirectBucket)
+    {
         if (batch.instanceData.empty()) continue;
-        const u32 instanceCount = static_cast<u32>(batch.instanceData.size());
 
-        for (const auto& part : batch.model->parts) {
+        for (const auto& part : batch.model->parts)
+        {
+            if (part.indexCount == 0) continue;
 
-            // Build the command for this specific part
-            GPUIndirectCommand cmd = {};
-            cmd.indexCount    = part.indexCount;
-            cmd.instanceCount = instanceCount;
-            cmd.firstIndex    = part.firstIndex;
-            cmd.vertexOffset  = part.vertexOffset;
-            cmd.firstInstance = static_cast<u32>(megaStagingData.size());
+            const bool isTransparent = (batch.model->materials[part.materialIndex].materialType ==
+                Engine::MaterialType::Transparent);
 
-            indirectCommands.push_back(cmd);
+            u32 visibleInstanceCount = 0;
+            u32 firstInstanceOffset = static_cast<u32>(megaStagingData.size());
 
-            // Flatten all instances for this part, baking in the material ID
-            for (const auto& inst : batch.instanceData) {
-                GPUInstanceSSBO flattened = inst;
-                flattened.worldMatrix = (part.localTransform == glm::mat4(1.0f))
-                               ? inst.worldMatrix
-                               : (inst.worldMatrix * part.localTransform);
+            // Flatten the SSBO data and check Frustum PER INSTANCE of this part
+            for (const auto& inst : batch.instanceData)
+            {
+                const glm::mat4 worldTransform = (part.localTransform == glm::mat4(1.0f))
+                                                     ? inst.worldMatrix
+                                                     : (inst.worldMatrix * part.localTransform);
 
-                flattened.materialIndex = part.materialIndex;
-                megaStagingData.push_back(flattened);
+                if (frustum.IsBoxInFrustum(part.aabb, worldTransform))
+                {
+                    GPUInstanceSSBO flattened = {
+                        .worldMatrix = worldTransform,
+                        .materialIndex = part.materialIndex,
+                        .roughness = inst.roughness,
+                        .metallic = inst.metallic
+                    };
+                    megaStagingData.push_back(flattened);
+                    visibleInstanceCount++;
+                }
+            }
+
+            if (visibleInstanceCount > 0)
+            {
+                Engine::GPUIndirectCommand cmd = {
+                    .indexCount = part.indexCount,
+                    .instanceCount = visibleInstanceCount,
+                    .firstIndex = part.firstIndex,
+                    .vertexOffset = static_cast<i32>(part.vertexOffset),
+                    .firstInstance = firstInstanceOffset
+                };
+
+                if (isTransparent) transparentIndirectCommands.push_back(cmd);
+                else opaqueIndirectCommands.push_back(cmd);
             }
         }
     }
 
-    if (megaStagingData.empty()) return;
-
-    // Upload
-    instanceBuffer->UpdateBinding(frameIndex, 0, megaStagingData.data(), megaStagingData.size() * sizeof(GPUInstanceSSBO));
-    if (!indirectCommands.empty()) {
-        indirectBuffer->Upload(indirectCommands.data(), indirectCommands.size() * sizeof(GPUIndirectCommand));
+    if (!megaStagingData.empty())
+    {
+        instanceBuffer->UpdateBinding(frameIndex, 0, megaStagingData.data(),
+                                      megaStagingData.size() * sizeof(Engine::GPUInstanceSSBO));
     }
+    if (!opaqueIndirectCommands.empty())
+    {
+        opaqueIndirectBuffers[frameIndex]->Upload(opaqueIndirectCommands.data(),
+                                                  opaqueIndirectCommands.size() * sizeof(Engine::GPUIndirectCommand));
+    }
+    if (!transparentIndirectCommands.empty())
+    {
+        transparentIndirectBuffers[frameIndex]->Upload(transparentIndirectCommands.data(),
+                                                       transparentIndirectCommands.size() * sizeof(
+                                                           Engine::GPUIndirectCommand));
+    }
+}
+
+void SceneRenderer::DestroyBuffers()
+{
+    if (materialBuffer) materialBuffer->Destroy();
+    if (instanceBuffer) instanceBuffer->Destroy();
+
+    // Clear unique_ptrs
+    materialBuffer.reset();
+    instanceBuffer.reset();
+}
+
+void SceneRenderer::Destroy()
+{
+    if (config.device)
+    {
+        config.device->WaitIdle();
+    }
+
+    // Explicitly destroy buffers
+    if (materialBuffer) materialBuffer->Destroy();
+    if (instanceBuffer) instanceBuffer->Destroy();
+
+    // Destroy pipelines
+    opaquePipeline.reset();
+    transparentPipeline.reset();
+}
+
+SceneRenderer::InstanceBatch* SceneRenderer::GetOrAddBatch(Vector<InstanceBatch>& bucket, Renderer::GPUModel* model)
+{
+    if (!bucket.empty() && bucket.back().model == model) return &bucket.back();
+
+
+    for (auto& batch : bucket)
+    {
+        if (batch.model == model) return &batch;
+    }
+
+    bucket.push_back({model, {}});
+    return &bucket.back();
 }
 
 void SceneRenderer::BindGlobalState(Renderer::DrawCache& dc, Renderer::GPUPipeline* pipeline) const
@@ -191,47 +367,47 @@ void SceneRenderer::BindGlobalState(Renderer::DrawCache& dc, Renderer::GPUPipeli
     dc.activePipeline = pipeline;
 
     // Set 0: Scene Globals (UBO)
-    if (config.sceneUBO)
-    {
-        config.sceneUBO->Bind(dc.cmd, pipeline, dc.frameIndex);
-    }
+    config.sceneUBO->Bind(dc.cmd, pipeline, frameIndex);
 
-    // Set 1: Bindless Textures
+    // Set 2: Bindless 2D Textures
     dc.cmd->BindDescriptorSet(&config.bindless->set, 2, pipeline);
-    dc.lastMaterialSet = config.bindless->set.vk;
 
-    // Set 2: Environment & Skybox (IBL)
+    // // Set 5: Bindless 3D Textures
+    // dc.cmd->BindDescriptorSet(&config.bindless->set3D, 5, pipeline);
+
+    // Set 3: Environment & Skybox (IBL)
     if (config.skybox)
     {
-        const auto skySet = config.skybox->GetDescriptorSet();
-        if (skySet)
-        {
-            dc.cmd->BindDescriptorSet(&skySet, 3, pipeline);
-        }
+        dc.cmd->BindDescriptorSet(&config.skybox->GetDescriptorSet(), 3, pipeline);
     }
 
-    // Set 4: Pass-wide Instance Data
-    instanceBuffer->Bind(dc.cmd, pipeline, dc.frameIndex);
+    // Set 4: Pass-wide Instance Data (The Flattened SSBO)
+    if (instanceBuffer)
+    {
+        instanceBuffer->Bind(dc.cmd, pipeline, frameIndex);
+    }
 }
 
-void SceneRenderer::RenderInstancedPass(Renderer::DrawCache& dc)
+void SceneRenderer::RenderInstancedPass(const Span<InstanceBatch> batches, Renderer::DrawCache& dc, const bool isTransparentPass)
 {
     u32 globalInstanceOffset = 0;
-    for (const auto& batch : instanceBucket)
+    for (const auto& batch : batches)
     {
         const u32 count = static_cast<u32>(batch.instanceData.size());
         if (count == 0) continue;
 
-        DrawInstancedBatch(batch.model, count, globalInstanceOffset, dc);
+        DrawInstancedBatch(batch.model, count, globalInstanceOffset, dc, isTransparentPass);
+
         globalInstanceOffset += count;
     }
 }
 
-void SceneRenderer::RenderIndirectPass(Renderer::DrawCache& dc)
+void SceneRenderer::RenderIndirectPass(const Span<InstanceBatch> batches, Renderer::GPUBuffer* buffer,
+                                       Renderer::DrawCache& dc, const bool isTransparentPass)
 {
     u32 currentCommandIndex = 0;
 
-    for (const auto& batch : indirectBucket)
+    for (const auto& batch : batches)
     {
         const u32 instanceCount = static_cast<u32>(batch.instanceData.size());
         if (instanceCount == 0) continue;
@@ -239,69 +415,89 @@ void SceneRenderer::RenderIndirectPass(Renderer::DrawCache& dc)
         Renderer::GPUModel* model = batch.model;
         if (!model || !model->indexBuffer || model->vertexBufferAddress == 0) continue;
 
-        // 1Bind Model Resources
-        if (model->materialBuffer) model->materialBuffer->Bind(dc.cmd, dc.activePipeline, dc.frameIndex);
-        if (model->indexBuffer.get() != dc.lastIndexBuffer) {
+        if (model->materialBuffer) model->materialBuffer->Bind(dc.cmd, dc.activePipeline, frameIndex);
+
+        if (model->indexBuffer.get() != dc.lastIndexBuffer)
+        {
             dc.cmd->BindIndexBuffer(model->indexBuffer.get(), 0);
             dc.lastIndexBuffer = model->indexBuffer.get();
         }
 
-        u32 partCount = static_cast<u32>(model->parts.size());
-        u64 bufferMemoryOffset = currentCommandIndex * sizeof(GPUIndirectCommand);
+        // Count valid parts for this pass
+        u32 validPartsForThisPass = 0;
+        for (const auto& part : model->parts)
+        {
+            const bool partIsTrans = (model->materials[part.materialIndex].materialType ==
+                Engine::MaterialType::Transparent);
+            if (partIsTrans == isTransparentPass) validPartsForThisPass++;
+        }
 
-        // Set Multi-Draw Constants
-        PushConstants pc = {};
-        pc.vertexBufferAddress = model->vertexBufferAddress;
-        pc.isInstanced = 1;
-        pc.materialIndex = 0;// Shader reads baked material from flattened SSBO
-        dc.cmd->PushConstants(dc.activePipeline, ShaderStage::AllGraphics, 0, sizeof(PushConstants), &pc);
+        if (validPartsForThisPass > 0)
+        {
+            PushConstants pc = {
+                .vertexBufferAddress = model->vertexBufferAddress,
+                .renderPath = RenderPath::Indirect,
+            };
 
-        // THE MAGIC MULTI-DRAW
-        dc.cmd->DrawIndexedIndirect(indirectBuffer.get(), bufferMemoryOffset, partCount, sizeof(GPUIndirectCommand));
+            const u64 bufferMemoryOffset = currentCommandIndex * sizeof(Engine::GPUIndirectCommand);
 
-        // Update stats and advance index
-        dc.stats->drawCallCount++;
-        for (const auto& p : model->parts) dc.stats->totalTris += (p.indexCount / 3) * instanceCount;
+            dc.cmd->PushConstants(dc.activePipeline, ShaderStage::AllGraphics, 0, sizeof(PushConstants), &pc);
+            dc.cmd->DrawIndexedIndirect(buffer, bufferMemoryOffset, validPartsForThisPass,
+                                        sizeof(Engine::GPUIndirectCommand));
 
-        currentCommandIndex += partCount; // Advance after the draw
+            dc.stats->drawCallCount++;
+            for (const auto& p : model->parts) dc.stats->totalTris += (p.indexCount / 3) * instanceCount;
+
+            currentCommandIndex += validPartsForThisPass;
+        }
     }
 }
 
-void SceneRenderer::DrawObject(const Renderer::ModelComponent* inst, const Renderer::DrawCache& dc) const
+void SceneRenderer::DrawObject(const size_t i, Renderer::DrawCache& dc, const bool isTransparentPass) const
 {
-    // Resolve model from pool using the handle
-    const auto modelRes = config.modelPool->Get(inst->modelHandle);
+    const auto& modelRes = config.modelPool->Get((*config.entityModels)[i]);
     if (!modelRes) return;
     Renderer::GPUModel* model = *modelRes;
 
     if (!model->indexBuffer || !model->indexBuffer->IsValid()) return;
 
-    if (model->materialBuffer) {
-        model->materialBuffer->Bind(dc.cmd, dc.activePipeline, dc.frameIndex);
+    if (model->materialBuffer)
+    {
+        model->materialBuffer->Bind(dc.cmd, dc.activePipeline, frameIndex);
     }
 
+    if (model->indexBuffer.get() != dc.lastIndexBuffer)
+    {
+        dc.cmd->BindIndexBuffer(model->indexBuffer.get(), 0);
+        dc.lastIndexBuffer = model->indexBuffer.get();
+    }
 
-    dc.cmd->BindIndexBuffer(model->indexBuffer.get(), 0);
+    const auto& transform = (*config.entityTransforms)[i];
+    const auto& matComp = (*config.entityMaterials)[i];
 
     for (const auto& part : model->parts)
     {
-        const glm::mat4 worldMatrix = (part.localTransform == glm::mat4(1.0f))
-                                          ? inst->transform
-                                          : (inst->transform * part.localTransform);
+        const bool partIsTrans = (model->materials[part.materialIndex].materialType ==
+            Engine::MaterialType::Transparent);
+        if (partIsTrans != isTransparentPass) continue;
+
+        const glm::mat4& worldMatrix = (part.localTransform == glm::mat4(1.0f))
+                                           ? transform.worldMatrix
+                                           : (transform.worldMatrix * part.localTransform);
+
         if (!frustum.IsBoxInFrustum(part.aabb, worldMatrix)) continue;
 
         PushConstants pc = {
             .model = worldMatrix,
             .vertexBufferAddress = model->vertexBufferAddress,
             .vertexOffset = part.vertexOffset,
-            .isInstanced = 0,
-            .instRoughness = inst->roughness,
-            .instMetallic = inst->metallic,
+            .renderPath = RenderPath::Standard,
+            .instRoughness = matComp.roughness,
+            .instMetallic = matComp.metallic,
             .materialIndex = part.materialIndex
         };
 
         const u32 pushSize = dc.activePipeline->GetLayoutDesc().pushConstants[0].size;
-
         dc.cmd->PushConstants(dc.activePipeline, ShaderStage::AllGraphics, 0, pushSize, &pc);
         dc.cmd->DrawIndexed(part.indexCount, 1, part.firstIndex, 0, 0);
 
@@ -310,89 +506,38 @@ void SceneRenderer::DrawObject(const Renderer::ModelComponent* inst, const Rende
     }
 }
 
-void SceneRenderer::DrawInstancedBatch(Renderer::GPUModel* model, u32 count, u32 offset, Renderer::DrawCache& dc)
+void SceneRenderer::DrawInstancedBatch(Renderer::GPUModel* model, const u32 count, const u32 globalInstanceOffset,
+                                       Renderer::DrawCache& dc, const bool isTransparentPass)
 {
     if (!model || !model->indexBuffer || model->vertexBufferAddress == 0) return;
 
     if (model->materialBuffer)
     {
-        model->materialBuffer->Bind(dc.cmd, dc.activePipeline, dc.frameIndex);
+        model->materialBuffer->Bind(dc.cmd, dc.activePipeline, frameIndex);
     }
 
-    // Redundancy Guard: Index Buffer
     if (model->indexBuffer.get() != dc.lastIndexBuffer)
     {
         dc.cmd->BindIndexBuffer(model->indexBuffer.get(), 0);
         dc.lastIndexBuffer = model->indexBuffer.get();
     }
 
-    // Draw Sub-Meshes
     for (const auto& part : model->parts)
     {
+        const bool partIsTrans = (model->materials[part.materialIndex].materialType == Engine::MaterialType::Transparent);
+        if (partIsTrans != isTransparentPass) continue;
+
         PushConstants pc = {
+            .model = part.localTransform,
             .vertexBufferAddress = model->vertexBufferAddress,
-            .vertexOffset = part.vertexOffset,
-            .isInstanced = 1,
+            .renderPath = RenderPath::Instance,
             .materialIndex = part.materialIndex
         };
 
         dc.cmd->PushConstants(dc.activePipeline, ShaderStage::AllGraphics, 0, sizeof(PushConstants), &pc);
-        dc.cmd->DrawIndexed(part.indexCount, count, part.firstIndex, 0, offset);
+        dc.cmd->DrawIndexed(part.indexCount, count, part.firstIndex, part.vertexOffset, globalInstanceOffset);
 
         dc.stats->drawCallCount++;
         dc.stats->totalTris += (part.indexCount / 3) * count;
-    }
-}
-
-SceneRenderer::InstanceBatch* SceneRenderer::GetOrAddBatch(Vector<InstanceBatch>& bucket, Renderer::GPUModel* model)
-{
-    for (auto& batch : bucket)
-    {
-        if (batch.model == model)
-            return &batch;
-    }
-
-    bucket.push_back({model, {}});
-    return &bucket.back();
-}
-
-void SceneRenderer::RenderModels(Renderer::GPUCommandBuffer* cmd, const u32 frameIndex, SceneStats& stats)
-{
-    stats.ResetFrame();
-
-    stats.totalMeshCount = 0;
-    stats.totalTris = 0;
-    stats.totalVerts = 0;
-
-    // Early Out & Prep
-    if (standardBucket.empty() && transparentBucket.empty() && totalVisibleInstances == 0 && totalFlattenedEntries == 0) return;
-
-    const u32 resIdx = frameIndex % MAX_FRAME_OVERLAP;
-    stats.totalMeshCount = static_cast<u32>(standardBucket.size() + transparentBucket.size() + totalVisibleInstances);
-
-    UpdateInstanceBuffer(resIdx);
-
-    Renderer::DrawCache dc = { .cmd = cmd, .stats = &stats, .frameIndex = resIdx };
-
-    cmd->BeginDebugLabel("Opaque Pass", 0.4f, 0.4f, 0.9f);
-    {
-        BindGlobalState(dc, opaquePipeline.get());
-
-        // Standard Geometry
-        for (const auto* inst : standardBucket) DrawObject(inst, dc);
-
-
-        RenderInstancedPass(dc);
-
-        RenderIndirectPass(dc);
-    }
-    cmd->EndDebugLabel();
-
-    if (!transparentBucket.empty())
-    {
-        cmd->BeginDebugLabel("Transparent Pass", 0.9f, 0.4f, 0.4f);
-        BindGlobalState(dc, transparentPipeline.get());
-        for (const auto* inst : transparentBucket) DrawObject(inst, dc);
-        cmd->EndDebugLabel();
     }
 }

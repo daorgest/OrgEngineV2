@@ -4,10 +4,10 @@
 
 #pragma once
 #include "glm/vec3.hpp"
+#include "MathFuncs.h"
+#include "Tools/EnumBitmask.h"
 
 struct CameraComponent;
-struct Camera;
-struct Input;
 
 #define GRAVITY          28.0f      // feels snappier, not floaty
 #define MAX_SPEED        12.0f
@@ -24,6 +24,31 @@ struct Input;
 #define NORMALIZE_INPUT   0
 
 
+enum class FPSFlags : u32
+{
+    None = 0,
+    Moving = 1 << 0,
+    Sprinting = 1 << 1,
+    Crouching = 1 << 2,
+    Airborne = 1 << 3,
+};
+
+template <>
+constexpr bool EnableBitmask<FPSFlags> = true;
+
+inline const char* FPSStateToString(const FPSFlags state)
+{
+    switch (state)
+    {
+    case FPSFlags::None: return "Idle";
+    case FPSFlags::Moving: return "Walking";
+    case FPSFlags::Sprinting: return "Sprinting";
+    case FPSFlags::Crouching: return "Crouching";
+    case FPSFlags::Airborne: return "Airborne";
+    default: return "Unknown";
+    }
+}
+
 struct FPSCameraTuning
 {
 	f32 mouseSens   = 0.1f;
@@ -37,8 +62,9 @@ struct FPSCameraTuning
 
 	f32 sprintSpeed = 1.75f;
 	f32 sprintFOV   = 1.1f;
+    f32 sprintDuration = 4.0f;
 
-	f32 bobFreq     = 1.5f;
+    f32 bobFreq     = 1.5f;
 	f32 bobHorizAmp = 0.05f;
 	f32 bobVertAmp  = 0.1f;
 
@@ -60,9 +86,14 @@ struct FPSCamera
     f32 walkLerp = 0.0f;
     f32 fovBase = 70.0f;
 
-	FPSCameraTuning tune = {};
+    f32 yaw = 0.0f;
+    f32 pitch = 0.0f;
+
+    FPSFlags flags = FPSFlags::None;
+    f32 sprintTimer = 0.0f;
+
+    FPSCameraTuning tune = {};
 
 	static glm::vec3 ProjectXZ(const glm::vec3& v);
-    glm::vec3 CalculateBob() const;
 	void Update(CameraComponent& comp, f32 deltaTime);
 };

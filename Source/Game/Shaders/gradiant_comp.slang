@@ -2,44 +2,30 @@
 
 struct PushConstants {
     float time;
-    float2 mousePos; // Kept in struct to match your C++ side, but unused below
+    float2 mousePos;
 };
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
-// --- Ported Helpers ---
-float opSmoothUnion(float d1, float d2, float k) {
-    float h = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);
-    return lerp(d2, d1, h) - k * h * (1.0 - h);
+
+// --- ShaderToy Macros translated to Slang ---
+
+// The T(x) macro: (abs(.5 - fract(x)) - .25)
+// Overloaded to handle float, float3, and float4 seamlessly
+float  T(float x)  { return abs(0.5 - frac(x)) - 0.25; }
+float3 T(float3 x) { return abs(0.5 - frac(x)) - 0.25; }
+float4 T(float4 x) { return abs(0.5 - frac(x)) - 0.25; }
+
+// The R(t) macro: mat2(cos(t + vec4(0,11,33,0)))
+// This is a clever GLSL trick to create a 2D rotation matrix.
+// We translate it into a standard 2D rotation multiplier for HLSL.
+float2 mulRot(float2 v, float t) {
+    float c = cos(t);
+    float s = sin(t);
+    // Equivalent to GLSL: v * mat2(c, s, -s, c)
+    return float2(v.x * c - v.y * s, v.x * s + v.y * c);
 }
 
-float sdSphere(float3 p, float s) {
-    return length(p) - s;
-}
-
-float map(float3 p) {
-    float d = 2.0;
-
-    for (int i = 0; i < 16; i++) {
-        float fi = float(i);
-        // Pure math-based movement
-        float t = pc.time * (frac(fi * 412.531 + 0.513) - 0.5) * 2.0;
-
-        float3 pos = sin(t + fi * float3(52.5126, 64.62744, 632.25)) * float3(2.0, 2.0, 0.8);
-
-        float radius = lerp(0.5, 1.0, frac(fi * 412.531 + 0.5124));
-        d = opSmoothUnion(sdSphere(p + pos, radius), d, 0.4);
-    }
-    return d;
-}
-
-float3 calcNormal(float3 p) {
-    const float h = 1e-5;
-    const float2 k = float2(1, -1);
-    return normalize(k.xyy * map(p + k.xyy * h) +
-                     k.yyx * map(p + k.yyx * h) +
-                     k.yxy * map(p + k.yxy * h) +
-                     k.xxx * map(p + k.xxx * h));
-}
+// --- Main Compute Shader ---
 
 [shader("compute")]
 [numthreads(16, 16, 1)]
@@ -48,34 +34,49 @@ void compMain(uint3 id : SV_DispatchThreadID) {
     outputImage.GetDimensions(width, height);
     if (id.x >= width || id.y >= height) return;
 
-    // Standard UV setup with Y-flip for Vulkan
-    float2 uv = float2(id.x, (height - 1) - id.y) / float2(width, height);
-    float aspect = (float)width / (float)height;
+    // ShaderToy uses Bottom-Left origin, Vulkan uses Top-Left.
+    // We flip the Y coordinate here so the math matches Shadertoy exactly.
+    float2 I = float2(id.x, (height - 1) - id.y);
 
-    // Ray setup: screen size is 6m x 6m
-    float3 rayOri = float3((uv - 0.5) * float2(aspect, 1.0) * 6.0, 3.0);
-    float3 rayDir = float3(0.0, 0.0, -1.0);
+    // vec3 v = iResolution;
+    float3 v = float3(float(width), float(height), 1.0);
 
-    float depth = 0.0;
-    float3 p = rayOri;
+    // v.xy = (I+I-v.xy)/v.x;
+    v.xy = (I * 2.0 - v.xy) / v.x;
 
-    // Raymarching
-    for(int i = 0; i < 64; i++) {
-        p = rayOri + rayDir * depth;
-        float dist = map(p);
-        depth += dist;
-        if (dist < 1e-5) break;
+    float z = 0.0;
+    float4 O = float4(0.0, 0.0, 0.0, 0.0);
+
+    // The core accumulation loop
+    for (float i = 0.0; i < 70.0; i++) {
+        float3 p = z * v / 4.0;
+        float n = pc.time / 64.0;
+
+        // p.yz *= R(z/16. * T(n-.25));
+        p.yz = mulRot(p.yz, (z / 16.0) * T(n - 0.25));
+
+        p.z += n * 200.0;
+
+        // p.xy *= R(z/4.*T(n));
+        p.xy = mulRot(p.xy, (z / 4.0) * T(n));
+
+        float3 w = ceil(p * 8.0) / 8.0;
+
+        for (float n_inner = 1.0; n_inner < 4.0; n_inner += n_inner) {
+            w += T(w.yzx * n_inner + p.z * 0.068) / n_inner;
+        }
+
+        float3 a = abs(w);
+        n = length(a.xy - 0.8);
+        z += min(n, 2.5 - max(a.x, a.y));
+
+        // O += abs(T(length(p-w) + vec4(n,8,13,0)/19.)) / n
+        O += abs(T(length(p - w) + float4(n, 8.0, 13.0, 0.0) / 19.0)) / n;
     }
 
-    depth = min(6.0, depth);
-    float3 n = calcNormal(p);
+    // O = tanh(O / 36.);
+    O = tanh(O / 36.0);
 
-    // Lighting
-    float b = max(0.0, dot(n, float3(0.577, 0.577, 0.577)));
-    float3 col = (0.5 + 0.5 * cos((b + pc.time * 3.0) + uv.xyx * 2.0 + float3(0, 2, 4))) * (0.85 + b * 0.35);
-    col *= exp(-depth * 0.15);
-
-    // Thickness/Alpha logic
-    float alpha = 1.0 - (depth - 0.5) / 2.0;
-    outputImage[id.xy] = float4(col, saturate(alpha));
+    // Write out to Vulkan texture (Forcing Alpha to 1.0 for swapchain safety)
+    outputImage[id.xy] = float4(O.xyz, 1.0);
 }

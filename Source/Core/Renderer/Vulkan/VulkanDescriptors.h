@@ -4,20 +4,20 @@
 
 #pragma once
 #include <deque>
-#include <span>
 #include <volk.h>
 
 #include "RendererTypes.h"
+#include "RenderInterface.h"
 #include "Tools/Vector.h"
+
+// TODO Orgest: Trash this whole dang thing and use VK_EXT_descriptor_heap if wider support
 
 namespace Renderer
 {
+    struct GPUTextureView;
     struct GPUBuffer;
     struct GPUDevice;
-    struct GPUTexture;
 	struct GPUSampler;
-	struct VulkanBuffer;
-	struct VulkanDevice;
 
 	struct DescriptorLayout
 	{
@@ -27,13 +27,39 @@ namespace Renderer
 	    void Destroy(const GPUDevice* device) const;
 	};
 
-	struct DescriptorSet
-	{
-		VkDescriptorSet vk = VK_NULL_HANDLE;
-		operator VkDescriptorSet() const noexcept { return vk; }
+    struct DescriptorWriter
+    {
+        std::deque<VkDescriptorImageInfo> imageInfos;
+        std::deque<VkDescriptorBufferInfo> bufferInfos;
+        Vector<VkWriteDescriptorSet> writes;
 
-	    void Destroy(const GPUDevice* device);
-	};
+        DescriptorWriter& WriteImage(u32 binding, const GPUTextureView* view, const GPUSampler* sampler,
+                                     DescriptorType type, u32 arrayElement = 0, u32 count = 1);
+        DescriptorWriter& WriteBuffer(u32 binding, const GPUBuffer* buffer, DescriptorType type, u32 arrayElement = 0,
+                                      size_t size = 0, size_t offset = 0);
+
+        void Clear();
+        void UpdateSet(const GPUDevice* device, VkDescriptorSet set);
+    };
+
+    struct VulkanDescriptorSet final : GPUDescriptorSet
+    {
+        VkDescriptorSet vk = VK_NULL_HANDLE;
+        DescriptorWriter writer;
+        operator VkDescriptorSet() const noexcept { return vk; }
+
+        VulkanDescriptorSet() = default;
+
+        explicit VulkanDescriptorSet(const VkDescriptorSet handle) : vk(handle)
+        {
+        }
+
+        void WriteBuffer(u32 binding, const GPUBuffer* buffer, DescriptorType type) override;
+        void WriteTexture(u32 binding, GPUTextureView* texture, GPUSampler* sampler, DescriptorType type,
+                          u32 arrayElement) override;
+        void WriteTextureArray(u32 binding, Span<GPUTextureView*> textures, DescriptorType type) override;
+        void Update(GPUDevice* device) override;
+    };
 
 	// Descriptor Layout Builder
     struct DescriptorLayoutBuilder
@@ -42,44 +68,25 @@ namespace Renderer
         Vector<VkDescriptorSetLayoutBinding> vkBindings;
 
         DescriptorLayoutBuilder& AddBinding(const Binding& binding);
-        DescriptorLayoutBuilder& AddBindings(std::span<const Binding> bindings);
+        DescriptorLayoutBuilder& AddBindings(Span<const Binding> bindings);
         DescriptorLayout Build(const GPUDevice* device, void* pNext = nullptr, VkDescriptorSetLayoutCreateFlags flags = 0);
         DescriptorLayout BuildFromDesc(const GPUDevice* device, const DescriptorSetLayoutDesc& desc);
         void Clear() { metadata.clear(); vkBindings.clear(); };
     };
 
-	// Descriptor Writer
-    struct DescriptorWriter
-    {
-        std::deque<VkDescriptorImageInfo> imageInfos;
-        std::deque<VkDescriptorBufferInfo> bufferInfos;
-        Vector<VkWriteDescriptorSet> writes;
-
-        // Already uses generic RHI types for textures/samplers
-        DescriptorWriter& WriteCombinedImage(u32 binding, const GPUTexture* image, const GPUSampler* sampler, u32 arrayElement = 0);
-        DescriptorWriter& WriteImage(u32 binding, const GPUTexture* image, const GPUSampler* sampler,
-                                     DescriptorType type);
-        // Now takes generic GPUBuffer
-        DescriptorWriter& WriteBuffer(u32 binding, const GPUBuffer* buffer, DescriptorType type);
-        DescriptorWriter& WriteBuffer(u32 binding, const GPUBuffer* buffer, size_t size, size_t offset, DescriptorType type);
-
-        void Clear();
-        void UpdateSet(const GPUDevice* device, DescriptorSet set);
-    };
-
 	struct PoolSizes
 	{
 		DescriptorType type = DescriptorType::Unknown;
-		f32 ratio = 0;
-	};
+        f32 ratio = 0;
+    };
 
-	// Growable Descriptor Allocator
-	struct DescriptorAllocatorGrowable
+    // Growable Descriptor Allocator
+    struct DescriptorAllocatorGrowable
 	{
-	    void Init(GPUDevice* inDevice, u32 inSetsPerPool, std::span<PoolSizes> poolRatios);
-	    void ResetPools();
-	    void DestroyPools();
-	    DescriptorSet Allocate(DescriptorLayout layout, bool isBindless = false, u32 bindlessCount = 0);
+	    void Init(GPUDevice* inDevice, u32 inSetsPerPool, Span<const PoolSizes> poolRatios);
+        void ResetPools();
+        void DestroyPools();
+	    VulkanDescriptorSet Allocate(DescriptorLayout layout, bool isBindless = false, u32 bindlessCount = 0);
 
 	private:
 		VkDescriptorPool GetPool(); // retrieves a ready pool or creates a new one

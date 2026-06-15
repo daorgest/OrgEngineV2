@@ -20,13 +20,14 @@ SpaceAfterCStyleCast: true
 SpacesInParentheses: false
 SpaceBeforeParens:   ControlStatements
 
-SortIncludes:       false
+SortIncludes:       true
 
-IncludeBlocks: Preserve
+IncludeBlocks: Regroup
+Standard: Latest
 
 IndentCaseLabels: true
 IndentGotoLabels: true
-
+InsertTrailingCommas: Wrapped
 
 DerivePointerAlignment: false
 NamespaceIndentation: All
@@ -40,3 +41,5 @@ ConstructorInitializerIndentWidth: 4
 AllowShortEnumsOnASingleLine: false
 
 Cpp11BracedListStyle: true
+ReferenceAlignment: Left
+SeparateDefinitionBlocks: Always

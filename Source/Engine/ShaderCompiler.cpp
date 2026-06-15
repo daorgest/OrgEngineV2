@@ -71,33 +71,43 @@ void ShaderCompiler::Init()
     slang::createGlobalSession(globalSession.writeRef());
 }
 
+void ShaderCompiler::Destroy()
+{
+    if (globalSession)
+    {
+        globalSession = nullptr;
+    }
+}
+
 CompileResult ShaderCompiler::CompileShader(const std::filesystem::path& filePath) const
 {
     CompileResult result;
 
 
-    Array<slang::CompilerOptionEntry, 4> compilerOptionEntries = {
-        {
-            slang::CompilerOptionName::EmitSpirvDirectly,
-            {slang::CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr}
+    Array compilerOptionEntries = {
+        slang::CompilerOptionEntry{
+            slang::CompilerOptionName::EmitSpirvDirectly, {slang::CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr}
         },
-        {
+        slang::CompilerOptionEntry{
             slang::CompilerOptionName::GLSLForceScalarLayout,
             {slang::CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr}
         },
-        {
-            slang::CompilerOptionName::MatrixLayoutColumn,
-            {slang::CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr}
+        slang::CompilerOptionEntry{
+            slang::CompilerOptionName::MatrixLayoutColumn, {slang::CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr}
         },
-        {
-            slang::CompilerOptionName::Optimization,
-            {slang::CompilerOptionValueKind::Int, 3, 0, nullptr, nullptr}
+        slang::CompilerOptionEntry{
+            slang::CompilerOptionName::Optimization, {slang::CompilerOptionValueKind::Int, 3, 0, nullptr, nullptr}
+        },
+        slang::CompilerOptionEntry{
+            slang::CompilerOptionName::VulkanUseEntryPointName,
+            {slang::CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr}
         }
     };
 
     const std::string shadersDir = std::string(ENGINE_SOURCE_DIR) + "/Shaders/";
     const std::string gameShadersDir = std::string(ENGINE_SOURCE_DIR) + "/Source/Game/Shaders/";
-    Array<const char*, 2> searchPaths = {
+
+    Array searchPaths = {
         shadersDir.c_str(),
         gameShadersDir.c_str()
     };
@@ -128,9 +138,10 @@ CompileResult ShaderCompiler::CompileShader(const std::filesystem::path& filePat
 
     if (!module)
     {
-        if (diagnostics)
+        if (diagnostics && diagnostics->getBufferSize() > 0)
         {
-            LOG(Error, "{}", (const char*)diagnostics->getBufferPointer());
+            std::string errorStr(static_cast<const char*>(diagnostics->getBufferPointer()), diagnostics->getBufferSize());
+            LOG(Warning, "[Slang Syntax Error]\n{}", errorStr.c_str());
         }
         return result;
     }
@@ -169,11 +180,21 @@ CompileResult ShaderCompiler::CompileShader(const std::filesystem::path& filePat
     Slang::ComPtr<slang::IBlob> spirvBlob;
     linkedProgram->getTargetCode(0, spirvBlob.writeRef());
 
+    if (!linkedProgram)
+    {
+        if (linkDiagnostics && linkDiagnostics->getBufferSize() > 0)
+        {
+            std::string errorStr(static_cast<const char*>(linkDiagnostics->getBufferPointer()), linkDiagnostics->getBufferSize());
+            LOG(Warning, "[Slang Linker Error]\n{}", errorStr.c_str());
+        }
+        return result;
+    }
+
     if (spirvBlob)
     {
         const auto codePtr = static_cast<const u32*>(spirvBlob->getBufferPointer());
         const size_t codeSize = spirvBlob->getBufferSize() / sizeof(u32);
-        result.code.assign(codePtr, codePtr + codeSize);
+        result.code.assign({codePtr, codeSize});
 
         result.layoutDesc = ReflectLayout(linkedProgram);
         ReflectPushConstants(linkedProgram, result.layoutDesc);
@@ -182,7 +203,7 @@ CompileResult ShaderCompiler::CompileShader(const std::filesystem::path& filePat
     return result;
 }
 
-inline DescriptorType mapToDescriptorType(slang::TypeReflection* type, slang::TypeLayoutReflection*)
+static inline DescriptorType mapToDescriptorType(slang::TypeReflection* type, slang::TypeLayoutReflection*)
 {
     const auto kind = type->getKind();
 
@@ -226,7 +247,7 @@ inline DescriptorType mapToDescriptorType(slang::TypeReflection* type, slang::Ty
     return DescriptorType::UniformBuffer; // Default fallback
 }
 
-Binding ReflectBinding(slang::VariableLayoutReflection* varLayout)
+static Binding ReflectBinding(slang::VariableLayoutReflection* varLayout)
 {
     Binding b;
 
@@ -244,7 +265,7 @@ Binding ReflectBinding(slang::VariableLayoutReflection* varLayout)
             LOG(Info, "[Reflection] Bindless Array {} detected (Set {}, Binding {})", varLayout->getName(), setIndex,
                 b.binding);
             b.isBindless = true;
-            b.count = 1000; // Your heap capacity
+            b.count = 1000;
         }
         else
         {
@@ -338,7 +359,8 @@ PipelineLayoutDesc ShaderCompiler::ReflectLayout(slang::IComponentType* program)
         sets[setIndexToVecIdx[setIndex]].bindings.push_back(b);
     }
 
-    layoutDesc.setLayouts = sets;
+    // Explicitly copy the data from the scratchpad into the struct
+    layoutDesc.setLayouts.assign(Span<const DescriptorSetLayoutDesc>(sets.data(), sets.size()));
 
     for (const auto& setLayout : layoutDesc.setLayouts)
     {

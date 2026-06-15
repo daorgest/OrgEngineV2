@@ -3,82 +3,103 @@
 //
 
 #pragma once
+#include <volk.h>
+#include <vk_mem_alloc.h>
+
 #include "RendererTypes.h"
 #include "RenderInterface.h"
-#include "vk_mem_alloc.h"
 
 struct ArenaAllocator;
 
 namespace Renderer
 {
-	struct VulkanDevice;
+    struct VulkanTextureView;
+    struct VulkanDevice;
 
 	/// Vulkan implementation of GPUTexture
 	struct VulkanTexture final : GPUTexture
 	{
 		// Constructors
 		VulkanTexture() = default;
-		VulkanTexture(VulkanDevice* device, TextureInfo& info);
+		VulkanTexture(VulkanDevice* device, const TextureInfo& info);
 		VulkanTexture(VulkanDevice* device, const VkImage image) : image(image), device(device) {};
 		~VulkanTexture() override { Destroy(); }
 
 		// Vulkan-specific initialization (backward compatibility)
-		void Init(VulkanDevice* inDevice, TextureInfo& info);
+		void Init(VulkanDevice* inDevice, const TextureInfo& info);
+
+	    void InitExternal(VulkanDevice* inDevice, VkImage inImage, const TextureInfo& info);
 
 		// RHI interface implementation
 		void Destroy() override;
 		void UploadData(const void* data) override;
+	    GPUTextureView* GetView(u32 layer = 0) override;
+
+	    void SetName(const std::string& name) override;
+
 
 		VulkanTexture(const VulkanTexture&) = delete;
 		VulkanTexture& operator=(const VulkanTexture&) = delete;
-		VulkanTexture(VulkanTexture&& other) noexcept
+
+	    VulkanTexture(VulkanTexture&& other) noexcept
 		{
 			*this = std::move(other);
 		}
-		VulkanTexture& operator=(VulkanTexture&& other) noexcept
-		{
-			if (this != &other)
-			{
-				Destroy();
 
-				// Transfer all handles and state
-				image = other.image;
-				imageView = other.imageView;
-				allocation = other.allocation;
-				device = other.device;
-				allocInfo = other.allocInfo;
-				imageFormat = other.imageFormat;
-				imageLayout = other.imageLayout;
-				subresourceRange = other.subresourceRange;
-				textureInfo = other.textureInfo;
-				owns = other.owns;
-
-				// IMPORTANT: Null out the source so its destructor is a no-op
-				other.image = VK_NULL_HANDLE;
-				other.imageView = VK_NULL_HANDLE;
-				other.allocation = VK_NULL_HANDLE;
-				other.owns = false;
-			}
-			return *this;
-		}
+	    VulkanTexture& operator=(VulkanTexture&& other) noexcept;
 
 		// Vulkan-specific helpers
 		void UploadTextureToGPU(const void* data, const TextureInfo& texInfo);
-		void CreateImageView(VkFormat format);
+		void CreateImageView(TextureFormat format);
 		void FillSubresourceInfo();
-		void SetName(const std::string& name) override;
 
-		VkImage                 image = VK_NULL_HANDLE;
-		VkImageView             imageView = VK_NULL_HANDLE;
+        VkImage                 image = VK_NULL_HANDLE;
 		VmaAllocation           allocation = VK_NULL_HANDLE;
 		VmaAllocationInfo       allocInfo = {};
 		VulkanDevice*           device = nullptr;
-		VkFormat                imageFormat = VK_FORMAT_UNDEFINED;
-		TextureLayout           imageLayout = TextureLayout::Unknown;
 		VkImageSubresourceRange subresourceRange = {};
 		TextureInfo             textureInfo = {};
+
 		bool owns = false;
+
+	private:
+	    // Unified storage for all views (default view is index 0)
+	    Vector<VulkanTextureView> views;
 	};
+
+    struct VulkanTextureView final : GPUTextureView
+    {
+        VulkanDevice* device = nullptr;
+        VulkanTexture* texture = nullptr;
+        VkImageView imageView = VK_NULL_HANDLE;
+        u32 bindlessIndex = 0;
+
+
+        VulkanTextureView(VulkanTextureView&& other) noexcept
+        {
+            *this = std::move(other);
+        }
+
+        VulkanTextureView& operator=(VulkanTextureView&& other) noexcept
+        {
+            if (this != &other)
+            {
+                device = other.device;
+                texture = other.texture;
+                imageView = other.imageView;
+                bindlessIndex = other.bindlessIndex;
+
+                other.imageView = VK_NULL_HANDLE;
+                other.bindlessIndex = 0;
+            }
+            return *this;
+        }
+
+        VulkanTextureView() = default;
+        void Init(VulkanDevice* dev, VulkanTexture* tex, const TextureViewInfo& info);
+        VulkanTextureView(VulkanDevice* dev, VulkanTexture* tex, const TextureViewInfo& info);
+        ~VulkanTextureView() override;
+    };
 
 	struct VulkanSampler final : GPUSampler
 	{

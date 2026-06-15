@@ -24,6 +24,7 @@ Checks: >
   performance-move-constructor-init,
   performance-noexcept-move-constructor,
   performance-unnecessary-value-param,
+  performance-noexcept-swap
 
   modernize-avoid-c-arrays,
   modernize-avoid-bind,
@@ -33,6 +34,7 @@ Checks: >
   modernize-make-unique,
   modernize-redundant-void-arg,
   modernize-return-braced-init-list,
+  modernize-type-traits,
   modernize-use-auto,
   modernize-use-constexpr,
   modernize-use-nullptr,
@@ -41,8 +43,11 @@ Checks: >
   modernize-use-equals-delete,
   modernize-use-emplace,
   modernize-use-override,
+  modernize-use-designated-initializers,
+  modernize-use-constraints,
 
   readability-identifier-naming,
+  readability-make-member-function-const,
   readability-redundant-control-flow,
   readability-simplify-boolean-expr,
   readability-container-size-empty,

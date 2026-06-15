@@ -6,39 +6,71 @@
 #include "RendererTypes.h"
 #include "ShaderParams.h"
 
-namespace Constants
+namespace Renderer::Constants
 {
-    // Scene Global Data
-    inline const Vector<Binding> Scene = {
-        {2, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(DebugUBO) },
-        {3, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(CameraUBO)},
-        {4, DescriptorType::UniformBuffer, ShaderStage::AllGraphics,    sizeof(LightSceneData)},
-        {6, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(SceneUBO)}
-
+    // 1. Scene Global Data
+    static constexpr Array<Binding, 5> Scene = {
+        {
+            {2, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(Engine::DebugUBO)},
+            {3, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(Engine::CameraUBO)},
+            {4, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(Engine::LightSceneData)},
+            {5, DescriptorType::UniformBuffer, ShaderStage::Fragment, sizeof(Engine::VisibilityVolumeConstants)},
+            {6, DescriptorType::UniformBuffer, ShaderStage::AllGraphics, sizeof(Engine::SceneUBO)}
+        }
     };
 
-    // PBR Material
-    inline const Vector<Binding> MaterialBuffer = {
-        {0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics, sizeof(MaterialProperties) * 1000, 1, false}
+    // 2. Bounding Box Constants
+    static constexpr Array<Binding, 1> BoundingBox = {
+        {
+            {0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics, sizeof(Engine::BBoxPush)}
+        }
     };
 
-    // Instance Data SSBO (Set 3)
-    inline const Vector<Binding> BindlessTextures = {
-        {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics, 0, 1000, true}
+    // 3. PBR Material
+    static constexpr Array<Binding, 1> MaterialBuffer = {
+        {
+            {
+                0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics,
+                sizeof(Engine::MaterialProperties) * MAX_MATERIAL_INSTANCES
+            }
+        }
     };
 
-    // Set 3: Skybox
-    inline const Vector<Binding> Skybox = {
-        {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics}
+    // 4. 2D Bindless Textures
+    static constexpr Array<Binding, 1> BindlessTextures2D = {
+        {
+            {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics, 0, MAX_BINDLESS_TEXTURES, true}
+        }
     };
 
-    // Set 4: Instance Data SSBO
-    inline const Vector<Binding> InstanceData = {
-        {0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics, sizeof(GPUInstanceSSBO) * 10000, 1, false}
+    // 5. Skybox
+    static constexpr Array<Binding, 1> Skybox = {
+        {
+            {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics}
+        }
     };
 
-    // Compute Shader
-    inline const Vector<Binding> Compute = {
-        {0, DescriptorType::StorageImage, ShaderStage::Compute, 0, 1, false}
+    // 6. Instance Data SSBO
+    static constexpr Array<Binding, 1> InstanceData = {
+        {
+            {
+                0, DescriptorType::StorageBuffer, ShaderStage::AllGraphics,
+                sizeof(Engine::GPUInstanceSSBO) * MAX_MESH_INSTANCES
+            }
+        }
+    };
+
+    // 7. 3D Bindless Textures
+    static constexpr Array<Binding, 1> BindlessTextures3D = {
+        {
+            {0, DescriptorType::CombinedImageSampler, ShaderStage::AllGraphics, 0, MAX_BINDLESS_TEXTURES, true}
+        }
+    };
+
+    // 8. Compute Shader
+    static constexpr Array<Binding, 1> Compute = {
+        {
+            {0, DescriptorType::StorageImage, ShaderStage::Compute}
+        }
     };
 }

@@ -4,24 +4,27 @@
 
 #include "EditorUi.h"
 
+#include <imoguizmo.hpp>
+#include <ufbx.h>
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/norm.hpp>
+
 #include "Application.h"
 #include "Camera.h"
 #include "DebugRenderer.h"
-#include "imoguizmo.hpp"
 #include "MathFuncs.h"
 #include "MeshStats.h"
 #include "RendererTypes.h"
-#include "ShaderCompiler.h"
-#include "ufbx.h"
-#include "glm/ext/matrix_clip_space.hpp"
-#include "glm/gtc/type_ptr.hpp"
-#include "glm/gtx/norm.hpp"
+#include "VulkanConvert.h"
 #ifndef IMGUI_DISABLE
+#define IMGUI_ENABLE_FREETYPE
 #include <imgui.h>
 #include <backends/imgui_impl_vulkan.h>
 
 #if ENGINE_PLATFORM_WIN32
-#define VOLK_IMPLEMENTATION
+#include <windows.h>
 #include <backends/imgui_impl_win32.h>
 #elif ENGINE_PLATFORM_SDL
 #include <SDL3/SDL_version.h>
@@ -31,7 +34,7 @@
 
 #endif
 
-inline ImVec4 ToLinear(ImVec4 col)
+static ImVec4 ToLinear(const ImVec4 col)
 {
     // Approximation: Gamma 2.2 curve
     return ImVec4(
@@ -42,7 +45,7 @@ inline ImVec4 ToLinear(ImVec4 col)
     );
 }
 
-void EditorUI::InitEditorStyles()
+void EditorUI::InitEditorStyles(f32 dpiScale)
 {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
@@ -148,6 +151,8 @@ void EditorUI::InitEditorStyles()
     style.PopupBorderSize = 1.0f;
     style.FrameBorderSize = 0.0f;
     style.TabBorderSize = 0.0f;
+
+    style.ScaleAllSizes(dpiScale);
 }
 
 // For multi-viewport support
@@ -157,11 +162,12 @@ static i32 CreateVulkanSurfaceForImGui(ImGuiViewport* vp, ImU64 vkInst, const vo
 {
     VkWin32SurfaceCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-    createInfo.hwnd = (HWND)vp->PlatformHandleRaw;
+    createInfo.hwnd = static_cast<HWND>(vp->PlatformHandleRaw);
     createInfo.hinstance = ::GetModuleHandle(nullptr);
 
-    return vkCreateWin32SurfaceKHR((VkInstance)vkInst, &createInfo, (const VkAllocationCallbacks*)vkAlloc,
-                                   (VkSurfaceKHR*)outVkSurface);
+    return vkCreateWin32SurfaceKHR(reinterpret_cast<VkInstance>(vkInst), &createInfo,
+                                   static_cast<const VkAllocationCallbacks*>(vkAlloc),
+                                   reinterpret_cast<VkSurfaceKHR*>(outVkSurface));
 }
 
 #elif ENGINE_PLATFORM_SDL
@@ -192,7 +198,14 @@ bool EditorUI::Init(Renderer::GPUInterface* instance, Renderer::GPUDevice* devic
     io.ConfigDpiScaleFonts = true;
     io.ConfigDpiScaleViewports = true;
 
-    InitEditorStyles();
+    f32 dpiScale = 1.0f;
+#if ENGINE_PLATFORM_WIN32
+    dpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(swapchain->GetWindowHandle());
+#elif ENGINE_PLATFORM_SDL
+    dpiScale = SDL_GetWindowDisplayScale(static_cast<SDL_Window*>(swapchain->GetWindowHandle()));
+#endif
+
+    InitEditorStyles(dpiScale);
 
 #if defined(ENGINE_PLATFORM_WIN32)
     ImGui_ImplWin32_Init(swapchain->GetWindowHandle());
@@ -243,10 +256,15 @@ bool EditorUI::Init(Renderer::GPUInterface* instance, Renderer::GPUDevice* devic
     cfg.PixelSnapH = true; // pixel-perfect horizontal
     cfg.RasterizerMultiply = 1.1f; // brighten
 
-    // Loading font
     constexpr f32 fontSize = 18.0f;
     // we're going to rip this out from windows
-    io.Fonts->AddFontFromFileTTF(R"(C:\Windows\Fonts\segoeui.ttf)", fontSize, &cfg);
+    io.Fonts->AddFontFromFileTTF(R"(C:\Windows\Fonts\segoeui.ttf)", fontSize * dpiScale, &cfg);
+
+    // Initialize State with current swapchain values
+    state.uiTargetExtent = swapchain->GetExtent();
+    state.uiSelectedVsyncMode = swapchain->GetPresentMode();
+    state.uiRenderScale = swapchain->GetRenderScale();
+
     return true;
 }
 
@@ -291,9 +309,9 @@ void EditorUI::Render(Renderer::GPUCommandBuffer* cmd)
 
 void EditorUI::DrawCameraGizmo(CameraComponent& camComp)
 {
-    const glm::mat4 proj = glm::perspective(Radians(90.0f), 1.0f, 0.1f, 1000.0f);
+    const glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(90.0f), 1.0f, 1000.0f, 0.1f);
 
-    // Use viewport work area like stats overlay (accounts for menu bar and docking)
+
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const ImVec2 work_pos = viewport->WorkPos;
     const ImVec2 work_size = viewport->WorkSize;
@@ -310,7 +328,28 @@ void EditorUI::DrawCameraGizmo(CameraComponent& camComp)
     ImOGuizmo::SetRect(xPos, yPos, gizmoSize);
     ImOGuizmo::SetDrawList(ImGui::GetForegroundDrawList(const_cast<ImGuiViewport*>(viewport)));
     ImOGuizmo::BeginFrame();
-    ImOGuizmo::DrawGizmo(glm::value_ptr(camComp.base.view), glm::value_ptr(proj), 5.0f);
+    glm::mat4 viewCopy = camComp.camera.view;
+
+    ImOGuizmo::DrawGizmo(glm::value_ptr(viewCopy), glm::value_ptr(proj), 5.0f);
+
+    if (viewCopy != camComp.camera.view)
+    {
+        camComp.camera.view = viewCopy;
+
+        // Extract World Position
+        glm::mat4 invView = glm::inverse(viewCopy);
+        camComp.position = glm::vec3(invView[3]);
+
+        // Extract Forward Vector to rebuild Pitch and Yaw
+        const glm::vec3 fwd = -glm::vec3(invView[2]);
+        camComp.controller.pitch = glm::degrees(std::asin(fwd.y));
+        camComp.controller.yaw = glm::degrees(std::atan2(fwd.x, -fwd.z));
+
+        // Rebuild rotation quaternion safely
+        const glm::quat qYaw = glm::angleAxis(glm::radians(camComp.controller.yaw), glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::quat qPitch = glm::angleAxis(glm::radians(camComp.controller.pitch), glm::vec3(1.0f, 0.0f, 0.0f));
+        camComp.camera.rotation = qYaw * qPitch;
+    }
 }
 
 void EditorUI::DrawCameraEditor()
@@ -338,7 +377,6 @@ void EditorUI::DrawCameraEditor()
             CameraComponent* ghost = state.frozenCam;
             bool changed = false;
 
-            // Debug-specific frame color to signify ghost mode
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.3f, 0.1f, 0.1f, 1.0f));
 
             if (ImGui::BeginTable("##GhostTable", 2, tableFlags))
@@ -352,21 +390,21 @@ void EditorUI::DrawCameraEditor()
                 ImGui::TableSetColumnIndex(1);
                 if (ImGui::DragFloat3("##GPos", glm::value_ptr(ghost->position), 0.1f)) changed = true;
 
-                // Orientation
+                // Orientation (Now editing the controller's isolated Euler angles)
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0); ImGui::Text("Ghost Rot");
                 ImGui::TableSetColumnIndex(1);
                 ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
-                if (ImGui::DragFloat("##GYaw", &ghost->base.yaw, 0.5f, -180.0f, 180.0f, "Y: %.1f")) changed = true;
+                if (ImGui::DragFloat("##GYaw", &ghost->controller.yaw, 0.5f, -180.0f, 180.0f, "Y: %.1f")) changed = true;
                 ImGui::SameLine();
-                if (ImGui::DragFloat("##GPitch", &ghost->base.pitch, 0.5f, -89.0f, 89.0f, "P: %.1f")) changed = true;
+                if (ImGui::DragFloat("##GPitch", &ghost->controller.pitch, 0.5f, -89.0f, 89.0f, "P: %.1f")) changed = true;
                 ImGui::PopItemWidth();
 
                 // FOV
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0); ImGui::Text("Ghost FOV");
                 ImGui::TableSetColumnIndex(1);
-                if (ImGui::SliderFloat("##GFOV", &ghost->base.fov, 10.0f, 160.0f, "%.0f deg")) changed = true;
+                if (ImGui::SliderFloat("##GFOV", &ghost->camera.fov, 10.0f, 160.0f, "%.0f deg")) changed = true;
 
                 ImGui::EndTable();
             }
@@ -375,28 +413,68 @@ void EditorUI::DrawCameraEditor()
             if (changed)
             {
                 const ImGuiViewport* vp = ImGui::GetMainViewport();
-                ghost->base.UpdateVecAndMat(ghost->position, vp->WorkSize.x / vp->WorkSize.y);
+
+                // Rebuild the quaternion safely without gimbal lock from the UI sliders
+                glm::quat qYaw = glm::angleAxis(Radians(ghost->controller.yaw), glm::vec3(0.0f, 1.0f, 0.0f));
+                glm::quat qPitch = glm::angleAxis(Radians(ghost->controller.pitch), glm::vec3(1.0f, 0.0f, 0.0f));
+                ghost->camera.rotation = qYaw * qPitch;
+
+                ghost->camera.Update(ghost->position, vp->WorkSize.x / vp->WorkSize.y);
             }
 
             if (ImGui::Button("Teleport Real Cam to Ghost", ImVec2(-FLT_MIN, 0)))
             {
                 CameraComponent& active = state.cameraComponents[state.activeCameraIdx];
                 active.position = ghost->position;
-                active.base.yaw = ghost->base.yaw;
-                active.base.pitch = ghost->base.pitch;
-                active.base.fov = ghost->base.fov;
+
+                // Sync the controller state AND the quaternion
+                active.controller.yaw = ghost->controller.yaw;
+                active.controller.pitch = ghost->controller.pitch;
+                active.camera.rotation = ghost->camera.rotation;
+                active.camera.fov = ghost->camera.fov;
 
                 const ImGuiViewport* vp = ImGui::GetMainViewport();
-                active.base.UpdateVecAndMat(active.position, vp->WorkSize.x / vp->WorkSize.y);
+                active.camera.Update(active.position, vp->WorkSize.x / vp->WorkSize.y);
             }
         }
         ImGui::Spacing();
     }
 
+    const CameraComponent& active = state.cameraComponents[state.activeCameraIdx];
+    ImGui::SeparatorText("Controller State (Live)");
+
+    const FPSCamera& ctrl = active.controller;
+
+    // A quick lambda to draw disabled (read-only) checkboxes
+    auto DrawFlagUI = [](const char* label, bool isActive)
+    {
+        ImGui::BeginDisabled();
+        bool val = isActive;
+        ImGui::Checkbox(label, &val);
+        ImGui::EndDisabled();
+    };
+
+    if (ImGui::BeginTable("FlagsTable", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX))
+    {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        DrawFlagUI("Moving", HasAny(ctrl.flags, FPSFlags::Moving));
+
+        ImGui::TableSetColumnIndex(1);
+        DrawFlagUI("Sprinting", HasAny(ctrl.flags, FPSFlags::Sprinting));
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        DrawFlagUI("Crouching", HasAny(ctrl.flags, FPSFlags::Crouching));
+
+        ImGui::TableSetColumnIndex(1);
+        DrawFlagUI("Airborne", HasAny(ctrl.flags, FPSFlags::Airborne));
+
+        ImGui::EndTable();
+    }
+
     // --- Section 2: Camera List ---
     ImGui::SeparatorText("SCENE CAMERAS");
-
-    // Increased list height slightly for better visibility of MAX_SCENE_CAMERAS
     if (ImGui::BeginListBox("##SceneCameras", ImVec2(-FLT_MIN, 7 * ImGui::GetFrameHeightWithSpacing())))
     {
         for (u32 i = 0; i < state.cameraComponents.size(); ++i)
@@ -411,7 +489,6 @@ void EditorUI::DrawCameraEditor()
                             isSelected ? "(Selected)" : "");
 
             if (ImGui::Selectable(label, isSelected)) state.selectedCameraIdx = i;
-
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) state.activeCameraIdx = i;
         }
         ImGui::EndListBox();
@@ -431,11 +508,14 @@ void EditorUI::DrawCameraEditor()
         {
             const CameraComponent& activeComp = state.cameraComponents[state.activeCameraIdx];
             targetComp.position = activeComp.position;
-            targetComp.base.yaw = activeComp.base.yaw;
-            targetComp.base.pitch = activeComp.base.pitch;
+
+            // Sync controller state AND quaternion
+            targetComp.controller.yaw = activeComp.controller.yaw;
+            targetComp.controller.pitch = activeComp.controller.pitch;
+            targetComp.camera.rotation = activeComp.camera.rotation;
 
             const ImGuiViewport* vp = ImGui::GetMainViewport();
-            targetComp.base.UpdateVecAndMat(targetComp.position, vp->WorkSize.x / vp->WorkSize.y);
+            targetComp.camera.Update(targetComp.position, vp->WorkSize.x / vp->WorkSize.y);
         }
 
         DrawCameraProperties(targetComp);
@@ -463,15 +543,15 @@ void EditorUI::DrawCameraProperties(CameraComponent& camComp)
         ImGui::TableSetColumnIndex(0);
         ImGui::TextUnformatted("FOV");
         ImGui::TableSetColumnIndex(1);
-        ImGui::SliderFloat("##CameraFOV", &camComp.base.fov, 5.0f, 160.0f);
+        ImGui::SliderFloat("##CameraFOV", &camComp.camera.fov, 5.0f, 160.0f);
 
         // --- Clipping Planes ---
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         ImGui::TextUnformatted("Near/Far");
         ImGui::TableSetColumnIndex(1);
-        ImGui::InputFloat("Near", &camComp.base.nearPlane);
-        ImGui::InputFloat("Far", &camComp.base.farPlane);
+        ImGui::InputFloat("Near", &camComp.camera.nearPlane);
+        ImGui::InputFloat("Far", &camComp.camera.farPlane);
 
         ImGui::EndTable();
     }
@@ -495,8 +575,15 @@ void EditorUI::ClampWindowToViewport()
     const ImVec2 work_size = viewport->WorkSize;
 
     // Keep window within viewport bounds
-    pos.x = std::clamp(pos.x, work_pos.x, work_pos.x + work_size.x - size.x);
-    pos.y = std::clamp(pos.y, work_pos.y, work_pos.y + work_size.y - size.y);
+    if (size.x <= work_size.x)
+        pos.x = std::clamp(pos.x, work_pos.x, work_pos.x + work_size.x - size.x);
+    else
+        pos.x = work_pos.x;
+
+    if (size.y <= work_size.y)
+        pos.y = std::clamp(pos.y, work_pos.y, work_pos.y + work_size.y - size.y);
+    else
+        pos.y = work_pos.y;
 
     ImGui::SetWindowPos(pos);
 }
@@ -505,15 +592,13 @@ void EditorUI::DrawCameraSpeedPopup(f32 camSpeedPopupTime) const
 {
     if (camSpeedPopupTime <= 0.0f) return;
 
-    // Use viewport work area to position relative to usable screen space
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const ImVec2 work_pos = viewport->WorkPos;
     const ImVec2 work_size = viewport->WorkSize;
 
-    // Position in top-center of work area (12% down from top)
     const ImVec2 pos = {work_pos.x + (work_size.x * 0.5f), work_pos.y + (work_size.y * 0.12f)};
 
-    const f32 alpha = std::min(1.0f, camSpeedPopupTime / 1.0f);
+    const f32 alpha = camSpeedPopupTime / 1.5f;
 
     ImGui::SetNextWindowBgAlpha(alpha);
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always, {0.5f, 0.5f});
@@ -538,7 +623,7 @@ void EditorUI::DrawCameraSpeedPopup(f32 camSpeedPopupTime) const
     ImGui::End();
 }
 
-void EditorUI::DrawDebugViewPopup(f32 debugViewPopupTime, DebugView currentView)
+void EditorUI::DrawDebugViewPopup(f32 debugViewPopupTime, Renderer::DebugView currentView)
 {
     if (debugViewPopupTime <= 0.0f) return;
 
@@ -606,47 +691,45 @@ bool EditorUI::DrawMainMenuBar()
 
         if (ImGui::BeginMenu("View"))
         {
-            ImGui::MenuItem("Show Main Overlay", "F2", &state.showMainOverlay);
+            ImGui::MenuItem("Show Main Overlay", nullptr, &state.showMainOverlay);
             ImGui::MenuItem("Show Menu Bar", "F3", &state.showMenuBar);
             ImGui::MenuItem("Show GPU Info", "F4", &state.showGPUInfo);
             ImGui::MenuItem("Show Editor Tools", "T", &state.showEditorTools);
-            ImGui::MenuItem("Audio Vitals", nullptr, &state.showAudioVitals);
-            ImGui::MenuItem("Audio Mixer", nullptr, &state.showAudioMixer);
 
             if (ImGui::BeginMenu("Render Views"))
             {
-                for (const auto& [value, label] : kDebugViews)
+                for (const auto& [value, label] : Renderer::kDebugViews)
                 {
                     bool selected = (state.debugData->debugMode == value);
                     if (ImGui::MenuItem(label, nullptr, selected)) state.debugData->debugMode = value;
                     if (selected) ImGui::SetItemDefaultFocus();
                 }
 
-                EditorUI::HoverToolTip("Debug Views");
                 ImGui::EndMenu();
             }
 
-            if (ImGui::BeginMenu("MSAA")) // TODO Orgest: Broken since pipeline needs to be synced
+            // In EditorUi.cpp -> DrawMainMenuBar()
+            if (ImGui::BeginMenu("MSAA"))
             {
-                for (const auto& [mode, label] : kMSAAModes)
+                const Renderer::SampleCount maxSupported = state.device->GetMaxUsableSampleCount();
+
+                for (const auto& mode : Renderer::kMSAAModes)
                 {
-                    const bool selected = state.swapchain->GetMSAASamples() == mode;
-                    if (ImGui::MenuItem(label, nullptr, selected))
+                    if (mode.count > maxSupported) continue;
+
+                    const bool isSelected = (state.device->currentSamples == mode.count);
+                    if (ImGui::MenuItem(mode.label, nullptr, isSelected))
                     {
-                        state.swapchain->SetMSAASamples(mode);
-#ifdef VULKAN_BUILD
-                        ImGui_ImplVulkan_SetMinImageCount(MAX_FRAME_OVERLAP);
-#endif
-                        if (selected) { ImGui::SetItemDefaultFocus(); }
+                        state.device->currentSamples = mode.count;
+                        state.pendingMSAAChange = true;
                     }
                 }
-                HoverToolTip("MSAA Scene Sample Size");
                 ImGui::EndMenu();
             }
 
             if (ImGui::BeginMenu("VSync"))
             {
-                for (const auto& [mode, label] : kVsyncModes)
+                for (const auto& [mode, label] : Renderer::kVsyncModes)
                 {
                     const bool selected = (state.swapchain->GetPresentMode() == mode);
                     if (ImGui::MenuItem(label, nullptr, selected))
@@ -658,7 +741,6 @@ bool EditorUI::DrawMainMenuBar()
                     }
                     if (selected) { ImGui::SetItemDefaultFocus(); }
                 }
-                HoverToolTip("Changes the swapchain presentation mode immediately.");
                 ImGui::EndMenu();
             }
             ImGui::EndMenu();
@@ -673,240 +755,6 @@ bool EditorUI::DrawMainMenuBar()
     }
 
     return shouldExit;
-}
-
-void EditorUI::DrawAudioSystemVitals() const
-{
-    auto& info = state.audioSystem->GetSystemDebugInfo();
-
-    ImGui::SetNextWindowSize(ImVec2(220, 0), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Audio Status", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        ImGui::TextDisabled("FMOD v%s", info.versionString.c_str());
-
-        // Compact Vitals
-        ImGui::Text("CPU: %.1f%%", info.cpuTotal);
-        ImGui::SameLine(ImGui::GetWindowWidth() * 0.5f);
-        ImGui::Text("Mem: %.1fMB", info.currentMemoryMB);
-
-        ImGui::Text("Voices: %d/%d", info.realChannelsPlaying, info.channelsPlaying);
-    }
-    ImGui::End();
-}
-
-void EditorUI::DrawAudioMixer()
-{
-    if (ImGui::Begin("Audio Mixer", &state.showAudioMixer))
-    {
-        // Master Volume
-        static float masterVol = 1.0f;
-        if (ImGui::SliderFloat("Master", &masterVol, 0.0f, 1.0f, "%.2f"))
-        {
-            state.audioSystem->SetMasterVolume(masterVol);
-        }
-        ImGui::Separator();
-
-        auto activeSounds = state.audioSystem->GetDebugInfo();
-        for (const auto& sound : activeSounds)
-        {
-            // Only show in Mixer if the sound has been triggered to play
-            // We use the 'Ready' check to ensure we don't try to control a null channel
-            if (sound.state == Audio::AudioOpenState::Ready)
-            {
-                ImGui::TextUnformatted(sound.name.c_str());
-
-                ImGui::SameLine(ImGui::GetWindowWidth() * 0.4f);
-                if (ImGui::SmallButton(fmt::format("Pause/Resume##{}", sound.name).c_str()))
-                {
-                    state.audioSystem->TogglePause(sound.name);
-                }
-
-                ImGui::SameLine();
-                if (ImGui::SmallButton(fmt::format("Stop##{}", sound.name).c_str()))
-                {
-                    state.audioSystem->StopSound(sound.name);
-                }
-            }
-        }
-    }
-    ImGui::End();
-}
-
-void EditorUI::DrawSoundBank()
-{
-    if (ImGui::Begin("Sound Bank", &state.showSoundBank))
-    {
-        auto assets = state.audioSystem->GetDebugInfo();
-
-        if (ImGui::BeginTable("BankTable", 3, ImGuiTableFlags_RowBg))
-        {
-            ImGui::TableSetupColumn("Asset", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-            ImGui::TableHeadersRow();
-
-            for (const auto& sound : assets)
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(sound.name.c_str());
-
-                ImGui::TableSetColumnIndex(1);
-                if (sound.state == Audio::AudioOpenState::Loading)
-                {
-                    ImGui::TextColored(ImVec4(1, 1, 0, 1), "Loading..."); // Visual proof it exists!
-                }
-                else if (sound.state == Audio::AudioOpenState::Ready)
-                {
-                    ImGui::TextDisabled("Ready");
-                }
-                else
-                {
-                    ImGui::TextColored(ImVec4(1, 0, 0, 1), "Error");
-                }
-
-
-                ImGui::TableSetColumnIndex(2);
-                if (ImGui::SmallButton(fmt::format("Play##{}", sound.name).c_str()))
-                {
-                    if (sound.state == Audio::AudioOpenState::Ready)
-                    {
-                        state.audioSystem->PlayAudio(sound.name);
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::SmallButton(fmt::format("Delete##{}", sound.name).c_str()))
-                {
-                    state.audioSystem->UnloadSound(sound.name);
-                }
-            }
-            ImGui::EndTable();
-        }
-    }
-    ImGui::End();
-}
-
-void EditorUI::ShowAudioInfo()
-{
-    if (!state.showAudioPopup) return;
-
-    ImGui::SetNextWindowSize(ImVec2(550, 0), ImGuiCond_FirstUseEver);
-
-    if (ImGui::Begin("Audio System Management", &state.showAudioPopup))
-    {
-        auto& sysInfo = state.audioSystem->GetSystemDebugInfo();
-
-
-        ImGui::SeparatorText("Global Controls");
-
-        static float masterVol = 1.0f;
-        if (ImGui::SliderFloat("Master Volume", &masterVol, 0.0f, 1.0f, "%.2f"))
-        {
-            state.audioSystem->SetMasterVolume(masterVol);
-        }
-
-        if (ImGui::Button("Stop All Audio", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0)))
-        {
-            state.audioSystem->StopAll();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Unload All", ImVec2(-FLT_MIN, 0)))
-        {
-             // Logic for bulk unloading would go here
-        }
-
-
-        if (ImGui::CollapsingHeader("System Health"))
-        {
-            ImGui::Text("FMOD Version: %s", sysInfo.versionString.c_str());
-            ImGui::Text("Memory Usage: %.2f MB / %.2f MB", sysInfo.currentMemoryMB, sysInfo.maxMemoryMB);
-
-            // CPU Breakdown
-            if (ImGui::BeginTable("CPUTable", 2, ImGuiTableFlags_BordersInner))
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0); ImGui::Text("Mixer (DSP)");
-                ImGui::TableSetColumnIndex(1); ImGui::Text("%.2f%%", sysInfo.cpuDsp);
-
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0); ImGui::Text("Streaming");
-                ImGui::TableSetColumnIndex(1); ImGui::Text("%.2f%%", sysInfo.cpuStream);
-
-                ImGui::EndTable();
-            }
-        }
-
-        ImGui::Spacing();
-
-
-        ImGui::SeparatorText("Sound Bank");
-
-        static ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
-        if (ImGui::BeginTable("AssetTable", 5, tableFlags))
-        {
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-            ImGui::TableSetupColumn("Play", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-            ImGui::TableSetupColumn("Stop", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-            ImGui::TableSetupColumn("Manage", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-            ImGui::TableHeadersRow();
-
-            auto loadedSounds = state.audioSystem->GetDebugInfo();
-
-            for (const auto& sound : loadedSounds)
-            {
-                ImGui::TableNextRow();
-
-
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(sound.name.c_str());
-                if (sound.isStarving)
-                {
-                    ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(1, 0, 2, 1), "(STARVING)");
-                }
-
-
-                ImGui::TableSetColumnIndex(1);
-                if (sound.state == Audio::AudioOpenState::Loading)
-                {
-                    ImGui::ProgressBar(sound.loadProgress / 100.0f, ImVec2(-1, 0), "...");
-                }
-                else if (sound.state == Audio::AudioOpenState::Ready)
-                {
-                    ImGui::TextUnformatted(sound.isStreaming ? "Stream" : "Sample");
-                }
-                else { ImGui::TextColored(ImVec4(1,0,0,1), "Error"); }
-
-                // 3. Playback Controls
-                ImGui::TableSetColumnIndex(2);
-                const bool canPlay = (sound.state == Audio::AudioOpenState::Ready);
-                if (ImGui::Button(fmt::format("P##{}", sound.name).c_str()) && canPlay)
-                {
-                    state.audioSystem->PlayAudio(sound.name);
-                }
-
-                ImGui::TableSetColumnIndex(3);
-                if (ImGui::Button(fmt::format("S##{}", sound.name).c_str()))
-                {
-                    state.audioSystem->StopSound(sound.name);
-                }
-
-
-                ImGui::TableSetColumnIndex(4);
-                if (ImGui::Button(fmt::format("Unload##{}", sound.name).c_str()))
-                {
-                    state.audioSystem->UnloadSound(sound.name);
-                }
-                if (sound.state == Audio::AudioOpenState::Loading && ImGui::IsItemHovered())
-                {
-                    ImGui::SetTooltip("Warning: Unloading while loading will stall the main thread!");
-                }
-            }
-            ImGui::EndTable();
-        }
-    }
-    ImGui::End();
 }
 
 void EditorUI::UpdateAlphaLerp(f32& currentAlpha, f32 minAlpha, f32 maxAlpha, f32 speed)
@@ -938,9 +786,7 @@ void EditorUI::DrawMainOverlay() const
 	if (!state.showMainOverlay) return;
     using namespace ImGui;
 
-    const bool showDepthRange =
-        state.debugData->debugMode == DebugView::Depth;
-
+    const bool showDepthRange = state.debugData->debugMode == Renderer::DebugView::Depth;
     enum Corner { Custom = -1, TopLeft, TopRight, BottomLeft, BottomRight, Center };
     static i32 corner = TopLeft;
 
@@ -981,7 +827,7 @@ void EditorUI::DrawMainOverlay() const
     }
 
     // Base minimum size
-    ImVec2 min_size = ImVec2(12.0f * fontSize, 5.5f * fontSize);
+    auto min_size = ImVec2(12.0f * fontSize, 5.5f * fontSize);
 
     if (showDepthRange)
         min_size.x = std::max(min_size.x, 18.0f * fontSize); // ~320px scaled
@@ -991,10 +837,8 @@ void EditorUI::DrawMainOverlay() const
     // Expand height for extra rows
     f32 extra_rows = 0.0f;
     if (showDepthRange) extra_rows += 1.0f;
-    if (state.debugRenderer->enabled) extra_rows += 5.0f;
+    if (state.debugRenderer->enabled) extra_rows += 2.0f;
     min_size.y += extra_rows * ImGui::GetFrameHeightWithSpacing();
-
-
     SetNextWindowSizeConstraints(min_size, ImVec2(FLT_MAX, FLT_MAX));
 
     SetNextWindowBgAlpha(state.overlayAlpha);
@@ -1055,13 +899,31 @@ void EditorUI::DrawMainOverlay() const
                 TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 7.0f * fontSize);
                 TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
+                // 1. Native Window Resolution
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted("Resolution");
+                ImGui::TextUnformatted("Native Res");
                 ImGui::TableSetColumnIndex(1);
-                const Extent2D resolution = state.swapchain->GetExtent();
-                ImGui::Text("%u x %u", resolution.width, resolution.height);
-                EditorUI::HoverToolTip("Current swapchain/backbuffer resolution");
+                const Renderer::Extent2D nativeRes = state.swapchain->GetExtent();
+                ImGui::Text("%u x %u", nativeRes.width, nativeRes.height);
+                EditorUI::HoverToolTip("Physical window and UI presentation resolution.");
+
+                // 2. Internal Scene Render Resolution
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("Render Res");
+                ImGui::TableSetColumnIndex(1);
+                const Renderer::Extent2D renderRes = state.swapchain->GetRenderExtent();
+                ImGui::Text("%u x %u", renderRes.width, renderRes.height);
+                EditorUI::HoverToolTip("Internal 3D scene rendering resolution before upscaling.");
+
+                // 3. Current Scale Multiplier
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted("Scale");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%.2f x", state.swapchain->GetRenderScale());
+                EditorUI::HoverToolTip("Current render scale multiplier driving the Render Res.");
 
                 ImGui::EndTable();
             }
@@ -1151,14 +1013,14 @@ void EditorUI::DrawMainOverlay() const
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("VRAM");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::Text("%.1f GB", static_cast<double>(state.device->GetDeviceDesc().dedicatedVideoMemory) / Gigabyte);
+                ImGui::Text("%.1f GB", static_cast<double>(state.device->GetDeviceDesc().dedicatedVideoMemory) / 1_GiB);
 
                 ImGui::EndTable();
             }
         }
 
         // Dynamic tables from toggles
-        if (ImGui::BeginTable("TimingTable", 2, ImGuiTableFlags_SizingStretchProp))
+        if (ImGui::BeginTable("Toggles", 2, ImGuiTableFlags_SizingStretchProp))
         {
             TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 7.0f * fontSize);
             TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
@@ -1185,11 +1047,11 @@ void EditorUI::DrawMainOverlay() const
             {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::SeparatorText("AABB Settings");
+                ImGui::SeparatorText("Debug Line Settings");
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Dummy(ImVec2(0, 0));
 
-                // Depth bias
+                // Depth bias slider remains active for Z-fighting adjustments
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted("Depth Bias");
@@ -1200,37 +1062,13 @@ void EditorUI::DrawMainOverlay() const
                     state.debugRenderer->SetDepthBias(depthBias);
                 }
 
-                // Color
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted("Color");
-                ImGui::TableSetColumnIndex(1);
-                static glm::vec4 color = {1.0f, 1.0f, 0.0f, 1.0f};
-                if (ImGui::ColorButton("##AABBColor", ImVec4(color.x, color.y, color.z, color.w),
-                                       ImGuiColorEditFlags_AlphaPreview | ImGuiColorEditFlags_AlphaBar,
-                                       ImVec2(2.2f * fontSize, 1.1f * fontSize)))
-                {
-                    ImGui::OpenPopup("AABBColorPicker");
-                }
-                if (ImGui::BeginPopup("AABBColorPicker"))
-                {
-                    if (ImGui::ColorPicker4("##AABBColorPicker", &color.x,
-                                            ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_DisplayRGB))
-                    {
-                        state.debugRenderer->SetColor(color);
-                    }
-                    ImGui::EndPopup();
-                }
-
-                // Reset
+                // Reset option handles bias values only
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(1);
-                if (ImGui::Button("Reset AABB", ImVec2(-FLT_MIN, 0)))
+                if (ImGui::Button("Reset Bias", ImVec2(-FLT_MIN, 0)))
                 {
-                    depthBias = 1e-4f;
-                    color = {1.f, 1.f, 0.f, 1.f};
+                    depthBias = 0.0f;
                     state.debugRenderer->SetDepthBias(depthBias);
-                    state.debugRenderer->SetColor(color);
                     state.debugRenderer->SetFlags(0);
                 }
             }
@@ -1250,9 +1088,16 @@ void EditorUI::DrawMainOverlay() const
                 ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("Disable Normal Map");
                 ImGui::TableSetColumnIndex(1);
                 {
-                	bool dn = (state.debugData->disableNormalMap != 0);
+                    bool dn = state.debugData->disableNormalMap;
                 	if (ImGui::Checkbox("##DisableNormal", &dn))
-                		state.debugData->disableNormalMap = dn ? 1u : 0u;
+                    {
+                        state.debugData->disableNormalMap = dn ? 1u : 0u;
+                    }
+                    state.debugData->disableNormalMap = dn ? 1u : 0u;
+                    if (dn != 1)
+                    {
+                        ImGui::SliderFloat("Normal Map Strength", &state.debugData->normalStrength, 0.0f, 2.0f);
+                    }
                 	EditorUI::HoverToolTip("Skip sampling/decoding the normal map to profile fragment cost.");
                 }
 
@@ -1270,35 +1115,24 @@ void EditorUI::DrawMainOverlay() const
                 ImGui::EndTable();
             }
 
-            ImGui::Spacing();
-            ImGui::SeparatorText("Stylized Shading");
+            // Add these to the table or directly below it
+            ImGui::SeparatorText("PBR Aesthetics Tuning");
 
-            // Toon Diffuse Tuning
-            if (ImGui::TreeNodeEx("Toon Lighting", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                ImGui::SliderFloat("Shadow Threshold", &state.debugData->toonThreshold, 0.0f, 1.0f, "%.2f");
-                EditorUI::HoverToolTip("The point where light transitions to shadow (0.5 is standard)");
+            // Ambient Strength Slider
+            ImGui::SliderFloat("Ambient Intensity", &state.debugData->ambientStrength, 0.0f, 0.5f, "%.2f");
+            EditorUI::HoverToolTip("Controls the base ambient light level (darkens shadows).");
 
-                ImGui::SliderFloat("Shadow Smoothness", &state.debugData->toonSmoothness, 0.001f, 0.5f, "%.3f");
-                EditorUI::HoverToolTip("Sharpness of the shadow line (lower = sharper cel-shading)");
+            // AO Strength Slider
+            ImGui::SliderFloat("AO Intensity", &state.debugData->aoStrength, 0.0f, 2.0f, "%.2f");
+            EditorUI::HoverToolTip("Multiplies the AO effect; high values deepen crevices.");
 
-                ImGui::TreePop();
-            }
+            // IBL Roughness Bias Slider
+            ImGui::SliderFloat("IBL Mip Bias", &state.debugData->iblRoughnessMipBias, 0.0f, 1.0f, "%.2f");
+            EditorUI::HoverToolTip("Adjusts the blurriness of reflections; 0 is sharp, 1 is mirror-diffuse.");
 
-            // Rim Light Tuning
-            if (ImGui::TreeNodeEx("Rim Lighting", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                ImGui::SliderFloat("Rim Threshold", &state.debugData->rimThreshold, 0.0f, 1.0f, "%.2f");
-                EditorUI::HoverToolTip("How far the rim light wraps around the silhouette");
-
-                ImGui::SliderFloat("Rim Smoothness", &state.debugData->rimSmoothness, 0.01f, 0.5f, "%.2f");
-                EditorUI::HoverToolTip("Softness of the rim light edge");
-
-                ImGui::SliderFloat("Rim Intensity", &state.debugData->rimIntensity, 0.0f, 2.0f, "%.2f");
-                EditorUI::HoverToolTip("Brightness of the silhouette highlight");
-
-                ImGui::TreePop();
-            }
+            // Reflectivity Scales
+            ImGui::SliderFloat("Metallic Reflect Scale", &state.debugData->metallicReflectScale, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Roughness Reflect Scale", &state.debugData->roughnessReflectScale, 0.0f, 1.0f, "%.2f");
 
             // Shadow Tinting
             ImGui::Spacing();
@@ -1337,7 +1171,7 @@ void EditorUI::AppInfoPopup()
     ImGui::Text(" %s %s - %s", ENGINE_NAME, ENGINE_VERSION, ENGINE_BUILD_DATE);
     ImGui::SeparatorText("Third-Party Libraries");
 
-    static ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
+    static ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg;
 
     if (ImGui::BeginTable("LibraryVersions", 2, flags)) {
         ImGui::TableSetupColumn("Library");
@@ -1364,11 +1198,10 @@ void EditorUI::AppInfoPopup()
 
 
         snprintf(versionBuffer, sizeof(versionBuffer), "%u.%u.%u",
-                 (u32)(VMA_VERSION) >> 22U,
-                 ((u32)(VMA_VERSION) >> 12U) & 0x3FFU,
-                 (u32)(VMA_VERSION) & 0xFFFU);
+                 (VMA_VERSION) >> 22U,
+                 ((VMA_VERSION) >> 12U) & 0x3FFU,
+                 (VMA_VERSION) & 0xFFFU);
         AddLibRow("VMA", versionBuffer);
-
 
 #if ENGINE_PLATFORM_SDL
         const int linkedVer = SDL_GetVersion();
@@ -1387,22 +1220,255 @@ void EditorUI::AppInfoPopup()
         AddLibRow("SDL3 (Revision)", SDL_GetRevision());
 #endif
 
-
-        // Miscellaneous
         constexpr u32 uv = UFBX_HEADER_VERSION;
         snprintf(versionBuffer, sizeof(versionBuffer), "%u.%u.%u",
                  uv / 10000, (uv / 100) % 100, uv % 100);
         AddLibRow("ufbx", versionBuffer);
-// #ifdef TRACY_ENABLE
-//         // Most Tracy versions define TRACY_VERSION or similar depending on the tag
-//         snprintf(versionBuffer, sizeof(versionBuffer), "%d.%d.%d",
-//                  TRACY_VERSION_MAJOR, TRACY_VERSION_MINOR, TRACY_VERSION_PATCH);
-//         AddLibRow("Tracy", versionBuffer);
-// #endif
 
         ImGui::EndTable();
     }
 
+    ImGui::End();
+}
+
+static std::string GetCleanMonitorName(const std::string& rawName, i32 index)
+{
+    if (rawName.empty())
+    {
+        return fmt::format("Display {}", index + 1);
+    }
+
+    // Win32 device path parser fallback (e.g., "\\.\DISPLAY1" -> "Display 1")
+    const size_t pos = rawName.find("DISPLAY");
+    if (pos != std::string::npos)
+    {
+        return "Display " + rawName.substr(pos + 7);
+    }
+
+
+    return rawName;
+}
+
+void EditorUI::DrawDisplaySettings()
+{
+    if (!state.showDisplaySettings || !state.wc) return;
+
+    auto& wc = *state.wc;
+    auto& settings = wc.displaySettings;
+    auto* sc = static_cast<Renderer::VulkanSwapchain*>(state.swapchain);
+
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 center = ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    // Dynamic DPI-aware width
+    const f32 minWidth = 30.0f * ImGui::GetFontSize();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(minWidth, -1), ImVec2(FLT_MAX, FLT_MAX));
+
+    if (ImGui::Begin("Display Settings", &state.showDisplaySettings, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        if (state.uiSelectedMonitorIdx >= settings.monitors.size())
+            state.uiSelectedMonitorIdx = wc.activeMonitorIndex;
+
+        const auto& currentMonitor = settings.monitors[state.uiSelectedMonitorIdx];
+        std::string currentMonitorName = GetCleanMonitorName(currentMonitor.name, state.uiSelectedMonitorIdx);
+
+        // =========================================================
+        ImGui::SeparatorText("Display");
+
+        // Use a table for the perfect Left Label / Right Control alignment
+        if (ImGui::BeginTable("DisplaySettingsTable", 2, ImGuiTableFlags_None))
+        {
+            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+            ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Display");
+            ImGui::TableSetColumnIndex(1);
+
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::BeginCombo("##Display", currentMonitorName.c_str()))
+            {
+                for (i32 i = 0; i < settings.monitors.size(); ++i)
+                {
+                    std::string itemName = GetCleanMonitorName(settings.monitors[i].name, i);
+                    const bool isSelected = (state.uiSelectedMonitorIdx == i);
+                    if (ImGui::Selectable(itemName.c_str(), isSelected))
+                    {
+                        state.uiSelectedMonitorIdx = i;
+                        state.uiTargetExtent = {
+                            settings.monitors[i].desktopMode.width, settings.monitors[i].desktopMode.height
+                        };
+                    }
+                    if (isSelected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            // --- 2. Custom Resolution Toggle ---
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); // Empty left column for toggle
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Checkbox("Custom resolution", &state.useCustomResolution);
+
+            // -----------------------------------------------------
+            // BEGIN DISABLED GROUP: Gray out if Custom is OFF
+            // -----------------------------------------------------
+            ImGui::BeginDisabled(!state.useCustomResolution);
+
+            // --- 3. Aspect Ratio Radio Buttons ---
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Aspect ratio");
+            ImGui::TableSetColumnIndex(1);
+
+            auto RadioRatio = [&](const char* label, u32 w, u32 h)
+            {
+                bool active = (state.uiSelectedRatio.x == w && state.uiSelectedRatio.y == h);
+                if (ImGui::RadioButton(label, active)) state.uiSelectedRatio = {w, h};
+            };
+
+            RadioRatio("16x9", 16, 9);
+            ImGui::SameLine();
+            RadioRatio("16x10", 16, 10);
+            ImGui::SameLine();
+            RadioRatio("21x9", 21, 9);
+
+            // --- 4. Resolution Dropdown ---
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Resolution");
+            ImGui::TableSetColumnIndex(1);
+
+            // If Custom is off, force the target extent to be the monitor's native resolution
+            if (!state.useCustomResolution)
+            {
+                state.uiTargetExtent = {currentMonitor.desktopMode.width, currentMonitor.desktopMode.height};
+                state.uiTargetRefreshRate = currentMonitor.desktopMode.refreshRate;
+            }
+
+            if (state.uiTargetRefreshRate == 0) state.uiTargetRefreshRate = currentMonitor.desktopMode.refreshRate;
+
+            char resPreview[64];
+            std::snprintf(resPreview, sizeof(resPreview), "%u x %u (%u Hz)",
+                          state.uiTargetExtent.width, state.uiTargetExtent.height, state.uiTargetRefreshRate);
+
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::BeginCombo("##Resolution", resPreview))
+            {
+                if (currentMonitor.supportedModes.contains(state.uiSelectedRatio))
+                {
+                    auto modes = currentMonitor.supportedModes.at(state.uiSelectedRatio);
+
+                    // Sort descending: Largest width -> Largest height -> Highest Hz
+                    std::ranges::sort(modes, [](const Platform::VideoMode& a, const Platform::VideoMode& b)
+                    {
+                        if (a.width != b.width) return a.width > b.width;
+                        if (a.height != b.height) return a.height > b.height;
+                        return a.refreshRate > b.refreshRate;
+                    });
+
+                    for (const auto& res : modes)
+                    {
+                        char resLabel[64];
+                        std::snprintf(resLabel, sizeof(resLabel), "%u x %u (%u Hz)", res.width, res.height,
+                                      res.refreshRate);
+
+                        const bool isSelected = (state.uiTargetExtent.width == res.width &&
+                            state.uiTargetExtent.height == res.height &&
+                            state.uiTargetRefreshRate == res.refreshRate);
+
+                        if (ImGui::Selectable(resLabel, isSelected))
+                        {
+                            state.uiTargetExtent = {res.width, res.height};
+                            state.uiTargetRefreshRate = res.refreshRate;
+                        }
+                        if (isSelected) ImGui::SetItemDefaultFocus();
+                    }
+                }
+                else
+                {
+                    ImGui::Selectable("No modes for this ratio", false, ImGuiSelectableFlags_Disabled);
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::EndDisabled();
+            // -----------------------------------------------------
+            // END DISABLED GROUP
+            // -----------------------------------------------------
+
+            // --- 5. Window Mode ---
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Window mode");
+            ImGui::TableSetColumnIndex(1);
+
+            const char* modeNames[] = {"Windowed", "Borderless Window"};
+            i32 currentModeIdx = (wc.displayMode == Platform::DisplayMode::BorderlessFullscreen) ? 1 : 0;
+
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::Combo("##WindowMode", &currentModeIdx, modeNames, 2))
+            {
+                wc.displayMode = (currentModeIdx == 1)
+                                     ? Platform::DisplayMode::BorderlessFullscreen
+                                     : Platform::DisplayMode::Windowed;
+            }
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Render Scale");
+            ImGui::TableSetColumnIndex(1);
+
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::SliderFloat("##RenderScale", &state.uiRenderScale, 0.25f, 2.0f, "%.2f x");
+
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                sc->SetRenderScale(state.uiRenderScale);
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // --- Apply Button ---
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.4f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.5f, 0.4f, 1.0f));
+        if (ImGui::Button("Apply Settings", ImVec2(140.0f, 32.0f)))
+        {
+            wc.activeMonitorIndex = state.uiSelectedMonitorIdx;
+            Platform::MoveWindowToMonitor(wc, wc.activeMonitorIndex);
+
+            u32 physW = state.uiTargetExtent.width;
+            u32 physH = state.uiTargetExtent.height;
+            const u32 physHz = state.uiTargetRefreshRate;
+
+            // If Borderless, the physical window MUST forcefully match the native desktop bounds
+            if (wc.displayMode == Platform::DisplayMode::BorderlessFullscreen)
+            {
+                physW = currentMonitor.desktopMode.width;
+                physH = currentMonitor.desktopMode.height;
+            }
+
+            // FIX: Only update the refresh rate
+            Platform::SetMonitorRefreshRate(wc, physHz);
+            Platform::SetDisplayMode(wc, wc.displayMode);
+            Platform::SetWindowResolution(wc, physW, physH);
+
+            sc->needsRecreation = true;
+        }
+        ImGui::PopStyleColor(2);
+    }
     ImGui::End();
 }
 
@@ -1424,17 +1490,17 @@ void EditorUI::DrawEditorTools()
     const f32 defaultX = viewport->WorkPos.x + viewport->WorkSize.x - windowWidth - padding;
     const f32 defaultY = viewport->WorkPos.y + padding + gizmoOffset + padding;
 
-    ImGui::SetNextWindowPos(ImVec2(defaultX, defaultY), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(windowWidth, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(defaultX, defaultY), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(windowWidth, -1), ImVec2(windowWidth, FLT_MAX));
 
     ImGui::SetNextWindowBgAlpha(state.editorAlpha);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, state.editorAlpha);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings;
 
     if (ImGui::Begin("Editor Tools", &state.showEditorTools, flags))
     {
-        if (ImGui::IsWindowAppearing() || ImGui::IsMouseDragging(0))
+        if (ImGui::IsWindowAppearing() || ImGui::IsMouseDragging(ImGuiMouseButton_Left))
         {
             ClampWindowToViewport();
         }
@@ -1488,13 +1554,19 @@ static bool ProjectToScreen(const glm::vec3& worldPos, const glm::mat4& view, co
     return true;
 }
 
+using namespace Engine;
+
 static LightUBO MakeDirectional()
 {
     return {
+        .position = {0.0f, 15.0f, 0.0f},
+        .range = 0.0f,
         .direction = glm::normalize(glm::vec3{-0.5f, -1.f, -0.3f}),
-        .color = {1.f, 0.95f, 0.85f},
+        .innerCone = 0.0f,
+        .color     = { 1.f, 0.95f, 0.85f },
         .intensity = 3.f,
-        .type = LightType::Directional,
+        .type      = LightType::Directional,
+        .outerCone = 0.0f
     };
 }
 
@@ -1526,57 +1598,36 @@ static LightUBO MakeSpot(const glm::vec3& forward, const glm::vec3& position)
     };
 }
 
-void EditorUI::UpdateLights(f32 deltaTime)
+void EditorUI::UpdateLights() const
 {
     if (!state.lights) return;
     auto& lights = *state.lights;
     const CameraComponent& activeCam = state.cameraComponents[state.activeCameraIdx];
 
-
-    if (state.followCamera && state.selectedLightIdx < (u32)lights.size())
+    if (state.activeFlashlightIdx != (u32)-1 && state.activeFlashlightIdx < static_cast<u32>(lights.size()))
     {
-        auto& L = lights[state.selectedLightIdx];
+        auto& L = lights[state.activeFlashlightIdx];
         if (L.type == LightType::Spot || L.type == LightType::Point)
         {
             L.position = activeCam.position;
             if (L.type == LightType::Spot)
-                L.direction = glm::normalize(activeCam.base.forward);
-        }
-    }
-
-
-    if (state.spinLights && !lights.empty())
-    {
-
-        state.currentLightTime += deltaTime * state.spinSpeed;
-
-
-        const u32 spinCount = std::min((u32)lights.size(), 4u);
-        for (u32 i = 0; i < spinCount; ++i)
-        {
-            const f32 angle = state.currentLightTime + (static_cast<f32>(i) * (glm::two_pi<f32>() / spinCount));
-            lights[i].position = glm::vec3(
-                state.spinCenter.x + (state.spinRadius * std::sin(angle)),
-                state.spinHeight,
-                state.spinCenter.z + (state.spinRadius * std::cos(angle))
-            );
-
-            // If it's a point light, we're done. If it's a spot, make it look at the center
-            if (lights[i].type == LightType::Spot)
-                lights[i].direction = glm::normalize(state.spinCenter - lights[i].position);
+                L.direction = glm::normalize(activeCam.camera.GetForward());
         }
     }
 }
 
-void EditorUI::DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam) const
+void EditorUI::DrawLightGizmos(const i32 selectedIdx, const CameraComponent& activeCam) const
 {
     if (!state.lights) return;
+
     auto& lights = *state.lights;
     ImDrawList* dl = ImGui::GetBackgroundDrawList(ImGui::GetMainViewport());
     const ImGuiIO& io = ImGui::GetIO();
 
-    const Camera& cam = activeCam.base;
-    for (i32 i = 0; i < (i32)lights.size(); ++i)
+
+    const Camera& cam = activeCam.camera;
+
+    for (i32 i = 0; i < static_cast<i32>(lights.size()); ++i)
     {
         ImVec2 sPos;
         if (!ProjectToScreen(lights[i].position, cam.view, cam.projection, sPos)) continue;
@@ -1585,66 +1636,92 @@ void EditorUI::DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam
         constexpr f32 selectRadius = 22.0f;
         const f32 distSq = glm::length2(glm::vec2(io.MousePos.x - sPos.x, io.MousePos.y - sPos.y));
 
-        if (ImGui::IsMouseClicked(0) && !io.WantCaptureMouse && distSq < (selectRadius * selectRadius))
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse && distSq < (selectRadius * selectRadius))
         {
-            const_cast<State&>(state).selectedLightIdx = i;
+            const_cast<State&>(state).selectedLightIdx = static_cast<u32>(i);
         }
 
-
         const bool isSel = (i == selectedIdx);
-        ImU32 col = (lights[i].type == LightType::Directional) ? IM_COL32(249, 226, 175, 255) :
-                    (lights[i].type == LightType::Point)       ? IM_COL32(137, 180, 250, 255) :
-                                                                 IM_COL32(166, 227, 161, 255);
 
-        if (isSel) {
+        // Clang-Tidy: Mark local variables const if they don't change
+        const ImU32 col = (lights[i].type == LightType::Directional)
+                              ? IM_COL32(249, 226, 175, 255)
+                              : (lights[i].type == LightType::Point)
+                              ? IM_COL32(137, 180, 250, 255) :
+                              IM_COL32(166, 227, 161, 255);
+
+        if (isSel)
+        {
             dl->AddCircle(sPos, 16.0f, col, 24, 3.5f); // Selection Glow
             dl->AddCircle(sPos, 19.0f, IM_COL32(255, 255, 255, 80), 24, 1.0f);
+
+            if (lights[i].type == LightType::Directional)
+            {
+                ImVec2 sEnd;
+                const glm::vec3 targetPos = lights[i].position + (lights[i].direction * 4.0f);
+                if (ProjectToScreen(targetPos, cam.view, cam.projection, sEnd))
+                {
+                    dl->AddLine(sPos, sEnd, col, 2.5f);
+                    dl->AddCircleFilled(sEnd, 4.0f, col);
+                }
+            }
         }
 
         dl->AddCircleFilled(sPos, isSel ? 8.0f : 5.0f, col);
 
         char idLabel[16];
         std::snprintf(idLabel, sizeof(idLabel), "L%d", i);
-        dl->AddText({sPos.x + 15, sPos.y - 15}, col, idLabel);
+        // Added explicit float literals for coordinates to avoid implicit double-to-float conversions
+        dl->AddText({sPos.x + 15.0f, sPos.y - 15.0f}, col, idLabel);
     }
 }
 
 void EditorUI::DrawLightEditor()
 {
-    CameraComponent& activeCam = state.cameraComponents[state.activeCameraIdx];
-    auto& lights = *state.lights;
+    // Ensure we handle potential nullptrs safely
+    if (!state.lights) return;
 
-    // Add New Lights
+    auto& lights = *state.lights;
+    const CameraComponent& activeCam = state.cameraComponents[state.activeCameraIdx];
+
+    // --- 1. Creation Controls ---
     if (ImGui::Button("+ Directional")) lights.push_back(MakeDirectional());
     ImGui::SameLine();
-    if (ImGui::Button("+ Point")) lights.push_back(MakePoint(activeCam.base.forward, activeCam.position));
+    if (ImGui::Button("+ Point")) lights.push_back(MakePoint(activeCam.camera.GetForward(), activeCam.position));
     ImGui::SameLine();
-    if (ImGui::Button("+ Spot")) lights.push_back(MakeSpot(activeCam.base.forward, activeCam.position));
+    if (ImGui::Button("+ Spot")) lights.push_back(MakeSpot(activeCam.camera.GetForward(), activeCam.position));
 
     ImGui::Separator();
 
-    // Light Selection and Removal
-    if (ImGui::BeginListBox("##LightsList", ImVec2(-FLT_MIN, 8 * ImGui::GetFrameHeightWithSpacing())))
+    // --- 2. Listbox Selection ---
+    if (ImGui::BeginListBox("##LightsList", ImVec2(-FLT_MIN, 8.0f * ImGui::GetFrameHeightWithSpacing())))
     {
-        for (i32 i = 0; i < (i32)lights.size(); ++i)
+        for (vecSizeType i = 0; i < lights.size(); ++i)
         {
-            const bool isSelected = (state.selectedLightIdx == (u32)i);
-            const char* typeIcon = (lights[i].type == 0) ? "[D]" : (lights[i].type == 1) ? "[P]" : "[S]";
+            ImGui::PushID(static_cast<int>(i));
 
-            char label[64];
-            std::snprintf(label, sizeof(label), "%s Light %d", typeIcon, i);
+            const bool isSelected = (state.selectedLightIdx == static_cast<u32>(i));
+            const char* typeIcon = (lights[i].type == LightType::Directional)
+                                       ? "[D]"
+                                       : (lights[i].type == LightType::Point)
+                                       ? "[P]"
+                                       : "[S]";
 
-            if (ImGui::Selectable(label, isSelected))
-            {
-                state.selectedLightIdx = i;
+            if (ImGui::Selectable(typeIcon, isSelected)) {
+                state.selectedLightIdx = static_cast<u32>(i);
             }
+            ImGui::SameLine();
+            ImGui::Text("Light %zu", static_cast<size_t>(i));
+
+            ImGui::PopID();
         }
         ImGui::EndListBox();
     }
 
     ImGui::Separator();
 
-    if (ImGui::CollapsingHeader("Global Spin Settings"))
+    // --- 3. Global Settings ---
+    if (ImGui::CollapsingHeader("Global Spin Settings", ImGuiTableFlags_None | ImGuiTableFlags_NoSavedSettings))
     {
         ImGui::Checkbox("Enable Animation", &state.spinLights);
         ImGui::DragFloat("Speed", &state.spinSpeed, 0.05f);
@@ -1655,30 +1732,53 @@ void EditorUI::DrawLightEditor()
 
     ImGui::Separator();
 
-    // Property Editing
-    if (!lights.empty() && state.selectedLightIdx < (u32)lights.size())
+    // --- 4. Property Editing ---
+    if (!lights.empty() && state.selectedLightIdx < lights.size())
     {
         LightUBO& L = lights[state.selectedLightIdx];
         ImGui::SeparatorText("Properties");
 
         ImGui::ColorEdit3("Color", &L.color.r, ImGuiColorEditFlags_Float);
-
         ImGui::DragFloat("Intensity", &L.intensity, 0.5f, 0.0f, 1000.0f);
 
         if (L.type != LightType::Directional)
+        {
+            ImGui::DragFloat("Range", &L.range, 0.5f, 1.0f, 1000.0f);
             ImGui::DragFloat3("Position", &L.position.x, 0.1f);
+        }
+        else
+        {
+            ImGui::DragFloat3("Editor Handle Pos", &L.position.x, 0.1f);
+        }
 
         if (L.type != LightType::Point)
-        {
-            if (ImGui::DragFloat3("Direction", &L.direction.x, 0.01f))
-                L.direction = glm::normalize(L.direction);
-        }
+            if (L.type != LightType::Point)
+            {
+                if (ImGui::DragFloat3("Direction", &L.direction.x, 0.01f))
+                {
+                    if (glm::length2(L.direction) > 0.0001f)
+                    {
+                        L.direction = glm::normalize(L.direction);
+                    }
+                }
+
+                if (L.type == LightType::Directional)
+                {
+                    const float sunPitch = glm::degrees(std::asin(-L.direction.y));
+                    const float sunYaw = glm::degrees(std::atan2(L.direction.x, -L.direction.z));
+                    ImGui::TextDisabled("Sun Orientation Angle: Pitch %.1f° | Yaw %.1f°", sunPitch, sunYaw);
+                }
+            }
 
         if (ImGui::Button("Delete Selected"))
         {
-            lights.erase(lights.begin() + state.selectedLightIdx);
-            if (state.selectedLightIdx >= (u32)lights.size() && !lights.empty())
-                state.selectedLightIdx = (u32)lights.size() - 1;
+            lights.erase(state.selectedLightIdx);
+
+            if (lights.empty()) {
+                state.selectedLightIdx = 0;
+            } else if (state.selectedLightIdx >= lights.size()) {
+                state.selectedLightIdx = static_cast<u32>(lights.size() - 1);
+            }
         }
     }
 }

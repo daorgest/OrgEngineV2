@@ -26,12 +26,6 @@
 [submodule "3rdParty/sdl"]
 	path = 3rdParty/sdl
 	url = https://github.com/libsdl-org/SDL.git
-[submodule "3rdParty/openxr"]
-	path = 3rdParty/openxr
-	url = https://github.com/KhronosGroup/OpenXR-SDK.git
 [submodule "3rdParty/gameinput"]
 	path = 3rdParty/gameinput
 	url = https://github.com/microsoftconnect/GameInput.git
-[submodule "3rdParty/tomlplusplus"]
-	path = 3rdParty/tomlplusplus
-	url = https://github.com/marzer/tomlplusplus.git

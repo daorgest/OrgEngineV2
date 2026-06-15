@@ -1,151 +1,93 @@
 #pragma once
 #include <cassert>
-#include <initializer_list>
-#include <utility>
-
-#include <memory>   // construct_at AND destroy_at
-#include <cstring>  // memcpy
-
-#ifdef USE_SMALL_VECTOR
-    using vecSizeType = u32;
-#else
-    using vecSizeType = size_t;
-#endif
 
 template <typename T>
-class Vector
+struct Span;
+
+using vecSizeType = size_t;
+
+template <typename T>
+struct Vector
 {
 protected:
+    T* m_data = nullptr;
     vecSizeType m_size = 0;
     vecSizeType m_capacity = 0;
-    T* m_data = nullptr;
+
 
     static T* allocate(const vecSizeType capacity)
     {
-        return static_cast<T*>(operator new[](capacity * sizeof(T)));
+        return static_cast<T*>(::operator new[](capacity * sizeof(T)));
     }
 
     static void deallocate(T* data)
     {
-        operator delete[](data);
+        ::operator delete[](data);
     }
 
 public:
-    // Constructors
-    Vector()
+
+    Vector() = default;
+
+    explicit Vector(vecSizeType count)
     {
-        m_capacity = 10;
-        m_data = allocate(m_capacity);
+        reserve(count);
+        for (vecSizeType i = 0; i < count; ++i)
+        {
+            new(m_data + i) T();
+        }
+        m_size = count;
     }
 
-    explicit Vector(const vecSizeType n, const T& value = T())
+    explicit Vector(Span<const T> items)
     {
-        m_size = n;
-        m_capacity = n;
-        m_data = allocate(m_capacity);
-        for (vecSizeType i = 0; i < m_size; i++)
+        vecSizeType items_size = static_cast<vecSizeType>(items.size());
+        reserve(items_size);
+        for (vecSizeType i = 0; i < items_size; ++i)
         {
-            new(m_data + i) T(value);
+            new(m_data + i) T(items[i]);
         }
+        m_size = items_size;
     }
 
     Vector(std::initializer_list<T> list)
     {
-        m_size = static_cast<vecSizeType>(list.size());
-        m_capacity = m_size;
-        m_data = allocate(m_capacity);
-
+        vecSizeType list_size = static_cast<vecSizeType>(list.size());
+        reserve(list_size);
         vecSizeType i = 0;
         for (const T& item : list)
         {
-            new(m_data + i++) T(item);
+            new(m_data + i) T(item);
+            i++;
         }
+        m_size = list_size;
     }
 
-    Vector(const T* first, const T* last)
-    {
-        const ptrdiff_t diff = last - first;
-        assert(diff >= 0 && "Last pointer must be after first");
-
-        m_size = static_cast<vecSizeType>(diff);
-        m_capacity = m_size;
-        m_data = allocate(m_capacity);
-        for (vecSizeType i = 0; i < m_size; ++i)
-        {
-            new(m_data + i) T(first[i]);
-        }
-    }
-
-    // Reserve-only constructor (uninitialized)
-    explicit Vector(vecSizeType capacity, nullptr_t)
-    {
-        m_size = 0;
-        m_capacity = capacity;
-        m_data = allocate(m_capacity);
-    }
-
-    Vector(const T* src, vecSizeType n)
-    {
-        m_size = n;
-        m_capacity = n;
-        m_data = allocate(m_capacity);
-        for (vecSizeType i = 0; i < m_size; ++i)
-        {
-            new(m_data + i) T(src[i]);
-        }
-    }
-
-    // Copy constructor
-    Vector(const Vector& other)
-    {
-        m_size = other.m_size;
-        m_capacity = other.m_capacity;
-        m_data = allocate(m_capacity);
-        for (vecSizeType i = 0; i < m_size; i++)
-        {
-            new(m_data + i) T(other.m_data[i]);
-        }
-    }
-
-    // Move constructor
     Vector(Vector&& other) noexcept
-        : m_size(other.m_size), m_capacity(other.m_capacity), m_data(other.m_data)
+        : m_data(other.m_data), m_size(other.m_size), m_capacity(other.m_capacity)
     {
         other.m_data = nullptr;
         other.m_size = 0;
         other.m_capacity = 0;
     }
 
-
-    // Copy assignment
-    Vector& operator=(const Vector& other)
+    ~Vector()
     {
-        if (this != &other)
-        {
-            clear();
-            deallocate(m_data);
-
-            m_size = other.m_size;
-            m_capacity = other.m_capacity;
-            m_data = allocate(m_capacity);
-            for (vecSizeType i = 0; i < m_size; i++)
-            {
-                new(m_data + i) T(other.m_data[i]);
-            }
-        }
-        return *this;
+        clear();
+        if (m_data) deallocate(m_data);
     }
 
-    // Move assignment
     Vector& operator=(Vector&& other) noexcept
     {
         if (this != &other)
         {
             clear();
-            deallocate(m_data);
+            if (m_data) deallocate(m_data);
+
             m_data = other.m_data;
             m_size = other.m_size;
             m_capacity = other.m_capacity;
+
             other.m_data = nullptr;
             other.m_size = 0;
             other.m_capacity = 0;
@@ -153,45 +95,66 @@ public:
         return *this;
     }
 
-    bool operator==(const Vector& other) const
+    Vector(const Vector& other)
     {
-        if (m_size != other.m_size) return false;
-        for (vecSizeType i = 0; i < m_size; i++)
+        assign(other);
+    }
+
+    Vector& operator=(const Vector& other)
+    {
+        if (this != &other)
         {
-            if (!(m_data[i] == other.m_data[i])) return false;
+            assign(other);
         }
-        return true;
+        return *this;
     }
 
-    bool operator!=(const Vector& other) const
+    [[nodiscard]] constexpr operator Span<T>() noexcept
     {
-        return !(*this == other);
+        return Span<T>(m_data, m_size);
     }
 
-    ~Vector()
+    [[nodiscard]] constexpr operator Span<const T>() const noexcept
     {
-        clear();
-        deallocate(m_data);
+        return Span<const T>(m_data, m_size);
     }
 
     // Accessors
-    T* data() { return m_data; }
-    const T* data() const { return m_data; }
+    [[nodiscard]] T* data() { return m_data; }
+    [[nodiscard]] const T* data() const { return m_data; }
 
-    T* begin() { return m_data; }
-    const T* begin() const { return m_data; }
+    [[nodiscard]] T* begin() { return m_data; }
+    [[nodiscard]] const T* begin() const { return m_data; }
 
-    T* end() { return m_data + m_size; }
-    const T* end() const { return m_data + m_size; }
+    [[nodiscard]] T* end() { return m_data + m_size; }
+    [[nodiscard]] const T* end() const { return m_data + m_size; }
 
-    T& front() { assert(m_size > 0); return m_data[0]; }
-    const T& front() const { assert(m_size > 0); return m_data[0]; }
+    [[nodiscard]] T& front()
+    {
+        assert(m_size > 0);
+        return m_data[0];
+    }
 
-    T& back() { assert(m_size > 0); return m_data[m_size - 1]; }
-    const T& back() const { assert(m_size > 0); return m_data[m_size - 1]; }
+    [[nodiscard]] const T& front() const
+    {
+        assert(m_size > 0);
+        return m_data[0];
+    }
 
-    T& at(vecSizeType i) { return m_data[i]; }
-    const T& at(vecSizeType i) const { return m_data[i]; }
+    [[nodiscard]] T& back()
+    {
+        assert(m_size > 0);
+        return m_data[m_size - 1];
+    }
+
+    [[nodiscard]] const T& back() const
+    {
+        assert(m_size > 0);
+        return m_data[m_size - 1];
+    }
+
+    [[nodiscard]] T& at(vecSizeType i) { return m_data[i]; }
+    [[nodiscard]] const T& at(vecSizeType i) const { return m_data[i]; }
 
     [[nodiscard]] vecSizeType size() const { return m_size; }
     [[nodiscard]] vecSizeType size_bytes() const { return (sizeof(T) * m_size); }
@@ -213,91 +176,213 @@ public:
 
     void reserve(vecSizeType newCapacity)
     {
-        if constexpr (sizeof(vecSizeType) < sizeof(size_t)) {
-            assert(newCapacity >= m_capacity && "Vector capacity overflow!");
-        }
-
         if (newCapacity <= m_capacity) return;
 
         T* newData = allocate(newCapacity);
-        if constexpr (std::is_trivially_copyable_v<T>)
+
+        if (m_data)
         {
-            if (m_data)
+            for (vecSizeType i = 0; i < m_size; ++i)
             {
-                // Fast Path: Just a raw memory copy.
-                memcpy(newData, m_data, m_size * sizeof(T));
+                new(newData + i) T(std::move(m_data[i]));
+                m_data[i].~T();
             }
-        }
-        else
-        {
-            // Safe Path: For complex objects that need their constructors called.
-            for (vecSizeType i = 0; i < m_size; i++)
-            {
-                std::construct_at(newData + i, std::move(m_data[i]));
-                std::destroy_at(m_data + i);
-            }
+            deallocate(m_data);
         }
 
-        deallocate(m_data);
-        m_data     = newData;
+        m_data = newData;
         m_capacity = newCapacity;
     }
 
     void resize(vecSizeType newSize)
     {
-        if (newSize > m_capacity)
-            reserve(newSize);
+        if (newSize > m_capacity) reserve(newSize);
 
         if (newSize > m_size)
         {
-            // Adding new elements
-            for (vecSizeType i = m_size; i < newSize; i++)
+            for (; m_size < newSize; ++m_size)
             {
-                std::construct_at(m_data + i);
+                new(m_data + m_size) T();
             }
         }
         else if (newSize < m_size)
         {
-            // Shrinking: Destroy the extras
-            if constexpr (!std::is_trivially_destructible_v<T>)
+            for (; m_size > newSize; --m_size)
             {
-                for (vecSizeType i = newSize; i < m_size; i++)
-                {
-                    std::destroy_at(m_data + i);
-                }
+                m_data[m_size - 1].~T();
             }
         }
+    }
 
-        m_size = newSize;
+    void resize_uninitialized(vecSizeType new_size)
+    {
+        if (new_size > m_capacity) reserve(new_size);
+        m_size = new_size;
     }
 
 
-    // Modifiers
-    void push_back(const T& object)
+    // --- Modifiers ---
+    void assign(vecSizeType count, const T& value)
     {
-        if (m_size >= m_capacity)
-            reserve(m_capacity == 0 ? 1 : m_capacity * 2);
-        new (m_data + m_size++) T(object);
+        clear();
+        reserve(count);
+        for (vecSizeType i = 0; i < count; ++i)
+        {
+            new(m_data + i) T(value);
+        }
+        m_size = count;
     }
 
-    void push_back(T&& object)
+    void assign(Span<const T> items)
     {
-        if (m_size >= m_capacity)
-            reserve(m_capacity == 0 ? 1 : m_capacity * 2);
-        new (m_data + m_size++) T(std::move(object));
+        clear();
+        vecSizeType items_size = static_cast<vecSizeType>(items.size());
+        reserve(items_size);
+        for (vecSizeType i = 0; i < items_size; ++i)
+        {
+            new(m_data + i) T(items[i]);
+        }
+        m_size = items_size;
+    }
+
+    void assign(std::initializer_list<T> list)
+    {
+        clear();
+        vecSizeType list_size = static_cast<vecSizeType>(list.size());
+        reserve(list_size);
+        vecSizeType i = 0;
+        for (const T& item : list)
+        {
+            new(m_data + i) T(item);
+            i++;
+        }
+        m_size = list_size;
     }
 
     template <typename... Args>
     void emplace_back(Args&&... args)
     {
         if (m_size == m_capacity)
+            reserve(m_capacity == 0 ? 8 : m_capacity * 2);
+
+        new(m_data + m_size++) T(std::forward<Args>(args)...);
+    }
+
+    void push_back(const T& object)
+    {
+        emplace_back(object);
+    }
+
+    void push_back(T&& object)
+    {
+        emplace_back(std::move(object));
+    }
+
+    void push_span(Span<const T> items)
+    {
+        vecSizeType items_size = static_cast<vecSizeType>(items.size());
+        if (m_size + items_size > m_capacity)
         {
-            reserve(m_capacity == 0 ? 1 : m_capacity * 2);
+            reserve(m_size + items_size);
         }
-        new(m_data + m_size) T(std::forward<Args>(args)...);
+
+        for (vecSizeType i = 0; i < items_size; ++i)
+        {
+            new(m_data + m_size + i) T(items[i]);
+        }
+        m_size += items_size;
+    }
+
+    void pop_back()
+    {
+        // assert(m_size > 0);
+        m_data[m_size - 1].~T();
+        m_size--;
+    }
+
+    void insert(vecSizeType index, const T& value)
+    {
+        // assert(index <= m_size);
+        if (index == m_size)
+        {
+            push_back(value);
+            return;
+        }
+
+        if (m_size >= m_capacity) reserve(m_capacity == 0 ? 8 : m_capacity * 2);
+
+        new(m_data + m_size) T(std::move(m_data[m_size - 1]));
+
+        for (vecSizeType i = m_size - 1; i > index; --i)
+        {
+            m_data[i] = std::move(m_data[i - 1]);
+        }
+
+        m_data[index] = value;
         m_size++;
     }
 
+    void erase(vecSizeType index)
+    {
+        // assert(index < m_size);
+
+        for (vecSizeType i = index; i < m_size - 1; ++i)
+        {
+            m_data[i] = std::move(m_data[i + 1]);
+        }
+
+        m_data[m_size - 1].~T();
+        m_size--;
+    }
+
+    void erase(T* first, T* last)
+    {
+        if (first >= last) return;
+
+        const vecSizeType startIdx = static_cast<vecSizeType>(first - m_data);
+        const vecSizeType count = static_cast<vecSizeType>(last - first);
+
+        // Shift valid elements down to overwrite the erased chunk
+        for (vecSizeType i = startIdx; i < m_size - count; ++i)
+        {
+            m_data[i] = std::move(m_data[i + count]);
+        }
+
+        // Destruct the old tail
+        for (vecSizeType i = m_size - count; i < m_size; ++i)
+        {
+            m_data[i].~T();
+        }
+
+        m_size -= count;
+    }
+
+    void erase_unordered(vecSizeType index)
+    {
+        // assert(index < m_size);
+
+        if (index != m_size - 1)
+        {
+            // Move the very last element into the slot we want to erase
+            m_data[index] = std::move(m_data[m_size - 1]);
+        }
+
+        // Destroy the old tail
+        m_data[m_size - 1].~T();
+        m_size--;
+    }
+
+    void clear()
+    {
+        for (vecSizeType i = 0; i < m_size; ++i)
+        {
+            m_data[i].~T();
+        }
+        m_size = 0;
+    }
+
+
+    // --- Queries & Searching ---
     bool contains(const T& object) const
     {
         for (vecSizeType i = 0; i < m_size; i++)
@@ -310,123 +395,58 @@ public:
         return false;
     }
 
-    void pop_back()
+
+    // --- Operators & Friends ---
+    bool operator==(const Vector& other) const
     {
-        if (m_size > 0)
+        if (m_size != other.m_size)
+            return false;
+
+        for (vecSizeType i = 0; i < m_size; i++)
         {
-            m_size--;
-            m_data[m_size].~T();
+            if (!(m_data[i] == other.m_data[i]))
+                return false;
         }
+        return true;
     }
 
-    void erase(const vecSizeType position)
+    bool operator!=(const Vector& other) const
     {
-        if (position >= m_size)
-            return;
-
-        // Shift elements left by assigning the next one over
-        // This is safer than manual placement-new in the same buffer
-        for (vecSizeType i = position; i < m_size - 1; i++)
-        {
-            m_data[i] = std::move(m_data[i + 1]);
-        }
-
-        // Explicitly destroy the last element since it's now a duplicate/garbage
-        m_data[m_size - 1].~T();
-        m_size--;
+        return !(*this == other);
     }
 
-    T* erase(T* pos)
+    bool operator<(const Vector& other) const
     {
-        if (pos < m_data || pos >= m_data + m_size)
-            return end();
-
-        const auto position = static_cast<vecSizeType>(pos - m_data);
-        erase(position);
-        return m_data + position;
+        return std::lexicographical_compare(begin(), end(), other.begin(), other.end());
     }
 
-    void insert(vecSizeType idx, const T& object)
+    bool operator>(const Vector& other) const
     {
-        if (idx > m_size)
-            return;
-
-        if (m_size >= m_capacity)
-            reserve(m_capacity == 0 ? 1 : m_capacity * 2);
-
-        if (idx == m_size)
-        {
-            push_back(object);
-            return;
-        }
-
-        // Construct the last element into the uninitialized slot first
-        new (m_data + m_size) T(std::move(m_data[m_size - 1]));
-
-        // Move existing elements upward to make room at idx
-        for (vecSizeType i = m_size - 1; i > idx; i--)
-        {
-            m_data[i] = std::move(m_data[i - 1]);
-        }
-
-        // Assign the new object to the now-vacant index
-        m_data[idx] = object;
-        m_size++;
+        return other < *this;
     }
 
-    void insert(vecSizeType idx, const T* src, vecSizeType count)
+    bool operator<=(const Vector& other) const
     {
-        if (idx > m_size || count == 0)
-            return;
-
-        // Grow if needed
-        if (m_size + count > m_capacity)
-            reserve((m_capacity == 0) ? count : std::max(m_capacity * 2, m_size + count));
-
-        // Move existing elements upward
-        for (vecSizeType i = m_size; i > idx; --i)
-        {
-            new (m_data + i + count - 1) T(std::move(m_data[i - 1]));
-            m_data[i - 1].~T();
-        }
-
-        // Copy new elements into place
-        for (vecSizeType i = 0; i < count; ++i)
-            new (m_data + idx + i) T(src[i]);
-
-        m_size += count;
+        return !(*this > other);
     }
 
-    void assign(size_t count, const T& value)
+    bool operator>=(const Vector& other) const
     {
-        clear();
-        reserve(count);
-        for (size_t i = 0; i < count; ++i)
-        {
-            push_back(value);
-        }
+        return !(*this < other);
     }
 
-    template <std::input_iterator It>
-    void assign(It first, It last)
+    friend void swap(Vector& first, Vector& second) noexcept
     {
-        clear();
-        while (first != last)
-        {
-            push_back(*first);
-            ++first;
-        }
-    }
+        vecSizeType tmp_size = first.m_size;
+        first.m_size = second.m_size;
+        second.m_size = tmp_size;
 
-    void clear()
-    {
-        if constexpr (!std::is_trivially_destructible_v<T>) // could be just m_size = 0...feelin experiemental
-        {
-            for (vecSizeType i = 0; i < m_size; ++i)
-            {
-                m_data[i].~T();
-            }
-        }
-        m_size = 0;
+        vecSizeType tmp_cap = first.m_capacity;
+        first.m_capacity = second.m_capacity;
+        second.m_capacity = tmp_cap;
+
+        T* tmp_data = first.m_data;
+        first.m_data = second.m_data;
+        second.m_data = tmp_data;
     }
 };

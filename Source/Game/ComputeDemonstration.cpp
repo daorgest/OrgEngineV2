@@ -4,29 +4,49 @@
 
 #include "ComputeDemonstration.h"
 
-#include "imgui_impl_vulkan.h"
 #include "ShaderConstants.h"
-#include "VulkanPipeline.h"
-#include "VulkanTexture.h"
+#include "VulkanImGuiHelpets.h"
+#include "Tools/Logger.h"
 
-void ComputeDemonstration::Init(Renderer::GPUDevice* device, Renderer::DescriptorAllocatorGrowable& descAlloc)
+using namespace Renderer;
+
+void ComputeDemonstration::Init(Renderer::GPUDevice* device, Renderer::GPUShaderManager* shaderManager, Renderer::DescriptorAllocatorGrowable& descAlloc)
 {
     shader = device->CreateShaderPath("Shaders/gradiant_comp.spv");
 
-    Renderer::DescriptorLayoutBuilder b;
-    layout = b.AddBindings(Constants::Compute).Build(device);
-    descriptorSet = descAlloc.Allocate(layout);
+    DescriptorLayoutBuilder builder;
+    layout = builder.AddBindings(Constants::Compute).Build(device);
+    descriptorSet = std::make_unique<VulkanDescriptorSet>(descAlloc.Allocate(layout));
 
-    // Initial default size
+    ComputePipelineDesc desc = {
+        .computeShader = shader,
+        // .slangSourcePath ="Shaders/gradiant_comp.slang"
+    };
+
+    desc.layout.setLayouts.push_back(DescriptorSetLayoutDesc::FromConstants(0, Constants::Compute));
+    desc.layout.pushConstants.push_back({sizeof(ComputePushConstants), 0, Renderer::ShaderStage::Compute});
+    pipeline = device->CreateComputePipeline(desc);
+
+    if (!pipeline)
+    {
+        LOG(Error, "Failed to build demonstration compute pipeline!");
+        return;
+    }
+    // shaderManager->RegisterPipeline(pipeline.get());
+
     Resize(device, {1280, 720});
 }
 
-void ComputeDemonstration::Resize(Renderer::GPUDevice* device, const Extent2D& newSize)
+
+
+void ComputeDemonstration::Resize(GPUDevice* device, const Extent2D& newSize)
 {
     if (newSize.width == lastExtent.width && newSize.height == lastExtent.height) return;
     if (newSize.width == 0 || newSize.height == 0) return;
 
-    TextureInfo textureInfo = {
+    device->WaitIdle();
+
+    const TextureInfo textureInfo = {
         .extent = {newSize.width, newSize.height},
         .format = TextureFormat::RGBA8_UNORM,
         .usage = ImageUsage::Sampled | ImageUsage::Storage
@@ -35,53 +55,79 @@ void ComputeDemonstration::Resize(Renderer::GPUDevice* device, const Extent2D& n
     texture = device->CreateTexture(textureInfo);
     texture->SetName("Compute Output");
 
-    device->ImmediateSubmit([&](Renderer::GPUCommandBuffer* cmd)
-    {
-        cmd->TransitionLayout(texture.get(), TextureLayout::Unknown, TextureLayout::General);
-    });
-
-    Renderer::DescriptorWriter()
-        .WriteImage(0, texture.get(), nullptr, DescriptorType::StorageImage)
-        .UpdateSet(device, descriptorSet);
-
     SamplerInfo samplerInfo;
     displaySampler = device->CreateSampler(samplerInfo);
-    auto* vkTex = static_cast<Renderer::VulkanTexture*>(texture.get());
-    auto* vkSampler = static_cast<Renderer::VulkanSampler*>(displaySampler.get());
-    if (set.vk != 0)
+
+    descriptorSet->WriteTexture(0, texture.get()->GetView(), displaySampler.get(),
+                                Renderer::DescriptorType::StorageImage);
+    descriptorSet->Update(device);
+
+    if (texId != ImTextureID_Invalid)
     {
-        // This will push the old index onto our new free-list
-        ImGui_ImplVulkan_RemoveTexture(set.vk);
+        UI::RemoveTexture(texId);
     }
 
-    // 2. RECONSTRUCT CREATION INFOS AND ALLOCATE
-    // (Pulls from the free-list we just populated!)
-    set.vk = ImGui_ImplVulkan_AddTextureHeap(
-        &vkSampler->createInfo,
-        &vkTex->imageViewCreateInfo,
-        VK_IMAGE_LAYOUT_GENERAL
-    );
-
+    texId = UI::AddTexture(texture.get()->GetView(), TextureLayout::General);
 
     lastExtent = newSize;
 }
 
-
-void ComputeDemonstration::Execute(Renderer::GPUCommandBuffer* cmd, const Extent2D extent, const f32 elapsedTime,
-                                   const glm::vec2& mousePos)
+void ComputeDemonstration::Destroy()
 {
-    cmd->TransitionLayout(texture.get(), TextureLayout::General);
-    cmd->BindPipeline(pipeline.get());
-    cmd->BindDescriptorSet(&descriptorSet, 0, pipeline.get());
-    const ComputePushConstants cPC =
+    if (texId != ImTextureID_Invalid)
     {
-        .time = elapsedTime,
-        .mousePos = mousePos,
-    };
-    cmd->PushConstants(pipeline.get(), ShaderStage::Compute, 0, sizeof(ComputePushConstants), &cPC);
-    const u32 groupCountX = (extent.width + 15) / 16;
-    const u32 groupCountY = (extent.height + 15) / 16;
-    cmd->Dispatch(groupCountX, groupCountY, 1);
+        UI::RemoveTexture(texId);
+        texId = ImTextureID_Invalid;
+    }
+}
 
+void ComputeDemonstration::Execute(GPUCommandBuffer* cmd, const Extent2D extent, const ComputePushConstants& cPC) const
+{
     cmd->TransitionLayout(texture.get(), TextureLayout::ShaderReadOnly);
+    cmd->FlushBarriers();
+    cmd->BindPipeline(pipeline.get());
+    cmd->BindDescriptorSet(descriptorSet.get(), 0, pipeline.get());
+
+    cmd->PushConstants(pipeline.get(), ShaderStage::Compute, 0, sizeof(ComputePushConstants), &cPC);
+
+    const u32 groupX = static_cast<u32>(std::ceil(extent.width / 16.0f));
+    const u32 groupY = static_cast<u32>(std::ceil(extent.height / 16.0f));
+    cmd->Dispatch(groupX, groupY, 1);
+}
+
+void ComputeDemonstration::DrawUI(GPUDevice* device)
+{
+
+
+    // --- 1. DEFAULT POSITIONING LOGIC ---
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const f32 fontSize = ImGui::GetFontSize();
+
+    // The main overlay scales dynamically up to ~24 font units wide.
+    // We anchor this window just to the right of it, with a tiny gap.
+    const ImVec2 defaultPos = { vp->WorkPos.x + (26.0f * fontSize), vp->WorkPos.y + (0.5f * fontSize) };
+
+    // A nice default 16:9 starting resolution (e.g., 640x360)
+    constexpr ImVec2 defaultSize = { 640.0f, 360.0f };
+
+
+    ImGui::SetNextWindowPos(defaultPos, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(defaultSize, ImGuiCond_FirstUseEver);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    const std::string windowTitle = fmt::format("Compute Shader Output: {}x{}###ComputeWindow", lastExtent.width, lastExtent.height);
+    ImGui::Begin(windowTitle.c_str());
+
+    const ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+    if (viewportSize.x > 0.0f && viewportSize.y > 0.0f)
+    {
+
+        Resize(device, { static_cast<u32>(viewportSize.x), static_cast<u32>(viewportSize.y) });
+        if (texId != ImTextureID_Invalid)
+        {
+            ImGui::Image(texId, viewportSize);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
 }

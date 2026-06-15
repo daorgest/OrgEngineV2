@@ -1,22 +1,21 @@
 //
 // Created by Orgest on 6/8/2025.
 //
-#define WIN32_LEAN_AND_MEAN
 #ifdef ENGINE_PLATFORM_WIN32
+#define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
-// Xbox stuff
 
 #include "RendererTypes.h"
 #include "Input/InputSys.h"
 #include "Input/InputSysGameInput.h"
 
-#include <fmt/core.h>
-
 #ifdef EDITORUI
 #include <imgui_impl_win32.h>
 #endif
 
+
 #include <dwmapi.h>
+#include <ranges>
 
 #include "Platform.h"
 #include "../Tools/Arena.h"
@@ -38,87 +37,10 @@ __declspec(dllexport) void NoHotPatch()
 }
 
 // Forward Declare up here for init
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-LRESULT CALLBACK GlobalWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static LRESULT CALLBACK GlobalWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
-Keyboard::Key MapKeys(WPARAM wParam, LPARAM lParam)
-{
-    const u8 scancode = (lParam >> 16) & 0xFF;
-    const bool isExtended = (lParam >> 24) & 1;
-
-    // Handle extended and special keys
-    switch (wParam)
-    {
-    case VK_ESCAPE: return Keyboard::Key::Escape;
-    case VK_TAB: return Keyboard::Key::Tab;
-    case VK_RETURN: return Keyboard::Key::Enter;
-    case VK_BACK: return Keyboard::Key::Backspace;
-    case VK_SPACE: return Keyboard::Key::Space;
-
-    case VK_INSERT: return Keyboard::Key::Insert;
-    case VK_DELETE: return Keyboard::Key::Delete;
-    case VK_HOME: return Keyboard::Key::Home;
-    case VK_END: return Keyboard::Key::End;
-    case VK_LEFT: return Keyboard::Key::Left;
-    case VK_RIGHT: return Keyboard::Key::Right;
-    case VK_UP: return Keyboard::Key::Up;
-    case VK_DOWN: return Keyboard::Key::Down;
-
-
-    case VK_SHIFT:
-        return (scancode == 0x36) ? Keyboard::Key::Shift : Keyboard::Key::Shift;
-    case VK_CONTROL:
-        return isExtended ? Keyboard::Key::Ctrl : Keyboard::Key::Ctrl;
-    case VK_MENU:
-        return isExtended ? Keyboard::Key::Alt : Keyboard::Key::Alt;
-
-    case VK_F1: return Keyboard::Key::F1;
-    case VK_F2: return Keyboard::Key::F2;
-    case VK_F3: return Keyboard::Key::F3;
-    case VK_F4: return Keyboard::Key::F4;
-    case VK_F5: return Keyboard::Key::F5;
-    case VK_F6: return Keyboard::Key::F6;
-    case VK_F7: return Keyboard::Key::F7;
-    case VK_F8: return Keyboard::Key::F8;
-    case VK_F9: return Keyboard::Key::F9;
-    case VK_F10: return Keyboard::Key::F10;
-    case VK_F11: return Keyboard::Key::F11;
-    case VK_F12: return Keyboard::Key::F12;
-
-    case VK_CAPITAL: return Keyboard::Key::CapsLock;
-    case VK_NUMLOCK: return Keyboard::Key::NumLock;
-    case VK_SCROLL: return Keyboard::Key::ScrollLock;
-    case VK_PRINT: return Keyboard::Key::PrintScreen;
-    case VK_PAUSE: return Keyboard::Key::Pause;
-    case VK_APPS: return Keyboard::Key::Menu;
-
-    case VK_OEM_1: return Keyboard::Key::SemiColon; // ; :
-    case VK_OEM_2: return Keyboard::Key::Question_BackSlash; // / ?
-    case VK_OEM_3: return Keyboard::Key::Tilde; // ` ~
-    case VK_OEM_4: return Keyboard::Key::SquareBracketsOpen; // [
-    case VK_OEM_5: return Keyboard::Key::Backslash; // \ |
-    case VK_OEM_6: return Keyboard::Key::SquareBracketsClose; // ]
-    case VK_OEM_7: return Keyboard::Key::Quotes; // ' "
-    case VK_OEM_COMMA: return Keyboard::Key::Comma_LeftArrow; // ,
-    case VK_OEM_PERIOD: return Keyboard::Key::Period_RightArrow; // .
-    case VK_OEM_PLUS: return Keyboard::Key::Plus_Equal; // =
-    case VK_OEM_MINUS: return Keyboard::Key::Minus_Underscore; // -
-
-    default: break;
-    }
-
-    // Handle A–Z
-    if (wParam >= 'A' && wParam <= 'Z')
-        return static_cast<Keyboard::Key>(Keyboard::Key::A + (wParam - 'A'));
-
-    // Handle 0–9
-    if (wParam >= '0' && wParam <= '9')
-        return static_cast<Keyboard::Key>(Keyboard::Key::Num0 + (wParam - '0'));
-
-    return Keyboard::Key::Unknown;
-}
-
-bool IsSystemDarkModeEnabled()
+static bool IsSystemDarkModeEnabled()
 {
     HKEY hKey;
     LPCWSTR subkey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
@@ -136,7 +58,7 @@ bool IsSystemDarkModeEnabled()
     return false;
 }
 
-void ApplyModernTheme(HWND hwnd)
+static void ApplyTheme(HWND hwnd)
 {
     BOOL isDark = IsSystemDarkModeEnabled();
 
@@ -162,23 +84,31 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
 {
     ZoneScopedN("Init Win32 Platform");
     ImGui_ImplWin32_EnableDpiAwareness(); // why here.....trust me it works
-    window->windowWidth = width;
-    window->windowHeight = height;
-    window->monitorWidth = GetSystemMetrics(SM_CXSCREEN);
-    window->monitorHeight = GetSystemMetrics(SM_CYSCREEN);
+
+    RefreshMonitorData(window); // Populate!!
+    const auto& primary = window->displaySettings.monitors[window->activeMonitorIndex];
+
+    if (width == 0 || height == 0)
+    {
+        if (mode == DisplayMode::BorderlessFullscreen)
+        {
+            window->windowWidth = primary.desktopMode.width;
+            window->windowHeight = primary.desktopMode.height;
+        }
+        else
+        {
+            // Screen size
+            window->windowWidth = static_cast<u32>(GetSystemMetrics(SM_CXSCREEN));
+            window->windowHeight = static_cast<u32>(GetSystemMetrics(SM_CYSCREEN));
+        }
+    }
+    else
+    {
+        window->windowWidth = width;
+        window->windowHeight = height;
+    }
+
     window->platformName = "Win32";
-    window->positionX = CW_USEDEFAULT;
-    window->positionY = CW_USEDEFAULT;
-    // TODO(Orgest): this is fine for now, but will have to test for multiple screens/devices
-    width == 0 ? window->windowWidth = window->monitorWidth : window->windowWidth = width;
-    height == 0 ? window->windowHeight = window->monitorHeight : window->windowHeight = height;
-
-    // Check for min Windows version Win 10 22H2
-    // if (IsWindowsVersionOrGreater(10, 0, 22621))
-    // {
-    // 	ShowMessageBox("Windows 10 22H2 is the min spec", "Error", MessageBoxType::Error);
-    // }
-
 
     // Init performance counter
     LARGE_INTEGER perfFrequency, perfCounter;
@@ -187,14 +117,12 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
 
     window->perfCountFrequency = perfFrequency.QuadPart;
     window->lastFrameTime = static_cast<f64>(perfCounter.QuadPart);
-    // Store OS version
-    // InitOSVersion(window);
 
     // Title (will be changed in the future)!
     const std::string title = fmt::format("{} - {} - {} - {} - {} - {}", ENGINE_NAME, ENGINE_BUILD,
                                           window->platformName,
                                           ENGINE_VERSION, __DATE__, ENGINE_COMMIT_HASH);
-    std::wstring widePlatformName = ConvertToWideString(title);
+    const std::wstring widePlatformName = ConvertToWideString(title);
 
     // Init window class!
     WNDCLASSEX wc = {
@@ -225,8 +153,8 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
         widePlatformName.c_str(),
         widePlatformName.c_str(),
         windowStyle,
-        window->positionX,
-        window->positionY,
+        0,
+        0,
         window->windowWidth,
         window->windowHeight,
         nullptr,
@@ -241,20 +169,13 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
     }
 
 
-    ApplyModernTheme(static_cast<HWND>(window->handle));
+    ApplyTheme(static_cast<HWND>(window->handle));
 
-    HMONITOR hMonitor = MonitorFromWindow(window->GetHandle<HWND>(), MONITOR_DEFAULTTONEAREST);
-    MONITORINFOEX monitorInfo = {};
-    monitorInfo.cbSize = sizeof(MONITORINFOEX);
-    if (GetMonitorInfo(hMonitor, &monitorInfo))
+    SetWindowResolution(*window, window->windowWidth, window->windowHeight);
+
+    if (mode == DisplayMode::BorderlessFullscreen)
     {
-        window->monitorWidth = monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left;
-        window->monitorHeight = monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top;
-    }
-    else
-    {
-        window->monitorWidth = GetSystemMetrics(SM_CXSCREEN);
-        window->monitorHeight = GetSystemMetrics(SM_CYSCREEN);
+        SetDisplayMode(*window, DisplayMode::BorderlessFullscreen);
     }
 
     // Dpi!!
@@ -262,6 +183,18 @@ void Platform::Init(WindowContext* window, i32 width, i32 height, DisplayMode mo
 
     // GameInput!!
     gameInput.Init();
+}
+
+void Platform::SetTitleBarText(const WindowContext& window, const std::string_view text)
+{
+    static std::string lastText;
+    if (text == lastText) return;
+    auto* hwnd = static_cast<HWND>(window.handle);
+    lastText = text;
+
+    const std::wstring wideTitleName = ConvertToWideString(text);
+
+    ::SetWindowText(hwnd, wideTitleName.c_str());
 }
 
 bool Platform::GetWindowSize(const WindowHandle& window, u32& width, u32& height)
@@ -275,64 +208,229 @@ bool Platform::GetWindowSize(const WindowHandle& window, u32& width, u32& height
 
 void Platform::SetDisplayMode(WindowContext& window, DisplayMode mode)
 {
-    static RECT previousWindowRect{};
-    static DWORD previousWindowStyle = 0;
-    static DWORD previousWindowExStyle = 0;
+    if (mode == DisplayMode::Fullscreen) mode = DisplayMode::BorderlessFullscreen;
 
-    auto* hwnd = window.GetHandle<HWND>();
+    auto* hwnd = static_cast<HWND>(window.handle);
+    if (!hwnd) return;
 
-    if (mode == DisplayMode::Fullscreen)
+    // The Win32 Master Struct for tracking window restoration states natively
+    static WINDOWPLACEMENT savedPlacement = {sizeof(WINDOWPLACEMENT)};
+
+    if (mode == DisplayMode::Windowed)
     {
-        window.displayState.isExclusiveFullscreen = true;
-        window.displayMode = DisplayMode::Fullscreen;
+        if (!window.displayState.isBorderless) return;
 
-        ShowWindow(hwnd, SW_MINIMIZE); // optional: minimize first
-        return;
-    }
-
-    if (mode == DisplayMode::Windowed && window.displayState.isBorderless)
-    {
-        SetWindowLong(hwnd, GWL_STYLE, previousWindowStyle);
-        SetWindowLong(hwnd, GWL_EXSTYLE, previousWindowExStyle);
-        SetWindowPos(hwnd, nullptr,
-                     previousWindowRect.left,
-                     previousWindowRect.top,
-                     previousWindowRect.right - previousWindowRect.left,
-                     previousWindowRect.bottom - previousWindowRect.top,
-                     SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        // Restore original borders and placement (natively handles SW_MAXIMIZE if it was maximized before!)
+        ::SetWindowLong(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+        ::SetWindowPlacement(hwnd, &savedPlacement);
+        ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
         window.displayState.isBorderless = false;
         window.displayMode = DisplayMode::Windowed;
     }
     else if (mode == DisplayMode::BorderlessFullscreen)
     {
-        if (previousWindowRect.right == 0 && previousWindowRect.bottom == 0)
-        {
-            GetWindowRect(hwnd, &previousWindowRect);
-            previousWindowStyle = GetWindowLong(hwnd, GWL_STYLE);
-            previousWindowExStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-        }
+        if (window.displayState.isBorderless) return;
 
-        SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowLong(hwnd, GWL_EXSTYLE, WS_EX_APPWINDOW);
-        window.displayState.isBorderless = true;
+        // Save current placement (catches if it's currently maximized or floating)
+        ::GetWindowPlacement(hwnd, &savedPlacement);
 
+        ::SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+
+        HMONITOR hMonitor = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO monitorInfo = {sizeof(MONITORINFO)};
-        if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &monitorInfo))
+        if (::GetMonitorInfo(hMonitor, &monitorInfo))
         {
-            SetWindowPos(hwnd, nullptr,
-                         monitorInfo.rcMonitor.left,
-                         monitorInfo.rcMonitor.top,
-                         monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left,
-                         monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top,
-                         SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+            ::SetWindowPos(hwnd, HWND_TOP,
+                           monitorInfo.rcMonitor.left,
+                           monitorInfo.rcMonitor.top,
+                           monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left,
+                           monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top,
+                           SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
         }
 
         window.displayState.isBorderless = true;
         window.displayMode = DisplayMode::BorderlessFullscreen;
     }
+
+    RECT clientRect;
+    if (::GetClientRect(hwnd, &clientRect))
+    {
+        window.windowWidth = clientRect.right - clientRect.left;
+        window.windowHeight = clientRect.bottom - clientRect.top;
+    }
 }
 
+static BOOL CALLBACK MonitorEnumCallback(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData)
+{
+    auto* ctx = reinterpret_cast<Platform::WindowContext*>(dwData);
+
+    MONITORINFOEXW info = {};
+    info.cbSize = sizeof(MONITORINFOEXW);
+    if (!GetMonitorInfoW(hMonitor, &info)) return TRUE; // Keep enumerating even if one fails
+
+    Platform::MonitorInfo m = {};
+    m.name = Platform::ConvertToString(info.szDevice);
+    m.nativeHandle = hMonitor;
+    m.isPrimary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+
+    // Get the current desktop mode
+    DEVMODEW dm = {.dmSize = sizeof(dm)};
+    if (EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &dm))
+    {
+        m.desktopMode = {(u32)dm.dmPelsWidth, (u32)dm.dmPelsHeight, (u32)dm.dmDisplayFrequency};
+    }
+
+    // Enumerate ALL supported modes using your C++23/26 style
+    for (u32 i = 0; EnumDisplaySettingsW(info.szDevice, i, &dm); ++i)
+    {
+        Platform::VideoMode mode = {(u32)dm.dmPelsWidth, (u32)dm.dmPelsHeight, (u32)dm.dmDisplayFrequency};
+        m.supportedModes[Platform::GetAspectRatio(mode.width, mode.height)].push_back(mode);
+    }
+
+    for (auto& modes : m.supportedModes | std::views::values)
+    {
+        std::ranges::sort(modes);
+        auto [first, last] = std::ranges::unique(modes);
+        modes.resize(static_cast<vecSizeType>(first - modes.begin()));
+    }
+    ctx->displaySettings.monitors.push_back(std::move(m));
+    return TRUE;
+}
+
+void Platform::RefreshMonitorData(WindowContext* window)
+{
+    // Clear old data before re-polling hardware
+    window->displaySettings.monitors.clear();
+
+    // Pass the function pointer and the window context as the user data
+    EnumDisplayMonitors(nullptr, nullptr, MonitorEnumCallback, reinterpret_cast<LPARAM>(window));
+
+    // Fallback: If for some reason we have no monitors, fake one using system metrics
+    if (window->displaySettings.monitors.empty())
+    {
+        MonitorInfo fallback = {};
+        fallback.name = "Fallback Display";
+        fallback.nativeHandle = nullptr;
+        fallback.isPrimary = true;
+        fallback.desktopMode = {
+            static_cast<u32>(GetSystemMetrics(SM_CXSCREEN)),
+            static_cast<u32>(GetSystemMetrics(SM_CYSCREEN)),
+            60
+        };
+        window->displaySettings.monitors.push_back(std::move(fallback));
+    }
+
+    // Set the active index to the primary monitor using modern ranges
+    auto it = std::ranges::find_if(window->displaySettings.monitors,
+                                   [](const MonitorInfo& m) { return m.isPrimary; });
+
+    if (it != window->displaySettings.monitors.end())
+    {
+        window->activeMonitorIndex = static_cast<i32>(std::distance(window->displaySettings.monitors.begin(), it));
+    }
+    else
+    {
+        window->activeMonitorIndex = 0; // Safe default if Windows reported no 'primary' flag
+    }
+}
+
+void Platform::SetWindowResolution(WindowContext& window, u32 width, u32 height)
+{
+    const auto hwnd = static_cast<HWND>(window.handle);
+
+    RECT wr = {0, 0, (LONG)width, (LONG)height};
+    DWORD style = GetWindowLong(hwnd, GWL_STYLE);
+    AdjustWindowRect(&wr, style, FALSE);
+
+    i32 finalWidth = wr.right - wr.left;
+    i32 finalHeight = wr.bottom - wr.top;
+
+    // Grab the target monitor to calculate the exact center
+    const auto& targetMonitor = window.displaySettings.monitors[window.activeMonitorIndex];
+    MONITORINFO mi = {sizeof(MONITORINFO)};
+
+    if (GetMonitorInfo((HMONITOR)targetMonitor.nativeHandle, &mi))
+    {
+        // Borderless ignores the taskbar, Windowed respects it.
+        const RECT& bounds = (window.displayMode == DisplayMode::BorderlessFullscreen) ? mi.rcMonitor : mi.rcWork;
+
+        const i32 boundWidth = bounds.right - bounds.left;
+        const i32 boundHeight = bounds.bottom - bounds.top;
+
+        // Clamp the total window size to never exceed the bounds
+        finalWidth = std::min(finalWidth, boundWidth);
+        finalHeight = std::min(finalHeight, boundHeight);
+
+        // Calculate absolute center within the active bounds
+        const i32 x = bounds.left + (boundWidth - finalWidth) / 2;
+        const i32 y = bounds.top + (boundHeight - finalHeight) / 2;
+
+        SetWindowPos(hwnd, nullptr, x, y, finalWidth, finalHeight,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+    else
+    {
+        // Fallback if monitor query fails
+        SetWindowPos(hwnd, nullptr, 0, 0, finalWidth, finalHeight,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+
+    // Because we might have clamped the size, query the actual resulting client area.
+    RECT clientRect;
+    if (::GetClientRect(hwnd, &clientRect))
+    {
+        window.windowWidth = clientRect.right - clientRect.left;
+        window.windowHeight = clientRect.bottom - clientRect.top;
+    }
+    else
+    {
+        window.windowWidth = width;
+        window.windowHeight = height;
+    }
+}
+
+void Platform::SetMonitorRefreshRate(WindowContext& window, u32 refreshRate)
+{
+    const auto& targetMonitor = window.displaySettings.monitors[window.activeMonitorIndex];
+    const std::wstring deviceName = ConvertToWideString(targetMonitor.name);
+
+    DEVMODEW dm = {.dmSize = sizeof(dm)};
+    if (EnumDisplaySettingsW(deviceName.c_str(), ENUM_CURRENT_SETTINGS, &dm))
+    {
+        // Only trigger an OS display change if the user actually requested a different frequency
+        if (dm.dmDisplayFrequency != refreshRate)
+        {
+            dm.dmDisplayFrequency = refreshRate;
+            dm.dmFields = DM_DISPLAYFREQUENCY;
+
+            // Pass 0 instead of CDS_FULLSCREEN for standard Windowed/Borderless behavior
+            LONG result = ChangeDisplaySettingsExW(deviceName.c_str(), &dm, nullptr, 0, nullptr);
+
+            if (result != DISP_CHANGE_SUCCESSFUL)
+            {
+                LOG(Warning, "Failed to change OS display refresh rate. Error Code: {}", result);
+            }
+        }
+    }
+}
+
+void Platform::MoveWindowToMonitor(WindowContext& window, i32 monitorIndex)
+{
+    const auto& target = window.displaySettings.monitors[monitorIndex];
+    const auto hwnd = static_cast<HWND>(window.handle);
+
+    // Get the monitor's workspace coordinates
+    MONITORINFO mi = {sizeof(MONITORINFO)};
+    if (GetMonitorInfo((HMONITOR)target.nativeHandle, &mi))
+    {
+        // Move window to the top-left of the target monitor
+        SetWindowPos(hwnd, nullptr,
+                     mi.rcMonitor.left, mi.rcMonitor.top,
+                     0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+}
 
 LRESULT CALLBACK GlobalWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -364,7 +462,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // Check if the system theme color set changed
         if (lParam && wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0)
         {
-            ApplyModernTheme(hwnd);
+            ApplyTheme(hwnd);
         }
         break;
     case WM_DESTROY:
@@ -402,6 +500,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (window)
         {
             window->displayState.isFocused = false;
+            Platform::SetCursorLocked(window, false);
             Input::ResetInputOnFocusLoss();
         }
         break;
@@ -491,31 +590,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_SYSKEYUP:
     case WM_KEYUP:
         {
-            // const auto key = MapKeys(wParam, lParam);
-            // if (key != Keyboard::Key::ButtonCount)
-            // 	Input::ProcessEventButton(input.keyboard[key], false);
             return 0;
         }
     case WM_MOUSEMOVE:
     case WM_NCMOUSEMOVE:
         {
-            // if (!input.useRawInput)
-            // {
-            // 	const f32 currentX = static_cast<f32>(GET_X_LPARAM(lParam));
-            // 	const f32 currentY = static_cast<f32>(GET_Y_LPARAM(lParam));
-            //
-            // 	// Calculate relative movement (delta)
-            // 	input.xrel = currentX - input.lastX;
-            // 	input.yrel = currentY - input.lastY;
-            //
-            // 	// Update the last cursor positions
-            // 	input.lastX = currentX;
-            // 	input.lastY = currentY;
-            //
-            // 	// Update the current cursor positions
-            // 	input.cursorX = currentX;
-            // 	input.cursorY = currentY;
-            // }
             break;
         }
     case WM_SIZE:
@@ -532,7 +611,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             else
             {
                 window->displayState.isMinimized = false;
-                // Only flag resize if actual dimensions changed
+                window->displayState.isMaximized = (wParam == SIZE_MAXIMIZED);
+
                 if (window->windowWidth != w || window->windowHeight != h)
                 {
                     window->displayState.isResized = true;
@@ -548,6 +628,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             info->ptMinTrackSize.x = 320;
             info->ptMinTrackSize.y = 240;
             return 0;
+        }
+    case WM_SYSCOMMAND:
+        {
+            // Prevent the Alt key from pausing the application loop to activate the window menu
+            if ((wParam & 0xfff0) == SC_KEYMENU)
+            {
+                return 0;
+            }
+            return DefWindowProc(hwnd, msg, wParam, lParam);
         }
     default:
         return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -576,7 +665,6 @@ bool Platform::ShowMessageBox(std::string_view message, std::string_view title, 
     const std::wstring wideMsg = ConvertToWideString(message);
     const std::wstring wideTitle = ConvertToWideString(title);
 
-    // Standard Win32 MessageBox call
     const i32 result = MessageBox(nullptr, wideMsg.c_str(), wideTitle.c_str(), flags);
 
     if (type == MessageBoxType::Error && result == IDCANCEL)
@@ -615,32 +703,44 @@ void Platform::StartFrame(WindowContext& window)
     }
 
     const f64 deltaTicks = currentTicks - window.lastFrameTime;
-    window.deltaTime = deltaTicks / static_cast<f64>(window.perfCountFrequency);
+    const f64 realDeltaTime = deltaTicks / static_cast<f64>(window.perfCountFrequency);
+
+    window.frameTime = static_cast<f32>(realDeltaTime * 1000.0);
+
+    window.frameTimeSum -= window.frameTimeBuffer[window.frameBufferIndex]; // Remove oldest
+    window.frameTimeBuffer[window.frameBufferIndex] = window.frameTime;       // Insert newest
+    window.frameTimeSum += window.frameTime; // Add newest
+
+    window.frameBufferIndex = (window.frameBufferIndex + 1) % 60;
+    window.totalFrames++;
+    const f32 divisor = (window.totalFrames < 60) ? static_cast<f32>(window.totalFrames) : 60.0f;
+    const f32 averageFrameTime = window.frameTimeSum / divisor;
+
+    // Weird delta jumps begone?
+    window.deltaTime = std::clamp(realDeltaTime, 0.0, 0.1);
 
     window.elapsedTime += window.deltaTime;
-
-    window.frameTime = static_cast<f32>(window.deltaTime * 1000.0);
-
-    // Store current frame time in the circular buffer
-    window.frameTimeBuffer[window.frameBufferIndex] = window.frameTime;
-    window.frameBufferIndex = (window.frameBufferIndex + 1) % 60;
-
-    // Calculate Average
-    f32 totalTime = 0.0f;
-    for (i32 i = 0; i < 60; i++)
-    {
-        totalTime += window.frameTimeBuffer[i];
-    }
-    const f32 averageFrameTime = totalTime / 60.0f;
     window.fps = (averageFrameTime > 0.0f) ? (1000.0f / averageFrameTime) : 0.0f;
-
     window.lastFrameTime = currentTicks;
 }
 
 void Platform::ShowWindow(const WindowContext& window)
 {
-    ::ShowWindow(static_cast<HWND>(window.handle), SW_NORMAL);
-    ::SetForegroundWindow(static_cast<HWND>(window.handle));
+    auto* hwnd = static_cast<HWND>(window.handle);
+
+    ::ShowWindow(hwnd, SW_NORMAL);
+    ::SetForegroundWindow(hwnd);
+}
+
+void Platform::MaximizeWindow(WindowContext& window, const bool maximize)
+{
+    if (window.displayMode != DisplayMode::Windowed) return;
+
+    auto* hwnd = static_cast<HWND>(window.handle);
+    if (!hwnd) return;
+
+    ::ShowWindow(hwnd, maximize ? SW_MAXIMIZE : SW_RESTORE);
+    window.displayState.isMaximized = maximize;
 }
 
 Platform::BatteryState Platform::GetBatteryState()
@@ -667,9 +767,32 @@ Platform::BatteryState Platform::GetBatteryState()
     return state;
 }
 
+std::string Platform::GetCPUName()
+{
+    int cpuInfo[4] = {-1};
+    char cpuBrandString[0x40] = {};
+
+    // Check if the CPU supports the brand string query
+    __cpuid(cpuInfo, 0x80000000);
+
+    if (const unsigned int nExIds = cpuInfo[0]; nExIds >= 0x80000004)
+    {
+        __cpuid(cpuInfo, 0x80000002);
+        memcpy(cpuBrandString, cpuInfo, sizeof(cpuInfo));
+        __cpuid(cpuInfo, 0x80000003);
+        memcpy(cpuBrandString + 16, cpuInfo, sizeof(cpuInfo));
+        __cpuid(cpuInfo, 0x80000004);
+        memcpy(cpuBrandString + 32, cpuInfo, sizeof(cpuInfo));
+
+        return std::string(cpuBrandString);
+    }
+
+    return "Unknown CPU";
+}
+
 void Platform::CenterMouse(const WindowContext* window)
 {
-    HWND hwnd = static_cast<HWND>(window->handle);
+    const auto hwnd = static_cast<HWND>(window->handle);
 
     RECT rc{};
     GetClientRect(hwnd, &rc);
@@ -685,7 +808,7 @@ void Platform::CenterMouse(const WindowContext* window)
 
 bool Platform::GetCursorClientPos(const WindowContext* window, i32& outX, i32& outY)
 {
-    HWND hwnd = static_cast<HWND>(window->handle);
+    const auto hwnd = static_cast<HWND>(window->handle);
 
     POINT pt{};
     if (!GetCursorPos(&pt))
@@ -701,7 +824,7 @@ bool Platform::GetCursorClientPos(const WindowContext* window, i32& outX, i32& o
 
 void Platform::SetCursorClientPos(const WindowContext* window, i32 x, i32 y)
 {
-    HWND hwnd = static_cast<HWND>(window->handle);
+    const auto hwnd = static_cast<HWND>(window->handle);
 
     POINT pt{};
     pt.x = x;
@@ -758,70 +881,62 @@ bool Platform::WrapCursorToOppositeEdge(const WindowContext* window, i32 margin)
     return false;
 }
 
-void Platform::SetCursorVisible(bool show)
+void Platform::SetCursorVisible(const WindowContext* window, bool show)
 {
+    if (!window || !window->handle) return;
+
     CURSORINFO ci = {sizeof(CURSORINFO)};
-    if (GetCursorInfo(&ci))
+    if (::GetCursorInfo(&ci))
     {
-        bool isCurrentlyVisible = (ci.flags & CURSOR_SHOWING) != 0;
-        if (show != isCurrentlyVisible)
+        if (const bool isCurrentlyVisible = (ci.flags & CURSOR_SHOWING) != 0; show != isCurrentlyVisible)
         {
-            // ShowCursor returns the new visibility level.
-            // We loop to ensure we override any previous nested calls.
-            if (show) while (ShowCursor(TRUE) < 0)
-            {
-            }
-            else while (ShowCursor(FALSE) >= 0);
+            ::ShowCursor(show ? TRUE : FALSE);
         }
     }
 }
 
-bool GetClientRectOnScreen(HWND hwnd, RECT& rect)
+void Platform::SetCursorLocked(const WindowContext* window, bool locked)
 {
-    // Get the client area dimensions in client coordinates.
-    if (!GetClientRect(hwnd, &rect))
+    if (!window || !window->handle) return;
+    const auto hwnd = static_cast<HWND>(window->handle);
+
+    // Safeguard: Never lock if we aren't the active foreground window
+    if (locked && GetForegroundWindow() != hwnd) return;
+
+    static bool isCurrentlyLocked = false;
+
+    // If it's already locked, we STILL re-apply ClipCursor to prevent Windows from
+    // accidentally dropping the bounds (e.g. from popups or notifications),
+    // but we skip re-calling SetCapture to avoid messing with ImGui state.
+    if (locked && isCurrentlyLocked)
     {
-        return false;
+        RECT rect;
+        if (::GetClientRect(hwnd, &rect))
+        {
+            ::MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&rect), 2);
+            ClipCursor(&rect);
+        }
+        return;
     }
 
-    // Convert the client coordinates to screen coordinates.
-    POINT upperLeft = {rect.left, rect.top};
-    POINT lowerRight = {rect.right, rect.bottom};
+    if (locked == isCurrentlyLocked) return;
 
-    if (!MapWindowPoints(hwnd, nullptr, &upperLeft, 1))
-    {
-        return false;
-    }
-    if (!MapWindowPoints(hwnd, nullptr, &lowerRight, 1))
-    {
-        return false;
-    }
-
-    // Update the RECT with the new screen coordinates.
-    rect.left = upperLeft.x;
-    rect.top = upperLeft.y;
-    rect.right = lowerRight.x;
-    rect.bottom = lowerRight.y;
-
-    return true;
-}
-
-void Platform::SetCursorLocked(const WindowContext* wc, bool locked)
-{
-    const auto hwnd = static_cast<HWND>(wc->handle);
     if (locked)
     {
         RECT rect;
-        GetClientRect(hwnd, &rect);
-        MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&rect), 2);
-        ClipCursor(&rect);
-        SetCapture(hwnd);
+        if (::GetClientRect(hwnd, &rect))
+        {
+            ::MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&rect), 2);
+            ClipCursor(&rect);
+            SetCapture(hwnd);
+            isCurrentlyLocked = true;
+        }
     }
     else
     {
-        // Release everything.
         ClipCursor(nullptr);
         ReleaseCapture();
+        isCurrentlyLocked = false;
     }
 }
 
@@ -859,7 +974,7 @@ void Platform::Free(void* ptr)
 }
 
 // Utility Functions
-std::wstring Platform::ConvertToWideString(const std::string_view& str)
+std::wstring Platform::ConvertToWideString(std::string_view str)
 {
     std::wstring wideStr(MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), nullptr, 0), 0);
     MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()), wideStr.data(),
@@ -867,7 +982,7 @@ std::wstring Platform::ConvertToWideString(const std::string_view& str)
     return wideStr;
 }
 
-std::string Platform::ConvertToString(const std::wstring_view& wstr)
+std::string Platform::ConvertToString(std::wstring_view wstr)
 {
     std::string multiByteStr(WideCharToMultiByte(CP_UTF8, 0, wstr.data(), static_cast<int>(wstr.size()), nullptr, 0,
                                                  nullptr, FALSE), 0);

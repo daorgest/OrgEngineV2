@@ -7,6 +7,7 @@
 #include <volk.h>
 
 #include "ShaderCompiler.h"
+#include "VulkanCheck.h"
 #include "VulkanConvert.h"
 #include "VulkanDescriptors.h"
 #include "VulkanDevice.h"
@@ -32,7 +33,7 @@ VulkanPipelineBuilder& VulkanPipelineBuilder::ApplyRasterDesc(const GpuRasterDes
 
     data.config.rasterizer.cullMode = ToVk(raster.cull);
     data.config.rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    data.config.rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    data.config.rasterizer.polygonMode = ToVk(raster.polygonMode);
     data.config.rasterizer.lineWidth = 1.0f;
 
     data.config.multisampling.rasterizationSamples = ToVk(raster.sampleCount);
@@ -163,76 +164,68 @@ VulkanPipelineBuilder& VulkanPipelineBuilder::SetVertexInput(const VertexInputLa
 VulkanPipelineBuilder& VulkanPipelineBuilder::AddPushConstant(const ShaderStageFlags stages, const u32 size,
                                                               const u32 offset)
 {
-    if (size == 0) return *this;
-
-    const VkPushConstantRange range = {
-        .stageFlags = ToVk(stages),
-        .offset = offset,
-        .size = size
-    };
-    data.config.pushConstants.push_back(range);
+    if (size > 0)
+    {
+        data.config.pushConstants.push_back({
+            .stageFlags = ToVk(stages),
+            .offset = offset,
+            .size = size
+        });
+    }
     return *this;
 }
 
-VulkanPipelineBuilder& VulkanPipelineBuilder::UseLayout(const PipelineLayoutDesc& desc, const VulkanDevice* device)
+VulkanPipelineBuilder& VulkanPipelineBuilder::UseLayout(const PipelineLayoutDesc& desc, const VulkanDevice* device, Vector<VkDescriptorSetLayout>& outLayouts)
 {
-    if (data.config.layout != VK_NULL_HANDLE && data.config.layoutDesc == desc)
-    {
-        return *this;
-    }
-
+    if (data.config.layoutDesc == desc) return *this;
     data.config.layoutDesc = desc;
 
-    // Determine the required number of descriptor sets
-    u32 maxSet = 0;
-    for (const auto& s : desc.setLayouts) maxSet = std::max(maxSet, s.setIndex);
+    if (desc.setLayouts.empty()) return *this;
 
-    descriptorSetLayouts.clear();
-    descriptorSetLayouts.assign(maxSet + 1, VK_NULL_HANDLE);
+    u32 maxSet = 0;
+    for (const auto& [setIndex, bindings] : desc.setLayouts)
+    {
+        if (setIndex > maxSet)
+        {
+            maxSet = setIndex;
+        }
+    }
+
+    outLayouts.clear();
+    outLayouts.assign(maxSet + 1, VK_NULL_HANDLE);
 
     for (const auto& setDesc : desc.setLayouts)
     {
         DescriptorLayoutBuilder builder;
-        auto layout = builder.AddBindings(setDesc.bindings)
-                             .Build(device);
-        descriptorSetLayouts[setDesc.setIndex] = layout.vk;
+        outLayouts[setDesc.setIndex] = builder.BuildFromDesc(device, setDesc).vk;
     }
 
     data.config.pushConstants.clear();
-    for (const auto& pc : desc.pushConstants)
+    for (const auto& [size, offset, stages] : desc.pushConstants)
     {
-        if (pc.size > 0 && pc.size <= device->deviceProperties.limits.maxPushConstantsSize)
+        if (size > 0 && size <= device->deviceProperties.properties.limits.maxPushConstantsSize)
         {
-            AddPushConstant(pc.stages, pc.size, pc.offset);
+            AddPushConstant(stages, size, offset);
         }
     }
 
     return *this;
 }
 
-VkPipelineLayout VulkanPipelineBuilder::BuildLayout(const VulkanDevice* device)
+VkPipelineLayout VulkanPipelineBuilder::BuildLayout(const VulkanDevice* device, const Vector<VkDescriptorSetLayout>& layouts)
 {
     const bool hasPushConstants = !data.config.pushConstants.empty();
 
     VkPipelineLayoutCreateInfo plInfo = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = static_cast<u32>(descriptorSetLayouts.size()),
-        .pSetLayouts = descriptorSetLayouts.empty() ? nullptr : descriptorSetLayouts.data(),
+        .setLayoutCount = static_cast<u32>(layouts.size()),
+        .pSetLayouts = layouts.empty() ? nullptr : layouts.data(),
         .pushConstantRangeCount = hasPushConstants ? static_cast<u32>(data.config.pushConstants.size()) : 0,
         .pPushConstantRanges = hasPushConstants ? data.config.pushConstants.data() : nullptr
     };
 
     VkPipelineLayout vkLayout = VK_NULL_HANDLE;
     VK_CHECK(vkCreatePipelineLayout(device->device, &plInfo, nullptr, &vkLayout));
-
-    for (auto layout : descriptorSetLayouts)
-    {
-        if (layout != VK_NULL_HANDLE)
-        {
-            vkDestroyDescriptorSetLayout(device->device, layout, nullptr);
-        }
-    }
-    descriptorSetLayouts.clear();
 
     return vkLayout;
 }
@@ -242,7 +235,8 @@ Result<VkPipeline> VulkanPipelineBuilder::BuildGraphicsPipeline(const VulkanDevi
 {
     const auto& cfg = b.data.config;
     const auto& stages = b.data.shaderStages.stages;
-    auto vertexInputInfo = MakeVertexInputInfo(b.data.config);
+
+    auto vertexInputInfo = MakeVertexInputInfo(cfg);
     auto viewportInfo = MakeViewportInfo();
     auto blendInfo = MakeBlendInfo(cfg.colorBlendAttachments);
     auto dynamicStateInfo = MakeDynamicStateInfo();
@@ -264,9 +258,25 @@ Result<VkPipeline> VulkanPipelineBuilder::BuildGraphicsPipeline(const VulkanDevi
     };
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VK_CHECK(vkCreateGraphicsPipelines(device->device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline));
+    VK_CHECK(vkCreateGraphicsPipelines(device->device, device->pipelineCache, 1, &info, nullptr, &pipeline));
 
     LogPipelineStages(stages);
+    return pipeline;
+}
+
+Result<VkPipeline> VulkanPipelineBuilder::BuildComputePipeline(const VulkanDevice* device,
+                                                               const VulkanPipelineBuilder& b, VkPipelineLayout layout)
+{
+    const auto& stage = b.data.shaderStages.stages[0]; //
+
+    const VkComputePipelineCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = stage,
+        .layout = layout,
+    };
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VK_CHECK(vkCreateComputePipelines(device->device, device->pipelineCache, 1, &info, nullptr, &pipeline));
     return pipeline;
 }
 
@@ -276,6 +286,7 @@ VkPipelineDynamicStateCreateInfo VulkanPipelineBuilder::MakeDynamicStateInfo()
         VK_DYNAMIC_STATE_VIEWPORT,
         VK_DYNAMIC_STATE_SCISSOR
     };
+
     return {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .dynamicStateCount = static_cast<u32>(std::size(states)),
@@ -346,23 +357,18 @@ void VulkanGraphicsPipeline::Create()
 
     if (vkLayout == VK_NULL_HANDLE)
     {
-        builder.UseLayout(config.layout, device);
-        vkLayout = builder.BuildLayout(device);
+        builder.UseLayout(config.layout, device, descriptorSetLayouts);
+        vkLayout = builder.BuildLayout(device, descriptorSetLayouts);
         ownsLayout = true;
     }
 
-    auto result = VulkanPipelineBuilder::BuildGraphicsPipeline(device, builder, vkLayout);
-    if (result)
-    {
+    if (const auto result = VulkanPipelineBuilder::BuildGraphicsPipeline(device, builder, vkLayout))
         vkPipeline = result.value();
-    }
-    else
-    {
-        LOG(Error, "Failed to create Vulkan Graphics Pipeline");
-    }
+
+    else LOG(Error, "Failed to create Vulkan Graphics Pipeline");
 }
 
-// In VulkanPipeline.cpp
+
 void VulkanPipeline::Destroy()
 {
     if (!device || device->device == VK_NULL_HANDLE) return;
@@ -373,15 +379,25 @@ void VulkanPipeline::Destroy()
         vkPipeline = VK_NULL_HANDLE;
     }
 
-    if (vkLayout != VK_NULL_HANDLE && ownsLayout)
+    if (ownsLayout)
     {
-        vkDestroyPipelineLayout(device->device, vkLayout, nullptr);
-        vkLayout = VK_NULL_HANDLE;
+        if (vkLayout != VK_NULL_HANDLE)
+        {
+            vkDestroyPipelineLayout(device->device, vkLayout, nullptr);
+            vkLayout = VK_NULL_HANDLE;
+        }
+
+        for (const auto& layout : descriptorSetLayouts)
+        {
+            if (layout != VK_NULL_HANDLE)
+            {
+                vkDestroyDescriptorSetLayout(device->device, layout, nullptr);
+            }
+        }
     }
 
-    vkLayout = VK_NULL_HANDLE;
-    ownsLayout = false;
     descriptorSetLayouts.clear();
+    ownsLayout = false;
 }
 
 void VulkanPipeline::Rebuild()
@@ -398,13 +414,21 @@ void VulkanPipeline::Rebuild()
 
 void VulkanComputePipeline::Create()
 {
-    if (vkPipeline != VK_NULL_HANDLE)
+
+    VulkanPipelineBuilder builder;
+    builder.SetComputeStage(config.computeShader);
+
+    if (vkLayout == VK_NULL_HANDLE)
     {
-        device->WaitIdle();
-        vkDestroyPipeline(device->device, vkPipeline, nullptr);
-        vkPipeline = VK_NULL_HANDLE;
+        builder.UseLayout(config.layout, device, descriptorSetLayouts);
+        vkLayout = builder.BuildLayout(device, descriptorSetLayouts);
+        ownsLayout = true;
     }
-    CreateInternal();
+
+    if (const auto result = VulkanPipelineBuilder::BuildComputePipeline(device, builder, vkLayout))
+        vkPipeline = result.value();
+
+    else LOG(Error, "Failed to create Vulkan Compute Pipeline");
 }
 
 std::string_view VulkanPipeline::GetSourcePath() const
@@ -424,46 +448,33 @@ void VulkanPipeline::ApplyReload(const CompileResult& result)
 {
     LOG(Info, "[Apply State] Attempting reload for 0x{}", static_cast<void*>(this));
 
-    // 1. Save old smart pointers to keep them alive during the swap
-    const std::shared_ptr<GPUShader> oldShader = (type == PipelineType::Graphics)
-                                                     ? static_cast<VulkanGraphicsPipeline*>(this)->config.vertexShader
-                                                     : static_cast<VulkanComputePipeline*>(this)->config.computeShader;
-
-    // 2. Apply new shader state
-    const std::shared_ptr<GPUShader> newShader = device->CreateShader(result.code);
-
-    if (type == PipelineType::Graphics)
-    {
-        auto* gfx = static_cast<VulkanGraphicsPipeline*>(this);
-        gfx->config.vertexShader = newShader;
-        gfx->config.fragmentShader = newShader;
-    }
-    else
-    {
-        auto* comp = static_cast<VulkanComputePipeline*>(this);
-        comp->config.computeShader = newShader;
-    }
-
-
-    this->Rebuild();
-
-
-    if (this->vkPipeline == VK_NULL_HANDLE)
+    auto swapState = [this](const std::shared_ptr<GPUShader>& newShader) -> std::shared_ptr<GPUShader>
     {
         if (type == PipelineType::Graphics)
         {
             auto* gfx = static_cast<VulkanGraphicsPipeline*>(this);
-            gfx->config.vertexShader = oldShader;
-            gfx->config.fragmentShader = oldShader;
-        }
-        else
-        {
-            auto* comp = static_cast<VulkanComputePipeline*>(this);
-            comp->config.computeShader = oldShader;
+            auto old = gfx->config.vertexShader;
+            gfx->config.vertexShader = newShader;
+            gfx->config.fragmentShader = newShader;
+            return old;
         }
 
-        LOG(Error, "Hot-Reload failed to build Vulkan pipeline. Reverted to old shader logic.");
+        // Compute
+        auto* comp = static_cast<VulkanComputePipeline*>(this);
+        auto old = comp->config.computeShader;
+        comp->config.computeShader = newShader;
+        return old;
+    };
 
+    const std::shared_ptr<GPUShader> newShader = device->CreateShader(result.code);
+    const std::shared_ptr<GPUShader> oldShader = swapState(newShader);
+
+    this->Rebuild();
+
+    if (this->vkPipeline == VK_NULL_HANDLE)
+    {
+        LOG(Error, "Hot-Reload failed to build Vulkan pipeline. Reverting to old shader logic.");
+        swapState(oldShader);
         this->Rebuild();
     }
 }

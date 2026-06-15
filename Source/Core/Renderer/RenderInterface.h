@@ -3,78 +3,107 @@
 //
 
 #pragma once
-#include <span>
+#include <memory>
 
 #include "Platform.h"
 #include "RendererTypes.h"
-#include "fmt/format.h"
-#include "glm/glm.hpp"
+#include "RenderInterface.h"
 #include "Tools/Vector.h"
 
 #include "../../../Engine/MeshData.h"
-#include "../../../Engine/AABB.h"
+#include "fmt/format.h"
 
 namespace Renderer
 {
-    struct GPUShaderBuffer;
-    struct GPUTexture;
-    struct ComputePipelineDesc;
     struct GPUCommandBuffer;
-    struct GraphicsPipelineDesc;
-    struct DescriptorSet;
-    struct GPUSampler;
-    struct GPUBuffer;
+    struct GPUQueryPool;
+    struct ShaderCompiler;
     struct GPUDevice;
     struct GPUPipeline;
 
-    /// Abstract GPU API instance (VkInstance, ID3D12Device factory, etc.)
-	struct GPUInterface
-	{
-		virtual ~GPUInterface() = default;
-		virtual bool Init() = 0;
-		virtual void Destroy() = 0;
-	};
-
-
-	// Resources
-	/// Abstract GPU buffer (vertex, index, uniform, storage)
-	struct GPUBuffer
-	{
-		virtual ~GPUBuffer() = default;
-        virtual void Init(GPUDevice* device, const BufferInfo& info) = 0;
-		virtual void Destroy() = 0;
-
-		[[nodiscard]] virtual void* Map() const = 0;
-		virtual void Unmap() const = 0;
-		virtual void Upload(const void* data, u64 size) const = 0;
-		[[nodiscard]] virtual u64 GetSize() const = 0;
-		[[nodiscard]] virtual u64 GetDeviceAddress() const = 0; // For bindless/ray tracing
-		[[nodiscard]] virtual bool IsValid() const = 0;
-
-		template<typename T>
-		void Upload(std::span<const T> span) const
-		{
-			Upload(std::as_bytes(span).data(), std::as_bytes(span).size());
-		}
-
-		template<typename T>
-		void UploadObject(const T& object) const
-		{
-			Upload(&object, sizeof(T));
-		}
-	};
-
-
-    struct GPUModel
+    struct NoCopyMove
     {
-        AABB modelBounds;
-        u64 vertexBufferAddress = 0;
+        NoCopyMove() = default;
+        virtual ~NoCopyMove() = default;
 
-        Vector<MeshPart> parts;
+        NoCopyMove(const NoCopyMove&) = delete;
+        NoCopyMove& operator=(const NoCopyMove&) = delete;
+        NoCopyMove(NoCopyMove&&) = delete;
+        NoCopyMove& operator=(NoCopyMove&&) = delete;
+    };
 
-        std::unique_ptr<GPUBuffer> vertexBuffer;
-        std::unique_ptr<GPUBuffer> indexBuffer;
-        std::unique_ptr<GPUShaderBuffer> materialBuffer;
+    struct NoCopy
+    {
+        NoCopy() = default;
+        virtual ~NoCopy() = default;
+
+        NoCopy(const NoCopy&) = delete;
+        NoCopy& operator=(const NoCopy&) = delete;
+    };
+
+    struct GPUBuffer : NoCopy
+    {
+        GPUBuffer() = default;
+        ~GPUBuffer() override = default;
+
+        virtual void Init(GPUDevice* device, const BufferInfo& info) = 0;
+        virtual void Destroy() = 0;
+
+        [[nodiscard]] virtual void* Map() const = 0;
+        virtual void Unmap() const = 0;
+        virtual void Upload(const void* data, u64 size) const = 0;
+
+        [[nodiscard]] virtual u64 GetSize() const = 0;
+        [[nodiscard]] virtual u64 GetDeviceAddress() const = 0; // For bindless/ray tracing
+        [[nodiscard]] virtual bool IsValid() const = 0;
+
+        template <typename T>
+        void Upload(Span<const T> span) const
+        {
+            Upload(span.data(), span.size_bytes());
+        }
+
+        template <typename T>
+        void UploadObject(const T& object) const
+        {
+            Upload(&object, sizeof(T));
+        }
+    };
+
+    struct GPUShaderBuffer : NoCopyMove
+    {
+        GPUShaderBuffer() = default;
+        ~GPUShaderBuffer() override = default;
+
+        virtual void UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size) = 0;
+        virtual void Bind(GPUCommandBuffer* cmd, GPUPipeline* pipeline, u32 frameIndex) = 0;
+        virtual void Destroy() = 0;
+    };
+
+    struct GPUSampler : NoCopy
+    {
+        ~GPUSampler() override = default;
+    };
+
+    /// Abstract GPU texture view
+    struct GPUTextureView : NoCopy
+    {
+        ~GPUTextureView() override = default;
+        void SetName(const char* str);
+    };
+
+    struct GPUTexture : NoCopy
+    {
+        GPUTexture() = default;
+        ~GPUTexture() override = default;
+
+        virtual void Destroy() = 0;
+        virtual void SetName(const std::string& name) = 0;
+        virtual void UploadData(const void* data) = 0;
+
+        virtual GPUTextureView* GetView(u32 layer = 0) = 0;
+
+        TextureLayout currentLayout = TextureLayout::Unknown;
     };
 
     enum class DescriptorHeapType : u32
@@ -90,89 +119,75 @@ namespace Renderer
         const char* name = nullptr;
     };
 
-	// Abstract class for Descriptor Heaps (Inspired from DescriptorWriter)
-    struct GPUDescriptorHeap
+    /// Abstract class for Descriptor Heaps
+    struct GPUDescriptorHeap : NoCopyMove
     {
-        virtual ~GPUDescriptorHeap() = default;
+        GPUDescriptorHeap() = default;
+        ~GPUDescriptorHeap() override = default;
 
         virtual void WriteBuffer(u32 index, const GPUBuffer* buffer, u64 offset, u64 range) = 0;
-        virtual void WriteImage(u32 index, const GPUTexture* texture, TextureLayout layout) = 0;
+        virtual void WriteImage(u32 index, const GPUTextureView* texture, TextureLayout layout) = 0;
         virtual void WriteSampler(u32 index, const SamplerInfo& info) = 0;
 
-
-        virtual u64 GetDeviceAddress() const = 0;
-        virtual u32 GetDescriptorSize() const = 0;
-        virtual DescriptorHeapType GetType() const = 0;
+        [[nodiscard]] virtual u64 GetDeviceAddress() const = 0;
+        [[nodiscard]] virtual u32 GetDescriptorSize() const = 0;
+        [[nodiscard]] virtual DescriptorHeapType GetType() const = 0;
     };
 
-
-    /// Abstract group of buffers (UBOs/SSBOs) mapped to a descriptor set
-    struct GPUShaderBuffer
+    /// Abstract descriptor set layout
+    struct GPUDescriptorLayout
     {
-        virtual ~GPUShaderBuffer() = default;
+        GPUDescriptorLayout() = default;
+        virtual ~GPUDescriptorLayout() = default;
 
-        // Standard RHI operations
-        virtual void UpdateBinding(u32 frameIndex, u32 binding, const void* data, size_t size) = 0;
-        virtual void Bind(GPUCommandBuffer* cmd, GPUPipeline* pipeline, u32 frameIndex) = 0;
-
-        // Lifecycle operations
         virtual void Destroy() = 0;
     };
 
-	/// Abstract GPU texture/image
-	struct GPUTexture
-	{
-		virtual ~GPUTexture() = default;
-		virtual void Destroy() = 0;
-
-        virtual void SetName(const std::string& name) = 0;
-		virtual void UploadData(const void* data) = 0;
-		TextureLayout currentLayout = TextureLayout::Unknown;
-	};
-
-
-	/// Abstract GPU sampler
-    struct GPUSampler
+    /// Abstract descriptor set
+    struct GPUDescriptorSet
     {
-        GPUSampler() = default;
-        virtual ~GPUSampler() = default;
+        GPUDescriptorSet() = default;
+        virtual ~GPUDescriptorSet() = default;
 
-        GPUSampler(const GPUSampler&) = delete;
-        GPUSampler& operator=(const GPUSampler&) = delete;
-
-        // Allow moving at the base level if needed
-        GPUSampler(GPUSampler&&) noexcept = default;
-        GPUSampler& operator=(GPUSampler&&) noexcept = default;
-	};
-
-	// Shaders & Pipelines
-	/// Abstract shader module (SPIR-V, DXIL, etc.)
-	struct GPUShader
-	{
-		virtual ~GPUShader() = default;
-	};
-
-	/// Shader hot-reload manager (optional feature)
-    struct GPUShaderManager
-    {
-        virtual ~GPUShaderManager() = default;
-        virtual void Init(GPUDevice* device, struct ShaderCompiler* compiler) = 0;
-        virtual void Destroy() = 0;
-        virtual void CheckForReloads() = 0;
-        virtual void RegisterPipeline(GPUPipeline* pipeline) = 0;
-        virtual void UnregisterPipeline(GPUPipeline* pipeline) = 0;
+        virtual void WriteBuffer(u32 binding, const GPUBuffer* buffer, DescriptorType type) = 0;
+        virtual void WriteTexture(u32 binding, GPUTextureView* texture, GPUSampler* sampler, DescriptorType type,
+                                  u32 arrayElement = 0) = 0;
+        virtual void WriteTextureArray(u32 binding, Span<GPUTextureView*> textures, DescriptorType type) = 0;
+        virtual void Update(GPUDevice* device) = 0;
     };
 
-    enum class PipelineType : u32
+    struct GPUModel
     {
-        Graphics,
-        Compute,
-        Raytracing,
-        Unknown
+        AABB aabb;
+        u64 vertexBufferAddress = 0;
+
+        Vector<MeshPart> parts;
+        Vector<Material> materials;
+        std::unique_ptr<GPUBuffer> vertexBuffer;
+        std::unique_ptr<GPUBuffer> indexBuffer;
+        std::unique_ptr<GPUShaderBuffer> materialBuffer;
+
+        void Destroy()
+        {
+            vertexBuffer.reset();
+            indexBuffer.reset();
+            materialBuffer.reset();
+
+            parts.clear();
+            materials.clear();
+            vertexBufferAddress = 0;
+            aabb = AABB{};
+        }
     };
 
+    /// Abstract shader module (SPIR-V, DXIL, etc.)
+    struct GPUShader : NoCopyMove
+    {
+        GPUShader() = default;
+        ~GPUShader() override = default;
+    };
 
-	/// Abstract graphics/compute pipeline
+    /// Abstract graphics pipeline
     struct GraphicsPipelineDesc
     {
         std::shared_ptr<GPUShader> vertexShader;
@@ -182,100 +197,70 @@ namespace Renderer
         GpuRasterDesc raster;
         PipelineLayoutDesc layout;
 
-        std::string slangSourcePath = "";
+        std::string slangSourcePath;
     };
 
+    /// Abstract compute pipeline
     struct ComputePipelineDesc
     {
         std::shared_ptr<GPUShader> computeShader;
         PipelineLayoutDesc layout;
 
-        std::string slangSourcePath = "";
+        std::string slangSourcePath;
     };
 
-	struct GPUPipeline
-	{
-		virtual ~GPUPipeline() = default;
-	    virtual void Destroy() = 0;
-	    virtual void Rebuild() = 0;
-		[[nodiscard]] virtual bool IsValid() const = 0;
-	    [[nodiscard]] virtual const PipelineLayoutDesc& GetLayoutDesc() const = 0;
-	};
-
-	// Descriptors (Bindless Resources)
-	/// Abstract descriptor set layout (defines resource binding structure)
-	struct GPUDescriptorLayout
-	{
-		virtual ~GPUDescriptorLayout() = default;
-		virtual void Destroy() = 0;
-	};
-
-	/// Abstract descriptor set (actual resource bindings)
-	struct GPUDescriptorSet
-	{
-		virtual ~GPUDescriptorSet() = default;
-
-		// Resource binding operations
-		virtual void WriteBuffer(u32 binding, GPUBuffer* buffer, DescriptorType type) = 0;
-		virtual void WriteTexture(u32 binding, GPUTexture* texture, GPUSampler* sampler, DescriptorType type) = 0;
-		virtual void WriteTextureArray(u32 binding, std::span<GPUTexture*> textures, DescriptorType type) = 0;
-        virtual void Update(GPUDevice* device) = 0;
-    };
-
-    /// Abstract logical GPU device
-    struct GPUDevice
+    struct GPUPipeline : NoCopyMove
     {
-        virtual ~GPUDevice() = default;
-        virtual bool Init(GPUInterface* instance) = 0;
+        GPUPipeline() = default;
+        ~GPUPipeline() override = default;
+
         virtual void Destroy() = 0;
-        virtual void WaitIdle() = 0;
+        virtual void Rebuild() = 0;
+        virtual void SetSampleCountAndRebuild(SampleCount samples) = 0;
 
-
-        // Funny Immediate submit
-        virtual void ImmediateSubmit(std::function<void(GPUCommandBuffer*)> func) = 0;
-
-        // creations
-        virtual std::unique_ptr<GPUTexture> CreateTexture(TextureInfo& info) = 0;
-        virtual std::unique_ptr<GPUSampler> CreateSampler(SamplerInfo& info) = 0;
-        virtual std::shared_ptr<GPUShader> CreateShader(std::span<const u32> code) = 0;
-        virtual std::shared_ptr<GPUShader> CreateShaderPath(const char* path) = 0;
-        virtual std::unique_ptr<GPUBuffer> CreateBuffer(BufferInfo& info) = 0;
-        virtual std::unique_ptr<GPUBuffer> CreateBuffer(BufferPreset preset, u64 size) = 0;
-        virtual std::unique_ptr<GPUShaderBuffer> CreateShaderBuffer(struct DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc) = 0;
-        virtual std::unique_ptr<GPUPipeline> CreateGraphicsPipeline(const GraphicsPipelineDesc& desc) = 0;
-        virtual std::unique_ptr<GPUPipeline> CreateComputePipeline(const ComputePipelineDesc& desc) = 0;
-
-        [[nodiscard]] virtual const GPUDeviceDesc& GetDeviceDesc() const = 0;
+        virtual constexpr explicit operator bool() const noexcept = 0; // IsValid() but....ya
+        [[nodiscard]] virtual const PipelineLayoutDesc& GetLayoutDesc() const = 0;
     };
 
 
-    class GPUQueryPool
+    struct GPUShaderManager : NoCopyMove
     {
-    public:
-        virtual ~GPUQueryPool() = default;
+        GPUShaderManager() = default;
+        ~GPUShaderManager() override = default;
 
-        // Uses the abstract CommandBuffer type instead of void*
-        virtual void Reset(GPUCommandBuffer* cmd) = 0;
-        virtual void WriteTimestamp(GPUCommandBuffer* cmd, u32 queryIndex) = 0;
-
-        virtual bool FetchResults() = 0;
-        [[nodiscard]] virtual f32 GetDeltaMs(u32 beginIdx, u32 endIdx) const = 0;
+        virtual void Init(GPUDevice* device, ShaderCompiler* compiler) = 0;
+        virtual void Destroy() = 0;
+        virtual void CheckForReloads() = 0;
+        virtual void RegisterPipeline(GPUPipeline* pipeline) = 0;
+        virtual void UnregisterPipeline(GPUPipeline* pipeline) = 0;
     };
 
-    // Command Recording
-	// Helper structs for render target info
-	struct RenderAttachment
-	{
-		GPUTexture* texture = nullptr;
-	    GPUTexture* resolveTarget = nullptr;
-	    u32 baseLayer = 0;
+
+    struct GPUFence : NoCopyMove
+    {
+        GPUFence() = default;
+        ~GPUFence() override = default;
+
+        virtual void Reset() = 0;
+    };
+
+    struct GPUSemaphore : NoCopyMove
+    {
+        GPUSemaphore() = default;
+        ~GPUSemaphore() override = default;
+    };
+
+    // --- Render Targets ---
+    struct RenderAttachment
+    {
+        GPUTextureView* view = nullptr;
+        GPUTextureView* resolveView = nullptr;
 
         LoadOP loadOp = LoadOP::Clear;
-        StoreOp storeOp = StoreOp::Store;
-	    ResolveMode resolveMode = ResolveMode::Average;
+        StoreOP storeOp = StoreOP::Store;
+        ResolveMode resolveMode = ResolveMode::Average;
 
-        union
-        {
+        union {
             f32 color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 
             struct
@@ -285,82 +270,55 @@ namespace Renderer
             } ds;
         } clearValue;
 
-
-        static RenderAttachment Color(GPUTexture* tex, GPUTexture* resolve = nullptr, LoadOP load = LoadOP::Clear, const glm::vec4& col = {0, 0, 0, 1})
+        [[nodiscard]] static RenderAttachment Color(GPUTextureView* view, GPUTextureView* resolve = nullptr,
+                                                    LoadOP load = LoadOP::Clear, const glm::vec4& col = {0, 0, 0, 1})
         {
-            RenderAttachment ra =
-            {
-                .texture = tex,
-                .resolveTarget = resolve,
+            RenderAttachment ra = {
+                .view = view,
+                .resolveView = resolve,
                 .loadOp = load,
-                .storeOp = resolve ? StoreOp::DontCare : StoreOp::Store,
+                .storeOp = resolve ? StoreOP::DontCare : StoreOP::Store,
                 .resolveMode = resolve ? ResolveMode::Average : ResolveMode::None
             };
             std::memcpy(ra.clearValue.color, &col[0], sizeof(f32) * 4);
             return ra;
         }
 
-        static RenderAttachment Depth(GPUTexture* tex, LoadOP load = LoadOP::Clear, f32 depth = 0.0f, u32 stencil = 0)
+        [[nodiscard]] static RenderAttachment Depth(GPUTextureView* view, LoadOP load = LoadOP::Clear,
+                                                    StoreOP store = StoreOP::DontCare, f32 depth = 0.0f, u32 stencil = 0)
         {
-            RenderAttachment ra =
-            {
-                .texture = tex,
+            RenderAttachment ra = {
+                .view = view,
                 .loadOp = load,
-                .storeOp = StoreOp::DontCare
+                .storeOp = store,
             };
             ra.clearValue.ds.depth = depth;
             ra.clearValue.ds.stencil = stencil;
-			return ra;
-		}
-	};
+            return ra;
+        }
+    };
 
-	struct RenderingInfo
-	{
-		Extent2D extent = {};
-		std::span<RenderAttachment> colorAttachments;
-		RenderAttachment* depthAttachment = nullptr;
-	    RenderAttachment* stencilAttachment = nullptr; // future...
-	};
+    struct RenderingInfo
+    {
+        Extent2D extent = {};
+        Span<RenderAttachment> colorAttachments;
+        RenderAttachment* depthAttachment = nullptr;
+        RenderAttachment* stencilAttachment = nullptr;
+    };
 
-	/// Command buffer begin information
     struct CommandBufferBeginInfo
     {
         bool oneTimeSubmit = true;
         const RenderingInfo* renderPassInfo = nullptr; // For secondary buffers
-	};
-
-	/// Barrier information for synchronization
-    struct BarrierInfo
-    {
-        // TODO(Orgest): Expand with actual barrier details
-        u32 placeholder = 0;
-	};
-
-	struct GPUFence
-	{
-		virtual ~GPUFence() = default;
-	};
-
-	struct GPUSemaphore
-	{
-		virtual ~GPUSemaphore() = default;
-	};
-
-    enum class CommandBufferLevel : u8
-    {
-        Primary,
-        Secondary
     };
-    ENUM_CLASS_BITOPS(CommandBufferLevel);
 
+    struct GPUCommandBuffer : NoCopyMove
+    {
+        GPUCommandBuffer() = default;
+        ~GPUCommandBuffer() override = default;
 
-	/// Abstract command buffer for GPU work
-	struct GPUCommandBuffer
-	{
-		virtual ~GPUCommandBuffer() = default;
-
-		// Recording
-		virtual void Begin(const CommandBufferBeginInfo* inheritanceInfo = nullptr) = 0;
+        // Recording
+        virtual void Begin(const CommandBufferBeginInfo* inheritanceInfo = nullptr) = 0;
         virtual void End() = 0;
         virtual void Reset() = 0;
 
@@ -370,132 +328,190 @@ namespace Renderer
 
         // Pipeline & Descriptors
         virtual void BindPipeline(GPUPipeline* pipeline) = 0;
-        virtual void BindDescriptorSet(const DescriptorSet* set, u32 setIndex, GPUPipeline* pipeline) = 0;
+        virtual void BindDescriptorSet(const GPUDescriptorSet* set, u32 setIndex, GPUPipeline* pipeline) = 0;
         virtual void PushConstants(GPUPipeline* pipeline, ShaderStageFlags stages, u32 offset, u32 size,
                                    const void* data) = 0;
 
         // Resource Transitions
-        virtual void TransitionLayout(GPUTexture* texture, TextureLayout newLayout) = 0;
-        virtual void TransitionLayout(GPUTexture* texture, TextureLayout oldLayout, TextureLayout newLayout) = 0;
+        virtual void FlushBarriers() = 0;
+        virtual void TransitionLayout(GPUTexture* tex, TextureLayout newLayout) = 0;
+        virtual void TransitionLayouts(Span<const TextureTransition> transitions) = 0;
         virtual void GenerateMipmaps(GPUTexture* texture) = 0;
 
-		// Vertex/Index Buffers
-		virtual void BindVertexBuffer(GPUBuffer* buffer, u32 binding, u64 offset) = 0;
-		virtual void BindIndexBuffer(GPUBuffer* buffer, u64 offset) = 0;
+        // Vertex/Index Buffers
+        virtual void BindVertexBuffer(GPUBuffer* buffer, u32 binding, u64 offset) = 0;
+        virtual void BindIndexBuffer(GPUBuffer* buffer, u64 offset) = 0;
 
-		// Drawing
-		virtual void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) = 0;
+        // Drawing
+        virtual void Draw(u32 vertexCount, u32 instanceCount, u32 firstVertex, u32 firstInstance) = 0;
         virtual void DrawIndexed(u32 indexCount, u32 instanceCount, u32 firstIndex, i32 vertexOffset,
                                  u32 firstInstance) = 0;
         virtual void DrawIndirect(GPUBuffer* buffer, u64 offset, u32 drawCount, u32 stride) = 0;
-	    virtual void DrawIndexedIndirect(GPUBuffer* buffer, u64 offset, u32 drawCount, u32 stride) = 0;
+        virtual void DrawIndexedIndirect(GPUBuffer* buffer, u64 offset, u32 drawCount, u32 stride) = 0;
 
-		// Compute
-		virtual void Dispatch(u32 groupCountX, u32 groupCountY, u32 groupCountZ) = 0;
-		virtual void DispatchIndirect(GPUBuffer* buffer, u64 offset) = 0;
+        // Compute
+        virtual void Dispatch(u32 groupCountX, u32 groupCountY, u32 groupCountZ) = 0;
+        virtual void DispatchIndirect(GPUBuffer* buffer, u64 offset) = 0;
 
 		// Copy operations
-		virtual void CopyBuffer(GPUBuffer* src, GPUBuffer* dst, u64 size, u64 srcOffset, u64 dstOffset) = 0;
-		virtual void CopyTexture(GPUTexture* src, GPUTexture* dst) = 0;
+        virtual void CopyBuffer(GPUBuffer* src, GPUBuffer* dst, u64 size, u64 srcOffset, u64 dstOffset) = 0;
+        virtual void CopyTexture(GPUTexture* src, GPUTexture* dst) = 0;
         virtual void CopyBufferToTexture(GPUBuffer* src, GPUTexture* dst) = 0;
+        virtual void BlitTexture(GPUTexture* src, GPUTexture* dst) = 0;
 
-		// Synchronization
-		virtual void PipelineBarrier(const BarrierInfo& info) = 0;
-	    virtual void WaitForFence(GPUFence* fence) = 0;
+        // Synchronization
+        virtual void WaitForFence(GPUFence* fence) = 0;
 
-		// Viewport/Scissor
-		virtual void SetViewport(const Viewport& viewport) = 0;
-		virtual void SetScissor(u32 x, u32 y, u32 width, u32 height) = 0;
+        // Viewport/Scissor
+        virtual void SetViewport(const Viewport& viewport) = 0;
+        virtual void SetScissor(u32 x, u32 y, u32 width, u32 height) = 0;
 
-		// Debug markers
-		virtual void BeginDebugLabel(const char* name, f32 r, f32 g, f32 b) = 0;
-		virtual void EndDebugLabel() = 0;
-		virtual void InsertDebugLabel(const char* name, f32 r, f32 g, f32 b) = 0;
-	};
+        // Debug markers
+        virtual void BeginDebugLabel(const char* name, f32 r, f32 g, f32 b) = 0;
+        virtual void EndDebugLabel() = 0;
+        virtual void InsertDebugLabel(const char* name, f32 r, f32 g, f32 b) = 0;
+    };
 
-    // Swapchain & Presentation
-    /// Abstract swapchain (platform-specific)
-    struct GPUSwapchain
-	{
-		virtual ~GPUSwapchain() = default;
-        virtual Result<void> Init(GPUDevice* devicePtr, Platform::WindowHandle windowHandle_) = 0;
+    struct FrameIndices
+    {
+        u32 frameIndex;
+        u32 imageIndex;
+    };
+
+    /// Per-frame resources (command buffer, sync objects, descriptors)
+    struct GPUFrameData : NoCopyMove
+    {
+        GPUFrameData() = default;
+        ~GPUFrameData() override = default;
+
+        virtual bool Init(GPUDevice* device) = 0;
         virtual void Destroy() = 0;
-		virtual bool ResizeIfNeeded() = 0;
 
-		virtual Result<u32> AcquireNextImage(GPUSemaphore* semaphore, u32& imageIndex) = 0;
+        [[nodiscard]] virtual GPUCommandBuffer* GetCommandBuffer() = 0;
+        [[nodiscard]] virtual GPUQueryPool* GetQueryPool() = 0;
+    };
 
-		[[nodiscard]] virtual PresentMode GetPresentMode() = 0;
-		[[nodiscard]] virtual GPUTexture* GetImage(u32 index) = 0;
-		[[nodiscard]] virtual GPUTexture* GetCurrentImage() = 0;
-        [[nodiscard]] virtual SampleCount GetMSAASamples() = 0;
+    /// Abstract swapchain (platform-specific)
+    struct GPUSwapchain : NoCopyMove
+    {
+        GPUSwapchain() = default;
+        ~GPUSwapchain() override = default;
 
-		[[nodiscard]] virtual Extent2D GetExtent() const = 0;
+        virtual Result<void> Init(GPUDevice* devicePtr, Platform::WindowHandle windowHandle) = 0;
+        virtual void Destroy() = 0;
+        virtual bool ResizeIfNeeded() = 0;
+        virtual void NeedsReCreation() = 0;
+
+        // Upgraded: Returns the image index inside the Result instead of using an out-param
+        [[nodiscard]] virtual Result<u32> AcquireNextImage(GPUSemaphore* semaphore) = 0;
+
+        [[nodiscard]] virtual GPUTexture* GetImage(u32 index) = 0;
+        [[nodiscard]] virtual GPUTexture* GetCurrentImage() = 0;
+        [[nodiscard]] virtual f32 GetRenderScale() const = 0;
+        virtual void SetRenderScale(f32 scale) = 0;
+
+        [[nodiscard]] virtual Extent2D GetExtent() const = 0;
+        [[nodiscard]] virtual Extent2D GetRenderExtent() const = 0;
         [[nodiscard]] virtual f32 GetAspectRatio() const = 0;
         [[nodiscard]] virtual void* GetNativeFormat() const { return nullptr; }
-
+        [[nodiscard]] virtual PresentMode GetPresentMode() const = 0;
         [[nodiscard]] virtual Platform::WindowHandle GetWindowHandle() const = 0;
 
-		virtual void SetVsyncMode(PresentMode mode) = 0;
-		virtual void SetBufferingMode(BufferingMode mode) = 0;
-        virtual void SetMSAASamples(SampleCount samples) = 0;
-	};
-
-	// Frame Management
-	/// Per-frame resources (command buffer, sync objects, descriptors)
-	struct GPUFrameData
-	{
-		virtual ~GPUFrameData() = default;
-		virtual bool Init(GPUDevice* device) = 0;
-		virtual void Destroy() = 0;
-		virtual void Reset() = 0; // Reset per-frame allocators
-
-		virtual GPUCommandBuffer* GetCommandBuffer() = 0;
+        virtual void SetVsyncMode(PresentMode mode) = 0;
+        virtual void SetBufferingMode(BufferingMode mode) = 0;
     };
 
     /// High-level renderer (manages frames, submission)
-    struct GPURenderer
+    struct GPURenderer : NoCopyMove
     {
-        virtual ~GPURenderer() = default;
-        virtual bool Init(GPUDevice* device, GPUSwapchain* swapchain, u32 frameOverlap = 2) = 0;
+        GPURenderer() = default;
+        ~GPURenderer() override = default;
+
+        virtual bool Init(GPUDevice* device, GPUSwapchain* swapchain, u32 frameOverlap = MAX_FRAME_OVERLAP) = 0;
         virtual void Destroy() = 0;
 
-        // Frame lifecycle
-        virtual bool BeginFrame(u32& frameIndex, u32& imageIndex) = 0;
-        virtual void EndFrame(u32 frameIndex, u32 imageIndex) = 0;
+        // Upgraded: Returns optional frame indices instead of booleans + out params
+        [[nodiscard]] virtual GPUCommandBuffer* BeginFrame() = 0;
+        virtual void EndFrame() = 0;
 
-
-        virtual GPUFrameData* GetCurrentFrameData() = 0;
+        [[nodiscard]] virtual GPUFrameData* GetCurrentFrameData() = 0;
         [[nodiscard]] virtual u32 GetFrameIndex() const = 0;
     };
 
-    constexpr std::string DecodeDriverVersion(u32 driverVersion, const GPUVendor vendor)
+    struct GPUInterface : NoCopyMove
+    {
+        GPUInterface() = default;
+        ~GPUInterface() override = default;
+
+        virtual bool Init() = 0;
+        virtual void Destroy() = 0;
+    };
+
+    /// Abstract logical GPU device
+    struct GPUDevice : NoCopyMove
+    {
+        GPUDevice() = default;
+        ~GPUDevice() override = default;
+
+        virtual bool Init(GPUInterface* instance) = 0;
+        virtual void Destroy() = 0;
+        virtual void WaitIdle() = 0;
+
+        // Immediate submit
+        virtual void ImmediateSubmit(std::function<void(GPUCommandBuffer*)> func) = 0;
+
+        // Creations
+        [[nodiscard]] virtual std::unique_ptr<GPUTexture> CreateTexture(const TextureInfo& info) = 0;
+        [[nodiscard]] virtual std::unique_ptr<GPUTextureView> CreateTextureView(
+            GPUTexture* texture, const TextureViewInfo& info) = 0;
+        [[nodiscard]] virtual std::unique_ptr<GPUSampler> CreateSampler(SamplerInfo& info) = 0;
+
+        [[nodiscard]] virtual std::shared_ptr<GPUShader> CreateShader(Span<const u32> code) = 0;
+        [[nodiscard]] virtual std::shared_ptr<GPUShader> CreateShaderPath(const char* path) = 0;
+
+        [[nodiscard]] virtual std::unique_ptr<GPUBuffer> CreateBuffer(BufferInfo& info) = 0;
+        [[nodiscard]] virtual std::unique_ptr<GPUShaderBuffer> CreateShaderBuffer(
+            struct DescriptorAllocatorGrowable* alloc, const DescriptorSetLayoutDesc& desc) = 0;
+
+        [[nodiscard]] virtual std::unique_ptr<GPUPipeline> CreateGraphicsPipeline(const GraphicsPipelineDesc& desc) = 0;
+        [[nodiscard]] virtual std::unique_ptr<GPUPipeline> CreateComputePipeline(const ComputePipelineDesc& desc) = 0;
+
+        // Getters
+        [[nodiscard]] virtual const GPUDeviceDesc& GetDeviceDesc() const = 0;
+        [[nodiscard]] virtual SampleCount GetMaxUsableSampleCount() const = 0;
+
+        SampleCount currentSamples = SampleCount::X4;
+    };
+
+    struct GPUQueryPool : NoCopyMove
+    {
+        GPUQueryPool() = default;
+        ~GPUQueryPool() override = default;
+
+        virtual void Reset(GPUCommandBuffer* cmd) = 0;
+        virtual void WriteTimestamp(GPUCommandBuffer* cmd, u32 queryIndex) = 0;
+        virtual bool FetchResults() = 0;
+
+        [[nodiscard]] virtual f32 GetElapsedMs(u32 timerIndex) const = 0;
+        [[nodiscard]] virtual f32 GetDeltaMs(u32 beginIdx, u32 endIdx) const = 0;
+    };
+
+    // Helper Function
+    [[nodiscard]] constexpr std::string DecodeDriverVersion(u32 driverVersion, const GPUVendor vendor)
     {
         switch (vendor)
         {
         case GPUVendor::Nvidia:
             return fmt::format("{}.{}", (driverVersion >> 22) & 0x3FF, (driverVersion >> 14) & 0xFF);
-
-		case GPUVendor::Intel:
-			return fmt::format("{}.{}", driverVersion >> 14, driverVersion & 0x3FFF);
-
-		case GPUVendor::AMD:
-			return fmt::format("{}.{}.{}", (driverVersion >> 22) & 0x3FF, (driverVersion >> 12) & 0x3FF,
-							   driverVersion & 0xFFF);
-
-		case GPUVendor::Apple:
-			// Apple tends to report plain numeric driver version
-			return fmt::format("{}", driverVersion);
-
-		default:
-			return fmt::format("Unknown Driver (0x{:X})", driverVersion);
-		}
-	}
-
-
-    struct FeatureSet
-    {
-        bool useUnifiedLayout = true;
-    };
-
+        case GPUVendor::Intel:
+            return fmt::format("{}.{}", driverVersion >> 14, driverVersion & 0x3FFF);
+        case GPUVendor::AMD:
+            return fmt::format("{}.{}.{}", (driverVersion >> 22) & 0x3FF, (driverVersion >> 12) & 0x3FF, driverVersion & 0xFFF);
+        case GPUVendor::Apple:
+            return fmt::format("{}", driverVersion);
+        default:
+            return fmt::format("Unknown Driver (0x{:X})", driverVersion);
+        }
+    }
 } // namespace Renderer
 

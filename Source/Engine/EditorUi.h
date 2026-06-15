@@ -3,17 +3,9 @@
 //
 
 #pragma once
-#include <span>
-
 #include "RenderInterface.h"
-#include "Audio/Audio.h"
 #include "glm/vec3.hpp"
 #include "Tools/Vector.h"
-
-namespace Renderer
-{
-    struct ModelComponent;
-}
 
 struct CameraComponent;
 
@@ -23,8 +15,6 @@ namespace Platform
 }
 
 class DebugRenderer;
-struct DebugUBO;
-struct LightUBO;
 struct SceneStats;
 
 struct State
@@ -33,44 +23,45 @@ struct State
     Renderer::GPUDevice* device = nullptr;
     Renderer::GPUSwapchain* swapchain = nullptr;
     DebugRenderer* debugRenderer = nullptr;
-    DebugUBO* debugData = nullptr;
+    Engine::DebugUBO* debugData = nullptr;
     SceneStats* sceneStats = nullptr;
-    Audio::System* audioSystem = nullptr;
-    Vector<LightUBO>* lights;
-    std::span<CameraComponent> cameraComponents;
+    Vector<Engine::LightUBO>* lights;
+    Span<CameraComponent> cameraComponents;
     bool* freezeFrustum = nullptr;
     CameraComponent* frozenCam = nullptr;
     f32* aspectRatio = nullptr;
-
-    Vector<Renderer::ModelComponent>* models = nullptr;
+    bool pendingMSAAChange = false;
 
     u32 activeCameraIdx = 0;
     u32 selectedCameraIdx = 0;
     u32 selectedLightIdx = 0;
-	u32 activeFlashlightIdx = 0;
+    u32 activeFlashlightIdx = (u32) - 1;
+    f32 uiRenderScale = 1.0f;
+
+    i32 uiSelectedMonitorIdx = 0;
+    bool useCustomResolution = false;
+    Platform::AspectRatio uiSelectedRatio = {16, 9};
+    Renderer::Extent2D uiTargetExtent;
+    u32 uiTargetRefreshRate = 0;
+    Renderer::PresentMode uiSelectedVsyncMode = Renderer::PresentMode::VSyncOn;
+
+    bool showDisplaySettings = true;
+
     // Panels (ImGui toggles)
     bool showMenuBar = true;
     bool showMainOverlay = true;
     bool showGPUInfo = false;
-    bool followCamera = false;
     bool showEditorTools = true;
     bool showAboutPopup = false;
     bool noUI = false;
     bool autoReloadShaders = false;
     bool pendingManualReload = false;
-    bool showAudioPopup = false;
-    bool showAudioVitals = false;
-    bool showAudioMixer = false;
-    bool showSoundBank = false;
 
     // Per-frame UI state
     f32 menuBarHeight = 0.f;
     f32 overlayAlpha = 0.7f;
     f32 editorAlpha = 0.7f;
     f32 cameraSpeed = 0.0f;
-
-    u32 selectedModelIdx = u32(-1);
-    i32 selectedPartIdx  = -1;
 
     bool spinLights = false;
     f32 spinSpeed = 0.1f;
@@ -84,8 +75,8 @@ struct EditorUI
 {
     State state;
 
-    static void InitEditorStyles();
-    static bool Init(Renderer::GPUInterface* instance, Renderer::GPUDevice* device, Renderer::GPUSwapchain* swapchain);
+    static void InitEditorStyles(f32 dpiScale);
+    bool Init(Renderer::GPUInterface* instance, Renderer::GPUDevice* device, Renderer::GPUSwapchain* swapchain);
     static void Destroy();
     static void BeginFrame();
     static void EndFrame();
@@ -96,18 +87,14 @@ struct EditorUI
     void DrawCameraEditor();
     static void DrawCameraProperties(CameraComponent& camComp);
     void DrawCameraSpeedPopup(f32 camSpeedPopupTime) const;
-    static void DrawDebugViewPopup(f32 debugViewPopupTime, DebugView currentView);
+    static void DrawDebugViewPopup(f32 debugViewPopupTime, Renderer::DebugView currentView);
     bool DrawMainMenuBar();
-    void DrawAudioSystemVitals() const;
-    void DrawAudioMixer();
-    void DrawSoundBank();
-    void ShowAudioInfo();
     void DrawMainOverlay() const;
     void AppInfoPopup();
-
+    void DrawDisplaySettings();
     void DrawEditorTools();
 
-    void UpdateLights(f32 deltaTime);
+    void UpdateLights() const;
     void DrawLightGizmos(i32 selectedIdx, const CameraComponent& activeCam) const;
     void DrawLightEditor();
 

@@ -2,9 +2,7 @@
 // Created by Orgest on 11/10/2025.
 //
 #pragma once
-#include <cstdio>
-#include <span>
-#include <utility>
+#include "Tools/Span.h"
 #include "Tools/Vector.h"
 
 #include "../PrimTypes.h"
@@ -72,7 +70,7 @@ struct FileManager
 		}
 
 	    template <typename T>
-        [[nodiscard]] Result<void> read(std::span<T> buffer) const noexcept
+        [[nodiscard]] Result<void> read(Span<T> buffer) const noexcept
 		{
 		    if (buffer.empty()) return {};
 
@@ -86,7 +84,7 @@ struct FileManager
 		}
 
 	    template <typename T>
-        [[nodiscard]] Result<void> write(std::span<const T> buffer) const noexcept
+        [[nodiscard]] Result<void> write(Span<const T> buffer) const noexcept
 		{
 		    if (buffer.empty()) return {};
 
@@ -99,14 +97,30 @@ struct FileManager
 		    return {};
 		}
 
-		size_t read(void* dst, size_t size, size_t count) const noexcept
+	    [[nodiscard]] Result<void> write_raw(const void* ptr, size_t size, size_t count) const noexcept
 		{
-			return std::fread(dst, size, count, mFile);
+		    if (!isOpen()) return std::unexpected(FileWriteFailed);
+
+#ifdef _MSC_VER
+		    const size_t written = std::fwrite(ptr, size, count, mFile);
+#else
+		    const size_t written = std::fwrite(ptr, size, count, mFile);
+#endif
+
+		    if (written != count)
+		    {
+		        return std::unexpected(FileWriteFailed);
+		    }
+		    return {};
 		}
 
-		size_t write(const void* src, size_t size, size_t count) const noexcept
+
+	    // For strings/string_views
+	    [[nodiscard]] Result<void> write_string(std::string_view str) const noexcept
 		{
-			return std::fwrite(src, size, count, mFile);
+		    if (str.empty()) return {};
+
+		    return write(Span(str.data(), str.size()));
 		}
 
 		void seek(i32 offset, i32 origin) const noexcept { std::fseek(mFile, offset, origin); }
@@ -138,7 +152,7 @@ struct FileManager
 	}
 
 	/// Read binary data into caller-provided storage
-	static Result<i32> ReadBinary(const char* path, const std::span<u8> output) noexcept
+	static Result<i32> ReadBinary(const char* path, const Span<u8> output) noexcept
 	{
 	    const Handle f(path, "rb");
 	    if (!f) return std::unexpected(FileNotFound);
@@ -150,7 +164,7 @@ struct FileManager
 	    if (static_cast<size_t>(fileSize) > output.size())
 	        return std::unexpected(OutOfMemory);
 
-	    if (auto res = f.read<u8>(output.first(fileSize)); !res)
+	    if (auto res = f.read<u8>(output.subspan(0, fileSize)); !res)
 	    {
 	        return std::unexpected(res.error());
 	    }
@@ -159,17 +173,13 @@ struct FileManager
 	}
 
 	/// Write binary data from caller-provided buffer
-	static Result<void> WriteBinary(const char* path, std::span<const u8> data) noexcept
+    static Result<void> WriteBinary(const char* path, Span<const u8> data) noexcept
 	{
-		const Handle f(path, "wb");
-		if (!f)
-			return std::unexpected(FileNotFound);
+	    const Handle f(path, "wb");
+	    if (!f)
+	        return std::unexpected(FileNotFound);
 
-		const size_t written = f.write(data.data(), 1, data.size_bytes());
-		if (written != data.size_bytes())
-			return std::unexpected(FileWriteFailed);
-
-		return {};
+	    return f.write(data);
 	}
 
     static Result<Vector<u32>> LoadSPV(const char* path)
@@ -197,28 +207,29 @@ struct FileManager
     }
 
 	/// Read text file into caller-provided buffer (null-terminated)
-	static Result<i32> ReadText(const char* path, std::span<char> output) noexcept
+    static Result<i32> ReadText(const char* path, Span<char> output) noexcept
 	{
-		Handle f(path, "rb");
-		if (!f)
-			return std::unexpected(FileNotFound);
+	    Handle f(path, "rb");
+	    if (!f)
+	        return std::unexpected(FileNotFound);
 
-		f.seek(0, SEEK_END);
-		const i32 fileSize = f.tell();
-		if (fileSize <= 0)
-			return std::unexpected(FileReadFailed);
-		(void)f.rewind();
+	    f.seek(0, SEEK_END);
+	    const i32 fileSize = f.tell();
+	    if (fileSize <= 0)
+	        return std::unexpected(FileReadFailed);
+	    (void)f.rewind();
 
-		const i32 toRead = fileSize;
-		if (static_cast<i64>(toRead) + 1 > static_cast<i64>(output.size()))
-			return std::unexpected(OutOfMemory); // not enough space for '\0'
+	    const i32 toRead = fileSize;
+	    if (static_cast<i64>(toRead) + 1 > static_cast<i64>(output.size()))
+	        return std::unexpected(OutOfMemory); // not enough space for '\0'
 
-		const size_t bytesRead = f.read(output.data(), 1, static_cast<size_t>(toRead));
-		if (bytesRead != static_cast<size_t>(toRead))
-			return std::unexpected(FileReadFailed);
+	    if (auto res = f.read<char>(output.subspan(0, toRead)); !res)
+	    {
+	        return std::unexpected(res.error());
+	    }
 
-		output[toRead] = '\0';
-		return toRead;
+	    output[toRead] = '\0';
+	    return toRead;
 	}
 
 	static Result<Handle> Open(const char* path, const char* mode) noexcept
@@ -229,4 +240,37 @@ struct FileManager
 		return std::move(f);
 	}
 
+    static bool Exists(const char* path) noexcept
+	{
+#ifdef _MSC_VER
+	    FILE* file = nullptr;
+	    fopen_s(&file, path, "r");
+#else
+	    FILE* file = std::fopen(path, "r");
+#endif
+	    if (file)
+	    {
+	        std::fclose(file);
+	        return true;
+	    }
+	    return false;
+	}
+
+    static bool CreateIfMissing(const char* path) noexcept
+	{
+	    if (Exists(path)) return true;
+
+#ifdef _MSC_VER
+	    FILE* file = nullptr;
+	    fopen_s(&file, path, "wb");
+#else
+	    FILE* file = std::fopen(path, "wb");
+#endif
+	    if (file)
+	    {
+	        std::fclose(file);
+	        return true;
+	    }
+	    return false;
+	}
 };

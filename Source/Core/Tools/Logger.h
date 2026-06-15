@@ -25,11 +25,19 @@ public:
 
     static void Init();
     static void Shutdown();
+    static void Flush();
 
     template <typename... Args>
     static void Write(LogType type, const std::source_location& loc, fmt::format_string<Args...> format, Args&&... args)
     {
         WriteInternal(type, fmt::format(format, std::forward<Args>(args)...), loc);
+    }
+
+    // Without source location
+    template <typename... Args>
+    static void Write(LogType type, fmt::format_string<Args...> format, Args&&... args)
+    {
+        WriteInternal(type, fmt::format(format, std::forward<Args>(args)...), std::source_location());
     }
 
     static void LogResultError(std::string_view expr, i32 err, const std::source_location& loc = std::source_location::current());

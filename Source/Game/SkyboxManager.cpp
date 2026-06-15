@@ -103,7 +103,6 @@ std::unique_ptr<GPUTexture> SkyboxManager::CreateCubeMapFromFiles(const Array<co
 		.usage = ImageUsage::Sampled | ImageUsage::TransferDst,
 	};
 
-	// Pack all faces into a single contiguous buffer
 	Vector<u8> packed(faceBytes * 6);
 	for (u32 i = 0; i < 6; ++i)
 	{
@@ -121,9 +120,9 @@ std::unique_ptr<GPUTexture> SkyboxManager::CreateCubeMapFromFiles(const Array<co
 	return cube;
 }
 
-bool SkyboxManager::Initialize(GPUDevice* dev)
+bool SkyboxManager::Initialize(GPUDevice* device, DescriptorAllocatorGrowable& descriptorAlloc)
 {
-	devicePtr = dev;
+    devicePtr = device;
 
     constexpr Array skyFaces = {
         "Assets/Skybox/right.jpg",
@@ -144,9 +143,9 @@ bool SkyboxManager::Initialize(GPUDevice* dev)
         .minFilter = SamplerFilter::Linear,
         .magFilter = SamplerFilter::Linear
     };
-    sampler = dev->CreateSampler(sampDesc);
+    sampler = device->CreateSampler(sampDesc);
 
-    return CreateShaderAndPipeline();
+    return CreateShaderAndPipeline(descriptorAlloc);
 }
 
 std::unique_ptr<GPUTexture> SkyboxManager::CreateProceduralFallback() const
@@ -165,7 +164,7 @@ std::unique_ptr<GPUTexture> SkyboxManager::CreateProceduralFallback() const
     return cube;
 }
 
-bool SkyboxManager::CreateShaderAndPipeline()
+bool SkyboxManager::CreateShaderAndPipeline(DescriptorAllocatorGrowable& descriptorAlloc)
 {
     shader = devicePtr->CreateShaderPath("Shaders/skybox.spv");
 
@@ -176,22 +175,14 @@ bool SkyboxManager::CreateShaderAndPipeline()
 		          .Build(devicePtr);
 	}
 
-	Array<PoolSizes, 1> poolSizes = {
-		{DescriptorType::CombinedImageSampler, 1.0f},
-	};
+    descriptorSet = descriptorAlloc.Allocate(layout);
 
-	static DescriptorAllocatorGrowable skyPool;
-	skyPool.Init(devicePtr, 1, poolSizes);
-	descriptorSet = skyPool.Allocate(layout);
-
-	DescriptorWriter()
-		.WriteCombinedImage(0, cubemap.get(), sampler.get(), 0)
-		.UpdateSet(devicePtr, descriptorSet);
+    DescriptorWriter()
+        .WriteImage(0, cubemap->GetView(), sampler.get(), DescriptorType::CombinedImageSampler)
+        .UpdateSet(devicePtr, descriptorSet);
 
     PipelineLayoutDesc skyLayout;
-    skyLayout.setLayouts = {
-        {.setIndex = 0, .bindings = {Constants::Skybox.begin(), Constants::Skybox.end()}}
-    };
+    skyLayout.setLayouts = {DescriptorSetLayoutDesc::FromConstants(0, Constants::Skybox)};
 
     skyLayout.pushConstants = {
         {
@@ -210,14 +201,15 @@ bool SkyboxManager::CreateShaderAndPipeline()
 			.depthFormat = TextureFormat::D32_SFLOAT,
 			.depthWrite  = false,
 			.depthOp     = CompareOp::GreaterOrEqual,
-			.colorFormats = { TextureFormat::BGRA8_SRGB }
-		},
+            .sampleCount = devicePtr->currentSamples,
+            .colorFormats = {TextureFormat::BGRA8_SRGB},
+        },
 		.layout = skyLayout
 	};
 
     pipeline = devicePtr->CreateGraphicsPipeline(skyboxDesc);
 	LOG(Info, "Skybox: Successfully loaded pipeline");
-    return pipeline != nullptr && pipeline->IsValid();
+    return pipeline.get();
 }
 
 void SkyboxManager::Render(GPUCommandBuffer* cmd, const Camera& camera) const
@@ -238,6 +230,13 @@ void SkyboxManager::Render(GPUCommandBuffer* cmd, const Camera& camera) const
 
 void SkyboxManager::Cleanup() const
 {
-	layout.Destroy(devicePtr);
+    auto* nonConstThis = const_cast<SkyboxManager*>(this);
+
+    nonConstThis->pipeline.reset();
+    nonConstThis->cubemap.reset();
+    nonConstThis->sampler.reset();
+    nonConstThis->shader.reset();
+
+    layout.Destroy(devicePtr);
 }
 

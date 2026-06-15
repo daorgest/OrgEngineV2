@@ -1,11 +1,13 @@
 #pragma once
 #include <expected>
+#include <cassert>
 
 enum OrgErrCode
 {
 	None = 0,
 
 	InitFailed,
+    PointerLoadFailed,
 	NotInitialized,
 	AlreadyInitialized,
 	MissingDependency,
@@ -22,6 +24,16 @@ enum OrgErrCode
 	PathTooLong,
 	IOError,
 
+    // JSON
+    JsonInvalidSyntax,
+    JsonUnexpectedToken,
+    JsonPrematureEOF,
+
+    // TOML
+    TomlInvalidSyntax,
+    TomlInvalidHeader,
+    TomlDuplicateKey,
+    TomlTypeMismatch,
 
 	// Assets
 	AssetNotFound,
@@ -80,6 +92,8 @@ enum OrgErrCode
 template <typename T>
 using Result = std::expected<T, OrgErrCode>;
 
+#define IGNORE_RESULT(expr) (void)(expr)
+
 #ifdef ORGAPI_DLL_EXPORT
 #  define ORGAPI __declspec(dllexport)
 #elifdef ORGAPI_DLL_IMPORT
@@ -108,20 +122,30 @@ using i64 = int64_t;
 using f32 = float;
 using f64 = double;
 
+// A trick to block the compiler from deducing T from a specific parameter
+template<typename T> struct NoDeduce { using type = T; };
+template<typename T> using NoDeduce_t = NoDeduce<T>::type;
 
-constexpr u32 INVALID_ID = 0xFFFFFFFF;
-constexpr u64 INVALID_ID_64 = 0xFFFFFFFFFFFFFFFF;
+// Memory sized Literals!!
+constexpr std::size_t operator""_KiB(unsigned long long int x)
+{
+    return 1024ULL * x;
+}
 
-// Size Constants
-constexpr u64 Kilobyte = 1024;
-constexpr u64 Megabyte = 1024 * Kilobyte;
-constexpr u64 Gigabyte = 1024 * Megabyte;
-constexpr u64 Terabyte = 1024 * Gigabyte;
+constexpr std::size_t operator""_MiB(unsigned long long int x)
+{
+    return 1024_KiB * x;
+}
 
-// Size Conversions
-constexpr float BytesToKB(u64 bytes) { return (float)bytes / (float)Kilobyte; }
-constexpr float BytesToMB(u64 bytes) { return (float)bytes / (float)Megabyte; }
-constexpr float BytesToGB(u64 bytes) { return (float)bytes / (float)Gigabyte; }
+constexpr std::size_t operator""_GiB(unsigned long long int x)
+{
+    return 1024_MiB * x;
+}
+
+constexpr std::size_t operator""_TiB(unsigned long long int x)
+{
+    return 1024_GiB * x;
+}
 
 // Frame overlap
 static constexpr u32 MAX_FRAME_OVERLAP    = 2;
@@ -139,12 +163,12 @@ constexpr auto ENGINE_BUILD = "Release";
 #endif
 
 // FPS Options
-constexpr i32 BACKGROUND_FPS = 15;
+constexpr f32 BACKGROUND_FPS = 15.0f;
 constexpr auto BACKGROUND_FRAME_TIME = 1000 / BACKGROUND_FPS;
 
 // Span Macros
-#define SPAN_ONE(x) std::span(&(x), 1)
-#define SPAN_PTR(ptr, count) std::span((ptr), (count))
+#define SPAN_ONE(x) Span(&(x), 1)
+#define SPAN_PTR(ptr, count) Span((ptr), (count))
 
 // Controllers
 constexpr u32 MAX_GAMEPADS = 4;
@@ -159,6 +183,15 @@ constexpr u32 MAX_SCENE_CAMERAS = 2;
 constexpr u32 MAX_LIGHTS = 8;
 
 
+constexpr u32 INVALID_ID = 0xFFFFFFFF;
+constexpr u64 INVALID_ID_64 = 0xFFFFFFFFFFFFFFFF;
+
+// Engine Maximums
+constexpr u32 MAX_BINDLESS_TEXTURES = 1000;
+constexpr u32 MAX_MATERIAL_INSTANCES = 1000;
+constexpr u32 MAX_MESH_INSTANCES = 10000;
+
+// Handle
 template <typename T>
 struct ResourceHandle
 {

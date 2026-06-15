@@ -28,7 +28,7 @@ namespace Renderer
         void WriteTimestamp(GPUCommandBuffer* cmd, u32 queryIndex) override;
 
         bool FetchResults() override;
-        [[nodiscard]] f32 GetElapsedMs(u32 timerIndex) const;
+        [[nodiscard]] f32 GetElapsedMs(u32 timerIndex) const override;
         [[nodiscard]] f32 GetDeltaMs(u32 beginIdx, u32 endIdx) const override;
 
     private:

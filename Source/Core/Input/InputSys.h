@@ -8,6 +8,7 @@
 constexpr u32 CONTROLLER_COUNT = 1;
 constexpr f32 MAX_THUMB_VALUE = 32767.0f;
 constexpr f32 NORM_THUMB_VALUE = 1.0f / 32767.0f;
+constexpr f32 DEFAULT_DEADZONE = 0.15f;
 #define NORM_THUMB(v) (static_cast<f32>(v) / MAX_THUMB_VALUE)
 
 namespace Mouse
@@ -111,6 +112,8 @@ enum class Action : u32
     MoveRight,
     MoveUp,
     MoveDown,
+    Crouch,
+    Sprint,
     Jump,
 
     ToggleFPS,
@@ -162,18 +165,15 @@ struct Input
 
     f32 cursorX = 0.0f, cursorY = 0.0f;
     f64 xrel = 0.0f, yrel = 0.0f;
-    f64 lastX = 0.0f, lastY = 0.0f;
     i64 scrollX = 0, scrollY = 0;
-    i64 prevWheelX = 0, prevWheelY = 0;
 
     bool usingController = false;
     bool usingKeyboard = false;
     bool usingMouse = false;
-    bool useRawInput = false;
-    bool mouseLookActive = false;
 
     // Methods
     static void ProcessEventButton(ButtonState& state, bool isPressed);
+    static f32 ApplyDeadzone(f32 value, f32 deadzone = DEFAULT_DEADZONE);
     static void EndFrameInputUpdate();
     static void ResetInputOnFocusLoss();
     static void ProcessEvents();

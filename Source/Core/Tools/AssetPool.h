@@ -11,7 +11,9 @@ template <typename T>
 struct ResourceSlot
 {
     T data{};
+#ifdef _DEBUG
     std::string path;
+#endif
     u32 refCount = 0;
     u32 generation = 0;
 };
@@ -30,12 +32,44 @@ public:
         LOG(Info, "ResourceManager: Initialized with {} slots.", initialCapacity);
     }
 
+    ~AssetPool()
+    {
+        Clear();
+    }
+
+    void Clear()
+    {
+        for (auto& slot : resources)
+        {
+            if (slot.refCount > 0)
+            {
+                // Compile-time check: If the asset type has a Destroy method, call it
+                if constexpr (requires { slot.data.Destroy(); })
+                {
+                    slot.data.Destroy();
+                }
+
+                // Reset the structure to its default initialized state
+                slot.data = T{};
+#ifdef _DEBUG
+                slot.path.clear();
+#endif
+                slot.refCount = 0;
+                ++slot.generation;
+            }
+        }
+
+        registry.clear();
+        freeList.clear();
+        resources.clear();
+    }
+
     template <typename Loader>
     [[nodiscard]] Result<ResourceHandle<T>> Load(const std::filesystem::path& path, Loader&& loader)
     {
         const std::string pathStr = path.string();
 
-        if (auto it = registry.find(pathStr); it != registry.end())
+        if (const auto it = registry.find(pathStr); it != registry.end())
         {
             u32 idx = it->second;
             ++resources[idx].refCount;
@@ -55,7 +89,9 @@ public:
 
 
         slot.data = std::move(*result);
+#ifdef _DEBUG
         slot.path = pathStr;
+#endif
         slot.refCount = 1;
         registry[pathStr] = idx;
 
@@ -66,7 +102,7 @@ public:
     {
         using PtrType = decltype(&self.resources[0].data);
 
-        if (!handle.IsValid()) return Result<PtrType>(std::unexpected(OrgErrCode::AssetNotFound));
+        if (!handle) return Result<PtrType>(std::unexpected(OrgErrCode::AssetNotFound));
 
         u32 idx = handle.index();
         if (idx >= self.resources.size()) return Result<PtrType>(std::unexpected(OrgErrCode::AssetNotFound));
@@ -110,7 +146,7 @@ private:
     {
         if (!freeList.empty())
         {
-            u32 idx = freeList.back();
+            const u32 idx = freeList.back();
             freeList.pop_back();
             return idx;
         }
